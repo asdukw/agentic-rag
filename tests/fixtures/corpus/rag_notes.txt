@@ -1,0 +1,8 @@
+Retrieval-augmented generation separates external knowledge from model parameters. A retriever
+selects evidence and a generator answers from that evidence.
+
+An ingestion pipeline should be deterministic. The same source, parser version, cleaner version,
+tokenizer, and chunking configuration should generate the same identifiers.
+
+Source tracing is required for evaluation. Every chunk should point back to its document and a
+page range or character span.

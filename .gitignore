@@ -8,3 +8,25 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local configuration and secrets
+.env
+
+# Runtime data and generated artifacts
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+storage/*
+!storage/.gitkeep
+artifacts/
+.tmp/
+*.db
+*.db-shm
+*.db-wal
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

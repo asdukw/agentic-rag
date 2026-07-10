@@ -1,0 +1,75 @@
+{
+  "name": "rag-papers-smoke-v1",
+  "papers": [
+    {
+      "arxiv_id": "2005.11401v4",
+      "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+      "abs_url": "https://arxiv.org/abs/2005.11401v4",
+      "pdf_url": "https://arxiv.org/pdf/2005.11401v4",
+      "sha256": "23e3249e9a1e75418d82efecab0ea8c4d033b89c93742f63208d47ce01f21233"
+    },
+    {
+      "arxiv_id": "2212.10496v1",
+      "title": "Precise Zero-Shot Dense Retrieval without Relevance Labels",
+      "abs_url": "https://arxiv.org/abs/2212.10496v1",
+      "pdf_url": "https://arxiv.org/pdf/2212.10496v1",
+      "sha256": "dc0ae3c5584ed146beee122e6a9ad9c48547dde048d53e9be8435d8f1d354531"
+    },
+    {
+      "arxiv_id": "2310.11511v1",
+      "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+      "abs_url": "https://arxiv.org/abs/2310.11511v1",
+      "pdf_url": "https://arxiv.org/pdf/2310.11511v1",
+      "sha256": "d9eaa1398abac0df67a9d0933a5bf8b6d9d83d2e72da2a486073cd842dd52978"
+    },
+    {
+      "arxiv_id": "2312.10997v5",
+      "title": "Retrieval-Augmented Generation for Large Language Models: A Survey",
+      "abs_url": "https://arxiv.org/abs/2312.10997v5",
+      "pdf_url": "https://arxiv.org/pdf/2312.10997v5",
+      "sha256": "396a0fadeb4cd40f5c8ccc36b73a0815f6cb4d7f6bfa53b6c48c1f9aba7c7e02"
+    },
+    {
+      "arxiv_id": "2401.15884v3",
+      "title": "Corrective Retrieval Augmented Generation",
+      "abs_url": "https://arxiv.org/abs/2401.15884v3",
+      "pdf_url": "https://arxiv.org/pdf/2401.15884v3",
+      "sha256": "975aa1fd3c1b603126e93ff99d6504858b61301bf1d34c9df88ebe53a0b026cb"
+    },
+    {
+      "arxiv_id": "2401.18059v1",
+      "title": "RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval",
+      "abs_url": "https://arxiv.org/abs/2401.18059v1",
+      "pdf_url": "https://arxiv.org/pdf/2401.18059v1",
+      "sha256": "01319e2e6e6ecfd504ee1bbda41d023f9e060bd3505ab3c161baa1d6d696cf75"
+    },
+    {
+      "arxiv_id": "2404.00610v1",
+      "title": "RQ-RAG: Learning to Refine Queries for Retrieval Augmented Generation",
+      "abs_url": "https://arxiv.org/abs/2404.00610v1",
+      "pdf_url": "https://arxiv.org/pdf/2404.00610v1",
+      "sha256": "d4cb43217f5236dc6460a57e8be2e65ef44ce747dc77bab7d2dd36dde81a2ef4"
+    },
+    {
+      "arxiv_id": "2404.16130v2",
+      "title": "From Local to Global: A Graph RAG Approach to Query-Focused Summarization",
+      "abs_url": "https://arxiv.org/abs/2404.16130v2",
+      "pdf_url": "https://arxiv.org/pdf/2404.16130v2",
+      "sha256": "730f1a9f38d16689900969a3eeeb1b31e45eda1dcc1f37a043afa90aff76c867"
+    },
+    {
+      "arxiv_id": "2407.02485v1",
+      "title": "RankRAG: Unifying Context Ranking with Retrieval-Augmented Generation in LLMs",
+      "abs_url": "https://arxiv.org/abs/2407.02485v1",
+      "pdf_url": "https://arxiv.org/pdf/2407.02485v1",
+      "sha256": "4409f1314e13be7c1f65df33936078b54831c9ae4a5ddc61ffff4ab0a8ea17d3"
+    },
+    {
+      "arxiv_id": "2410.05779v3",
+      "title": "LightRAG: Simple and Fast Retrieval-Augmented Generation",
+      "abs_url": "https://arxiv.org/abs/2410.05779v3",
+      "pdf_url": "https://arxiv.org/pdf/2410.05779v3",
+      "sha256": "bd72eebf611df1366b251c16ce4eac7aac699e519783c586feb2c5c43899347a"
+    }
+  ]
+}
