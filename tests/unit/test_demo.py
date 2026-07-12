@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from streamlit.testing.v1 import AppTest
 
 import hybrid_rag.demo as demo
 from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
@@ -51,6 +52,45 @@ def test_database_url_from_input_preserves_url_and_normalizes_paths(tmp_path: Pa
     path = tmp_path / "nested" / "demo.db"
     assert demo.database_url_from_input(str(path), settings) == sqlite_url(path)
     assert path.parent.is_dir()
+
+
+def test_demo_translation_catalog_is_complete_and_formats_chinese_values() -> None:
+    assert set(demo._TEXT["en"]) == set(demo._TEXT["zh"])
+    assert demo.ui_text("zh", "title") == "Hybrid RAG · 证据优先检索演示"
+    assert demo.ui_text("zh", "index_ready", chunks=3, entities=2, relations=1).startswith(
+        "索引就绪"
+    )
+    assert demo._MODE_LABELS["zh"][RetrievalMode.HYBRID] == "Hybrid — 三路固定融合"
+    assert demo._page_label(None, None, language="zh") == "页码未知"
+    assert demo._page_label(2, 4, language="zh") == "第 2-4 页"
+
+
+def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch() -> None:
+    assert demo.__file__ is not None
+    app = AppTest.from_file(Path(demo.__file__)).run(timeout=15)
+
+    assert not app.exception
+    assert [item.value for item in app.title] == ["Hybrid RAG · 证据优先检索演示"]
+    assert [item.label for item in app.button] == [
+        "检索并回答",
+        "对比 naive 与 hybrid",
+        "构建索引",
+        "重放",
+    ]
+
+    app.text_area[0].set_value("保留的问题")
+    app.run(timeout=15)
+    app.sidebar.selectbox[0].set_value("English")
+    app.run(timeout=15)
+
+    assert not app.exception
+    assert [item.label for item in app.button] == [
+        "Retrieve and answer",
+        "Compare naive vs hybrid",
+        "Build index",
+        "Replay",
+    ]
+    assert app.text_area[0].value == "保留的问题"
 
 
 def test_demo_embedding_provider_selection_is_explicit_and_offline() -> None:
