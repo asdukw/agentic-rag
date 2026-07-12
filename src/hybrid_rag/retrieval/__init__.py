@@ -1,5 +1,15 @@
 """Retrieval-domain primitives and constrained query-time adapters."""
 
+from hybrid_rag.retrieval.bm25 import (
+    BM25_SCORER_VERSION,
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_K1,
+    LEXICAL_TOKENIZER_VERSION,
+    BM25Config,
+    BM25Hit,
+    BM25Scorer,
+    tokenize_lexical,
+)
 from hybrid_rag.retrieval.embedding import (
     EmbeddingConfigurationError,
     EmbeddingProvider,
@@ -7,7 +17,12 @@ from hybrid_rag.retrieval.embedding import (
     OpenAICompatibleEmbeddingProvider,
     cosine_similarity,
 )
-from hybrid_rag.retrieval.fusion import rank_ids, select_token_budget, weighted_fusion
+from hybrid_rag.retrieval.fusion import (
+    rank_ids,
+    select_token_budget,
+    weighted_average_fusion,
+    weighted_fusion,
+)
 from hybrid_rag.retrieval.models import (
     INDEX_TEXT_SCHEMA_VERSION,
     RETRIEVAL_SCHEMA_VERSION,
@@ -20,6 +35,7 @@ from hybrid_rag.retrieval.models import (
     RetrievalResult,
     RetrievalTrace,
     RouteTrace,
+    ScoreComponent,
 )
 from hybrid_rag.retrieval.prompts import build_answer_messages, build_keyword_messages
 from hybrid_rag.retrieval.query import (
@@ -44,9 +60,16 @@ from hybrid_rag.retrieval.query import (
 from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 
 __all__ = [
+    "BM25_SCORER_VERSION",
+    "DEFAULT_BM25_B",
+    "DEFAULT_BM25_K1",
     "INDEX_TEXT_SCHEMA_VERSION",
+    "LEXICAL_TOKENIZER_VERSION",
     "RETRIEVAL_SCHEMA_VERSION",
     "AnswerResult",
+    "BM25Config",
+    "BM25Hit",
+    "BM25Scorer",
     "CandidateHit",
     "ContextItem",
     "DeepSeekQueryClient",
@@ -75,6 +98,7 @@ __all__ = [
     "RetrievalService",
     "RetrievalTrace",
     "RouteTrace",
+    "ScoreComponent",
     "build_answer_messages",
     "build_keyword_messages",
     "cosine_similarity",
@@ -82,7 +106,9 @@ __all__ = [
     "deterministic_keywords",
     "rank_ids",
     "select_token_budget",
+    "tokenize_lexical",
     "validate_answer_completion",
     "validate_keyword_completion",
+    "weighted_average_fusion",
     "weighted_fusion",
 ]

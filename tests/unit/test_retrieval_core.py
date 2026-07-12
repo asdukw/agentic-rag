@@ -12,7 +12,12 @@ from hybrid_rag.retrieval.embedding import (
     cosine_similarity,
     min_max_normalize,
 )
-from hybrid_rag.retrieval.fusion import rank_ids, select_token_budget, weighted_fusion
+from hybrid_rag.retrieval.fusion import (
+    rank_ids,
+    select_token_budget,
+    weighted_average_fusion,
+    weighted_fusion,
+)
 
 
 def test_hash_embeddings_are_deterministic_normalized_and_unicode_aware() -> None:
@@ -114,6 +119,29 @@ def test_score_normalization_fusion_ranking_and_budget_are_deterministic() -> No
         {"chunk_b": 4, "chunk_c": 5, "chunk_a": 2},
         budget=6,
     ) == ("chunk_b", "chunk_a")
+
+
+def test_weighted_average_fusion_retains_subscore_breakdown_and_skips_empty_maps() -> None:
+    fused, components = weighted_average_fusion(
+        {
+            "dense": {"chunk_a": 0.1, "chunk_b": 0.9},
+            "bm25": {"chunk_b": 2.0, "chunk_c": 4.0},
+        },
+        {"dense": 0.25, "bm25": 0.75},
+    )
+
+    assert fused == {"chunk_a": 0.0, "chunk_b": 0.25, "chunk_c": 0.75}
+    assert components["chunk_b"]["dense"].raw_score == 0.9
+    assert components["chunk_b"]["dense"].normalized_score == 1.0
+    assert components["chunk_b"]["dense"].weighted_score == 0.25
+    assert components["chunk_c"]["bm25"].weighted_score == 0.75
+
+    fallback, fallback_components = weighted_average_fusion(
+        {"dense": {"chunk_a": 0.3}, "bm25": {}},
+        {"dense": 1.0, "bm25": 1.0},
+    )
+    assert fallback == {"chunk_a": 1.0}
+    assert fallback_components["chunk_a"]["dense"].weighted_score == 1.0
 
 
 class FakeEmbeddingSdk:

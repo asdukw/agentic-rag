@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -15,8 +16,21 @@ from pydantic import BaseModel, ConfigDict
 
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.ingest.tokenizer import TokenCounter
+from hybrid_rag.retrieval.bm25 import (
+    BM25_SCORER_VERSION,
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_K1,
+    LEXICAL_TOKENIZER_VERSION,
+    BM25Config,
+    BM25Scorer,
+)
 from hybrid_rag.retrieval.embedding import EmbeddingProvider, cosine_similarity
-from hybrid_rag.retrieval.fusion import rank_ids, select_token_budget, weighted_fusion
+from hybrid_rag.retrieval.fusion import (
+    rank_ids,
+    select_token_budget,
+    weighted_average_fusion,
+    weighted_fusion,
+)
 from hybrid_rag.retrieval.models import (
     INDEX_TEXT_SCHEMA_VERSION,
     CandidateHit,
@@ -28,6 +42,7 @@ from hybrid_rag.retrieval.models import (
     RetrievalResult,
     RetrievalTrace,
     RouteTrace,
+    ScoreComponent,
 )
 from hybrid_rag.retrieval.query import (
     DeterministicQueryClient,
@@ -65,6 +80,10 @@ class RetrievalOptions:
     naive_weight: float = 1.0
     local_weight: float = 1.0
     global_weight: float = 1.0
+    naive_dense_weight: float = 1.0
+    naive_bm25_weight: float = 1.0
+    bm25_k1: float = DEFAULT_BM25_K1
+    bm25_b: float = DEFAULT_BM25_B
 
     def __post_init__(self) -> None:
         if self.top_k < 1:
@@ -75,10 +94,20 @@ class RetrievalOptions:
             raise ValueError("context_token_budget must be positive")
         if not 1 <= self.graph_max_hops <= 4:
             raise ValueError("graph_max_hops must be between 1 and 4")
-        if min(self.naive_weight, self.local_weight, self.global_weight) < 0:
+        weights = (
+            self.naive_weight,
+            self.local_weight,
+            self.global_weight,
+            self.naive_dense_weight,
+            self.naive_bm25_weight,
+        )
+        if any(not math.isfinite(weight) or weight < 0.0 for weight in weights):
             raise ValueError("fusion weights must not be negative")
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one fusion weight must be positive")
+        if self.naive_dense_weight + self.naive_bm25_weight <= 0:
+            raise ValueError("at least one naive subroute weight must be positive")
+        BM25Config(k1=self.bm25_k1, b=self.bm25_b)
 
     @property
     def config_hash(self) -> str:
@@ -91,6 +120,17 @@ class RetrievalOptions:
             RetrievalMode.LOCAL.value: self.local_weight,
             RetrievalMode.GLOBAL.value: self.global_weight,
         }
+
+    @property
+    def naive_subroute_weights(self) -> dict[str, float]:
+        return {
+            "dense": self.naive_dense_weight,
+            "bm25": self.naive_bm25_weight,
+        }
+
+    @property
+    def bm25_config(self) -> BM25Config:
+        return BM25Config(k1=self.bm25_k1, b=self.bm25_b)
 
 
 class AnswerResult(BaseModel):
@@ -109,6 +149,7 @@ class _RouteResult:
     chunk_raw_scores: dict[str, float]
     entity_scores: dict[str, float]
     relation_scores: dict[str, float]
+    chunk_score_components: dict[str, dict[str, ScoreComponent]]
     paths: tuple[GraphPath, ...]
 
 
@@ -474,7 +515,12 @@ class RetrievalService:
             with ThreadPoolExecutor(max_workers=3, thread_name_prefix="hybrid-recall") as executor:
                 futures = {
                     RetrievalMode.NAIVE: executor.submit(
-                        self._naive_route, index, query_vector, candidate_limit
+                        self._naive_route,
+                        index,
+                        query_vector,
+                        expanded_query,
+                        candidate_limit,
+                        options,
                     ),
                     RetrievalMode.LOCAL: executor.submit(
                         self._local_route, index, query_vector, candidate_limit
@@ -494,11 +540,19 @@ class RetrievalService:
                 route.value: self._route_trace(result, index) for route, result in routes.items()
             }
         else:
-            route = {
-                RetrievalMode.NAIVE: self._naive_route,
-                RetrievalMode.LOCAL: self._local_route,
-                RetrievalMode.GLOBAL: self._global_route,
-            }[mode](index, query_vector, candidate_limit)
+            if mode is RetrievalMode.NAIVE:
+                route = self._naive_route(
+                    index,
+                    query_vector,
+                    expanded_query,
+                    candidate_limit,
+                    options,
+                )
+            else:
+                route = {
+                    RetrievalMode.LOCAL: self._local_route,
+                    RetrievalMode.GLOBAL: self._global_route,
+                }[mode](index, query_vector, candidate_limit)
             routes = {mode: route}
             fused_scores = dict(route.chunk_scores)
             components = {chunk_id: {mode.value: score} for chunk_id, score in fused_scores.items()}
@@ -529,6 +583,12 @@ class RetrievalService:
                     route: float(score)
                     for route, score in sorted(components.get(chunk_id, {}).items())
                 },
+                score_components=(
+                    routes[RetrievalMode.NAIVE]
+                    .chunk_score_components.get(chunk_id, {})
+                    if mode is RetrievalMode.NAIVE
+                    else {}
+                ),
                 source_chunk_ids=(chunk_id,),
                 metadata=dict(chunks[chunk_id].metadata),
             )
@@ -553,6 +613,8 @@ class RetrievalService:
                 "embedding_model": index.profile.model,
                 "embedding_dimensions": index.profile.dimensions,
                 "tokenizer": self.token_counter.name,
+                "naive_lexical_scorer": BM25_SCORER_VERSION,
+                "naive_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
             },
         )
         return RetrievalResult(
@@ -572,16 +634,37 @@ class RetrievalService:
         self,
         index: LoadedIndex,
         query_vector: Sequence[float],
+        lexical_query: str,
         limit: int,
+        options: RetrievalOptions,
     ) -> _RouteResult:
-        scored = _score(index.chunks, query_vector, limit)
-        scores = {item.object_id: score for item, score in scored}
+        dense_scores = (
+            {item.object_id: score for item, score in _score(index.chunks, query_vector, limit)}
+            if options.naive_dense_weight > 0.0
+            else {}
+        )
+        bm25_scores = (
+            {
+                hit.item.object_id: hit.score
+                for hit in BM25Scorer(index.chunks, config=options.bm25_config).score(
+                    lexical_query,
+                    limit=limit,
+                )
+            }
+            if options.naive_bm25_weight > 0.0
+            else {}
+        )
+        scores, score_components = weighted_average_fusion(
+            {"dense": dense_scores, "bm25": bm25_scores},
+            options.naive_subroute_weights,
+        )
         return _RouteResult(
             route=RetrievalMode.NAIVE,
             chunk_scores=scores,
             chunk_raw_scores=dict(scores),
             entity_scores={},
             relation_scores={},
+            chunk_score_components=score_components,
             paths=(),
         )
 
@@ -617,6 +700,7 @@ class RetrievalService:
             chunk_raw_scores=dict(chunk_scores),
             entity_scores=entity_scores,
             relation_scores=relation_scores,
+            chunk_score_components={},
             paths=_unique_paths(paths),
         )
 
@@ -644,6 +728,7 @@ class RetrievalService:
             chunk_raw_scores=dict(chunk_scores),
             entity_scores=entity_scores,
             relation_scores=relation_scores,
+            chunk_score_components={},
             paths=_unique_paths(paths),
         )
 
@@ -671,6 +756,7 @@ class RetrievalService:
                     raw_score=float(score),
                     rank=rank,
                     route_scores={route.route.value: float(score)},
+                    score_components=route.chunk_score_components.get(object_id, {}),
                     source_chunk_ids=all_items[object_id].source_chunk_ids,
                     metadata=dict(all_items[object_id].metadata),
                 )
@@ -1026,6 +1112,12 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "naive_weight",
             "local_weight",
             "global_weight",
+            "naive_dense_weight",
+            "naive_bm25_weight",
+            "bm25_k1",
+            "bm25_b",
+            "naive_lexical_scorer",
+            "naive_lexical_tokenizer",
         }
     }
     return canonical_json_hash(values)

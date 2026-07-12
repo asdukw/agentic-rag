@@ -40,6 +40,14 @@ class IndexSemanticConfig(_StrictRetrievalModel):
         return canonical_json_hash(self.model_dump(mode="json"))
 
 
+class ScoreComponent(_StrictRetrievalModel):
+    """One named contribution to a route score, retained for inspection."""
+
+    raw_score: float
+    normalized_score: float = Field(ge=0.0, le=1.0)
+    weighted_score: float = Field(ge=0.0)
+
+
 class CandidateHit(_StrictRetrievalModel):
     """One scored object retained in an explainable retrieval route."""
 
@@ -49,6 +57,7 @@ class CandidateHit(_StrictRetrievalModel):
     raw_score: float | None = None
     rank: int = Field(ge=1)
     route_scores: dict[str, float] = Field(default_factory=dict)
+    score_components: dict[str, ScoreComponent] = Field(default_factory=dict)
     source_chunk_ids: tuple[str, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 

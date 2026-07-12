@@ -86,11 +86,17 @@ class RetrievalSettings(BaseSettings):
     naive_weight: float = Field(default=1.0, ge=0)
     local_weight: float = Field(default=1.0, ge=0)
     global_weight: float = Field(default=1.0, ge=0)
+    naive_dense_weight: float = Field(default=1.0, ge=0)
+    naive_bm25_weight: float = Field(default=1.0, ge=0)
+    bm25_k1: float = Field(default=1.2, gt=0)
+    bm25_b: float = Field(default=0.75, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_fusion_weights(self) -> RetrievalSettings:
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one retrieval fusion weight must be positive")
+        if self.naive_dense_weight + self.naive_bm25_weight <= 0:
+            raise ValueError("at least one naive subroute weight must be positive")
         return self
 
 

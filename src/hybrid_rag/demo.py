@@ -43,13 +43,13 @@ Language: TypeAlias = Literal["en", "zh"]
 _LANGUAGE_OPTIONS: dict[str, Language] = {"中文": "zh", "English": "en"}
 _MODE_LABELS: dict[Language, dict[RetrievalMode, str]] = {
     "en": {
-        RetrievalMode.NAIVE: "Naive — chunk vector recall",
+        RetrievalMode.NAIVE: "Naive — chunk dense + BM25 recall",
         RetrievalMode.LOCAL: "Local — entity-led graph recall",
         RetrievalMode.GLOBAL: "Global — relation-led graph recall",
         RetrievalMode.HYBRID: "Hybrid — fixed three-route fusion",
     },
     "zh": {
-        RetrievalMode.NAIVE: "Naive — Chunk 向量召回",
+        RetrievalMode.NAIVE: "Naive — Chunk 向量 + BM25 词法召回",
         RetrievalMode.LOCAL: "Local — 以实体为起点的图谱召回",
         RetrievalMode.GLOBAL: "Global — 以关系为起点的图谱召回",
         RetrievalMode.HYBRID: "Hybrid — 三路固定融合",
@@ -147,6 +147,7 @@ _TEXT: dict[Language, dict[str, str]] = {
         "kind": "kind",
         "rank": "rank",
         "route_scores": "route scores",
+        "score_components": "score components",
         "source_chunks": "source chunks",
         "nodes": "nodes",
         "supporting_chunks": "supporting chunks",
@@ -237,6 +238,7 @@ _TEXT: dict[Language, dict[str, str]] = {
         "kind": "类型",
         "rank": "排名",
         "route_scores": "路由分数",
+        "score_components": "分数分量",
         "source_chunks": "来源 Chunk",
         "nodes": "节点",
         "supporting_chunks": "支持 Chunk",
@@ -417,6 +419,9 @@ def route_rows(result: RetrievalResult, *, language: Language = "en") -> list[di
                 ui_text(language, "candidates"): route.candidate_count,
                 ui_text(language, "top_object"): top.object_id if top else "—",
                 ui_text(language, "top_score"): round(top.score, 4) if top else None,
+                ui_text(language, "score_components"): (
+                    _format_score_components(top.score_components) if top else "—"
+                ),
             }
         )
     return rows
@@ -436,6 +441,9 @@ def hit_rows(
             ui_text(language, "score"): round(hit.score, 4),
             ui_text(language, "rank"): hit.rank,
             ui_text(language, "route_scores"): _format_scores(hit.route_scores),
+            ui_text(language, "score_components"): _format_score_components(
+                hit.score_components
+            ),
             ui_text(language, "source_chunks"): ", ".join(hit.source_chunk_ids),
         }
         for hit in hits
@@ -462,6 +470,19 @@ def graph_path_rows(
 
 def _format_scores(scores: dict[str, float]) -> str:
     return ", ".join(f"{route}={score:.4f}" for route, score in sorted(scores.items()))
+
+
+def _format_score_components(components: dict[str, Any]) -> str:
+    if not components:
+        return "—"
+    return "; ".join(
+        (
+            f"{name}: raw={component.raw_score:.4f}, "
+            f"norm={component.normalized_score:.4f}, "
+            f"weighted={component.weighted_score:.4f}"
+        )
+        for name, component in sorted(components.items())
+    )
 
 
 def _kind_label(kind: str, language: Language) -> str:
@@ -526,17 +547,17 @@ def _render_retrieval(st: Any, result: RetrievalResult, *, language: Language) -
     with st.expander(ui_text(language, "route_scores_candidates"), expanded=False):
         rows = route_rows(result, language=language)
         if rows:
-            st.dataframe(rows, use_container_width=True, hide_index=True)
+            st.dataframe(rows, width="stretch", hide_index=True)
         else:
             st.info(ui_text(language, "no_route_candidates"))
         fused = hit_rows(result.hits, language=language)
         if fused:
-            st.dataframe(fused, use_container_width=True, hide_index=True)
+            st.dataframe(fused, width="stretch", hide_index=True)
 
     with st.expander(ui_text(language, "graph_paths"), expanded=False):
         paths = graph_path_rows(result.graph_paths, language=language)
         if paths:
-            st.dataframe(paths, use_container_width=True, hide_index=True)
+            st.dataframe(paths, width="stretch", hide_index=True)
         else:
             st.info(ui_text(language, "no_graph_path"))
 
@@ -656,6 +677,10 @@ def _runtime_from_sidebar(
         naive_weight=retrieval.naive_weight,
         local_weight=retrieval.local_weight,
         global_weight=retrieval.global_weight,
+        naive_dense_weight=retrieval.naive_dense_weight,
+        naive_bm25_weight=retrieval.naive_bm25_weight,
+        bm25_k1=retrieval.bm25_k1,
+        bm25_b=retrieval.bm25_b,
     )
     runtime = DemoRuntime(
         database_url=database_url_from_input(database_input, settings),
@@ -704,7 +729,7 @@ def main() -> None:
     build_col, replay_col = st.sidebar.columns(2)
     if build_col.button(
         ui_text(language, "build_index"),
-        use_container_width=True,
+        width="stretch",
         key="hybrid_rag_build_index",
     ):
         try:
@@ -738,7 +763,7 @@ def main() -> None:
     )
     if replay_col.button(
         ui_text(language, "replay"),
-        use_container_width=True,
+        width="stretch",
         key="hybrid_rag_replay",
     ):
         if not replay_trace_id.strip():
@@ -788,12 +813,12 @@ def main() -> None:
     query_clicked = query_col.button(
         ui_text(language, "retrieve_and_answer"),
         type="primary",
-        use_container_width=True,
+        width="stretch",
         key="hybrid_rag_retrieve_answer",
     )
     compare_clicked = comparison_col.button(
         ui_text(language, "compare_naive_hybrid"),
-        use_container_width=True,
+        width="stretch",
         help=ui_text(language, "compare_help"),
         key="hybrid_rag_compare",
     )

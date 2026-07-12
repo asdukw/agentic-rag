@@ -39,6 +39,7 @@ Complete this section before looking at comparative scores.
 | Chunker/tokenizer configuration hash | `NOT RUN` |
 | Graph build run ID and extraction model/settings | `NOT RUN` |
 | Embedding profile ID, provider, model, dimension, text-schema hash | `NOT RUN` |
+| Naive dense/BM25 weights, BM25 tokenizer version, k1 and b | `NOT RUN` |
 | Retrieval options per mode | `NOT RUN` |
 | Question-set version and SHA-256 | `NOT RUN` |
 | Evaluation random seed | `NOT RUN` |

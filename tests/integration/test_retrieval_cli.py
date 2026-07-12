@@ -77,6 +77,10 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert retrieved["trace_id"].startswith("rtr_")
     assert retrieved["context_items"]
     assert set(retrieved["trace"]["routes"]) == {"naive", "local", "global"}
+    assert retrieved["trace"]["settings"]["naive_dense_weight"] == 0.25
+    assert retrieved["trace"]["settings"]["naive_bm25_weight"] == 1.5
+    assert retrieved["trace"]["settings"]["bm25_k1"] == 1.7
+    assert retrieved["trace"]["settings"]["bm25_b"] == 0.3
     citation_id = retrieved["context_items"][0]["citation_id"]
     assert citation_id == retrieved["context_items"][0]["chunk_id"]
 
@@ -161,6 +165,10 @@ def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
 
     assert report["run"]["benchmark_id"] == "fixture-rag-v1"
     assert report["run"]["options"]["modes"] == ["naive", "hybrid"]
+    assert report["run"]["options"]["naive_dense_weight"] == 0.25
+    assert report["run"]["options"]["naive_bm25_weight"] == 1.5
+    assert report["run"]["options"]["bm25_k1"] == 1.7
+    assert report["run"]["options"]["bm25_b"] == 0.3
     assert len(report["run"]["case_ids"]) == 2
     assert report["run"]["index_provenance"]["profile_id"] == index["profile_id"]
     assert report["run"]["index_provenance"]["corpus_content_hash"] == corpus_content_hash
@@ -217,6 +225,10 @@ def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         naive_weight=1.0,
         local_weight=1.0,
         global_weight=1.0,
+        naive_dense_weight=0.25,
+        naive_bm25_weight=1.5,
+        bm25_k1=1.7,
+        bm25_b=0.3,
     )
     monkeypatch.setattr(cli_module, "RetrievalSettings", lambda: settings)
     monkeypatch.setattr(cli_module, "TiktokenCounter", lambda _: WordCounter())

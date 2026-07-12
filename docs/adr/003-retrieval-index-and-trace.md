@@ -25,9 +25,11 @@ embedding model remains a benchmark decision.
   `hash-token-v1` adapter is deterministic and local, intended for CI and demo
   reproducibility; an OpenAI-compatible embedding adapter can be configured after
   a benchmark selects a real model.
-- Implement cosine ranking, local/global graph expansion, per-route min-max
-  normalization, weighted fusion, de-duplication, NetworkX path expansion, and
-  token-budget context clipping in project code.
+- Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
+  graph expansion, per-route min-max normalization, weighted fusion,
+  de-duplication, NetworkX path expansion, and token-budget context clipping in
+  project code.  The naive trace retains raw, normalized, and weighted dense and
+  BM25 contributions.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.

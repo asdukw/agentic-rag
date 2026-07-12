@@ -13,31 +13,33 @@ chunk、实体和关系，再以 `naive`、`local`、`global` 或 `hybrid` 模�
 ## 基础工作流
 
 需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。下面使用仓库内置的 fixture，
-无需网络、模型或 API key；把目录替换成自己的论文目录即可。
+无需网络、模型或 API key；默认数据库为 `storage/app.db`，把目录替换成自己的论文目录即可。
 
 ```bash
 uv sync --dev
 
 # 导入文件并切成可追溯的 chunks。
-uv run hybrid-rag ingest tests/fixtures/corpus --db .tmp/demo.db
+uv run hybrid-rag ingest tests/fixtures/corpus
 
 # 为 chunk 建立默认的本地确定性索引。
-uv run hybrid-rag build-index --db .tmp/demo.db
+uv run hybrid-rag build-index
 
 # 检索并生成基于所选证据的离线回答。
-uv run hybrid-rag ask "What is retrieval-augmented generation?" --db .tmp/demo.db
+uv run hybrid-rag ask "What is retrieval-augmented generation?"
 ```
 
 `ingest`、`build-index` 等命令会自动升级 SQLite schema。默认的 `hash-token-v1` 是一个
 确定性本地特征哈希 embedding，适合开发、测试和演示；它不是语义模型。
+`naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
+直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
 
 ## 可选功能
 
 ### 使用自己的文档
 
 ```bash
-uv run hybrid-rag ingest data/raw --db storage/app.db
-uv run hybrid-rag build-index --db storage/app.db
+uv run hybrid-rag ingest data/raw
+uv run hybrid-rag build-index
 ```
 
 支持 PDF、Markdown 和 TXT。重复导入未变化文件会跳过；文档变化会使旧索引失效，需要再次
@@ -48,8 +50,8 @@ uv run hybrid-rag build-index --db storage/app.db
 配置 `DEEPSEEK_API_KEY` 后，抽取实体与关系；完成后重新建索引以纳入 entity/relation 向量：
 
 ```bash
-uv run hybrid-rag build-graph --db .tmp/demo.db --limit 10
-uv run hybrid-rag build-index --db .tmp/demo.db
+uv run hybrid-rag build-graph --limit 10
+uv run hybrid-rag build-index
 ```
 
 没有图谱时，`naive` 可正常使用，`hybrid` 会保留 chunk 路径；构图后 `local` 和 `global`
@@ -58,17 +60,19 @@ uv run hybrid-rag build-index --db .tmp/demo.db
 ### 选择检索模式与查看证据
 
 ```bash
-uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --db .tmp/demo.db --json
-uv run hybrid-rag retrieval replay rtr_<id> --db .tmp/demo.db --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json
+uv run hybrid-rag retrieval replay rtr_<id> --json
 ```
 
-可选 `--mode naive|local|global|hybrid`。每次检索都会产生可 replay 的 `rtr_` trace；`--deepseek`
+可选 `--mode naive|local|global|hybrid`：`naive` 是 chunk dense + BM25 召回，`local` 从实体
+命中扩展图邻居，`global` 从关系命中汇聚证据，`hybrid` 固定融合三条路径。每次检索都会产生
+可 replay 的 `rtr_` trace；其中保留 naive 的 dense/BM25 原始、归一化和加权分数。`--deepseek`
 才会启用模型做关键词提取或受证据约束的回答。
 
 ### 运行评测或演示界面
 
 ```bash
-uv run hybrid-rag evaluate --db .tmp/demo.db
+uv run hybrid-rag evaluate
 uv run streamlit run src/hybrid_rag/demo.py
 ```
 

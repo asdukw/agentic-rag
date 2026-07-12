@@ -124,6 +124,10 @@ def _retrieval_options(
         naive_weight=settings.naive_weight,
         local_weight=settings.local_weight,
         global_weight=settings.global_weight,
+        naive_dense_weight=settings.naive_dense_weight,
+        naive_bm25_weight=settings.naive_bm25_weight,
+        bm25_k1=settings.bm25_k1,
+        bm25_b=settings.bm25_b,
     )
 
 
@@ -185,6 +189,10 @@ def _evaluation_options(
         naive_weight=retrieval.naive_weight,
         local_weight=retrieval.local_weight,
         global_weight=retrieval.global_weight,
+        naive_dense_weight=retrieval.naive_dense_weight,
+        naive_bm25_weight=retrieval.naive_bm25_weight,
+        bm25_k1=retrieval.bm25_k1,
+        bm25_b=retrieval.bm25_b,
         case_ids=case_ids,
     )
 

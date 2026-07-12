@@ -164,6 +164,10 @@ class EvaluationOptions(_StrictEvaluationModel):
     naive_weight: float = Field(default=1.0, ge=0.0)
     local_weight: float = Field(default=1.0, ge=0.0)
     global_weight: float = Field(default=1.0, ge=0.0)
+    naive_dense_weight: float = Field(default=1.0, ge=0.0)
+    naive_bm25_weight: float = Field(default=1.0, ge=0.0)
+    bm25_k1: float = Field(default=1.2, gt=0.0)
+    bm25_b: float = Field(default=0.75, ge=0.0, le=1.0)
     case_ids: tuple[CaseId, ...] = ()
 
     @model_validator(mode="after")
@@ -178,6 +182,8 @@ class EvaluationOptions(_StrictEvaluationModel):
             raise ValueError(f"evaluation must include naive and hybrid modes: {missing_names}")
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one fusion weight must be positive")
+        if self.naive_dense_weight + self.naive_bm25_weight <= 0:
+            raise ValueError("at least one naive subroute weight must be positive")
         _reject_casefold_duplicates(self.case_ids, field_name="case_ids")
         return self
 

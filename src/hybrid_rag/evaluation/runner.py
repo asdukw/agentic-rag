@@ -86,6 +86,10 @@ class EvaluationRunner:
             naive_weight=effective.naive_weight,
             local_weight=effective.local_weight,
             global_weight=effective.global_weight,
+            naive_dense_weight=effective.naive_dense_weight,
+            naive_bm25_weight=effective.naive_bm25_weight,
+            bm25_k1=effective.bm25_k1,
+            bm25_b=effective.bm25_b,
         )
         evaluations: list[RetrievalEvaluation] = []
         by_case: dict[str, dict[RetrievalMode, RetrievalEvaluation]] = defaultdict(dict)

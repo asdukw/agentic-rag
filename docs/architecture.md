@@ -50,7 +50,7 @@ flowchart LR
         Vectors --> Routes
         NX --> Routes
         Routes{"Selected route"}
-        Routes --> Naive["naive: chunk vectors"]
+        Routes --> Naive["naive: chunk dense + BM25"]
         Routes --> Local["local: entity vectors + graph"]
         Routes --> Global["global: relation vectors + graph"]
         Routes --> Hybrid["hybrid: run all three\nin parallel"]
@@ -65,10 +65,12 @@ flowchart LR
     end
 ```
 
-`naive`, `local`, and `global` can be selected independently.  `hybrid` is not
-a fourth opaque vector store: it runs those three route calculations in
-parallel, records the route-level scores, then applies the project-owned fusion
-and context-selection rules.
+`naive`, `local`, and `global` can be selected independently.  `naive` ranks
+chunk candidates with dense vector and deterministic local BM25 lexical scores,
+normalizes each subscore independently, and records its raw/normalized/weighted
+components in the trace.  `hybrid` is not a fourth opaque vector store: it runs
+those three route calculations in parallel, records the route-level scores, then
+applies the project-owned fusion and context-selection rules.
 
 ## Persistent ownership and invalidation
 

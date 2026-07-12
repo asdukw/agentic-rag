@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from hybrid_rag.retrieval.embedding import min_max_normalize
+from hybrid_rag.retrieval.models import ScoreComponent
 
 
 def weighted_fusion(
@@ -25,6 +26,46 @@ def weighted_fusion(
             total[object_id] = total.get(object_id, 0.0) + component
             components.setdefault(object_id, {})[route] = component
     return total, components
+
+
+def weighted_average_fusion(
+    score_maps: Mapping[str, Mapping[str, float]],
+    weights: Mapping[str, float],
+) -> tuple[dict[str, float], dict[str, dict[str, ScoreComponent]]]:
+    """Fuse active score maps as a normalized weighted average.
+
+    This is intentionally separate from :func:`weighted_fusion`: outer hybrid
+    route weights remain additive, while sub-scorers inside one route should
+    retain a stable 0--1 scale.  Empty or zero-weight scorers are excluded from
+    the denominator, so an out-of-vocabulary lexical query cannot dilute dense
+    recall.  Each raw, normalized, and weighted contribution is returned for
+    trace inspection.
+    """
+
+    active = tuple(
+        (name, scores, float(weights.get(name, 0.0)))
+        for name, scores in sorted(score_maps.items())
+        if scores and weights.get(name, 0.0) > 0.0
+    )
+    total_weight = sum(weight for _, _, weight in active)
+    if total_weight <= 0.0:
+        return {}, {}
+
+    fused: dict[str, float] = {}
+    components: dict[str, dict[str, ScoreComponent]] = {}
+    for name, scores, weight in active:
+        normalized = min_max_normalize(dict(scores))
+        share = weight / total_weight
+        for object_id, raw_score in scores.items():
+            normalized_score = normalized[object_id]
+            weighted_score = normalized_score * share
+            fused[object_id] = fused.get(object_id, 0.0) + weighted_score
+            components.setdefault(object_id, {})[name] = ScoreComponent(
+                raw_score=float(raw_score),
+                normalized_score=float(normalized_score),
+                weighted_score=float(weighted_score),
+            )
+    return fused, components
 
 
 def rank_ids(scores: Mapping[str, float], *, limit: int) -> tuple[str, ...]:

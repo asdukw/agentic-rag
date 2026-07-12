@@ -18,7 +18,7 @@ embedding provider、模型、维度、corpus-content hash 和 graph snapshot，
 
 输入一个论文问题，选择 `hybrid` 并提交。依次指出：
 
-- `naive` 直接召回 chunk；
+- `naive` 将 chunk 的 dense 向量与本地 BM25 词法分数分别归一化后融合；
 - `local` 从实体命中扩展图邻居；
 - `global` 从关系命中汇聚证据；
 - `hybrid` 并行执行前三条路径，按路归一化、融合、去重，并在 token budget 内裁剪上下文。
@@ -34,7 +34,7 @@ embedding provider、模型、维度、corpus-content hash 和 graph snapshot，
 切换到 **Compare naive vs hybrid**。展示相同问题在两个模式下的答案和证据，随后运行：
 
 ```bash
-uv run hybrid-rag evaluate --db .tmp/demo.db --json
+uv run hybrid-rag evaluate --json
 ```
 
 说明固定 24 题 benchmark 会先锁定 profile、校验 corpus-content hash，再输出
