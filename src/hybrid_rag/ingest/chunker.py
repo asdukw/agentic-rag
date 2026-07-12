@@ -67,7 +67,7 @@ class SectionTokenChunker:
             current_end = None
 
         for piece in pieces:
-            if current_start is None:
+            if current_start is None or current_end is None:
                 current_start, current_end = piece.start, piece.end
                 current_section = piece.section_path
                 continue
