@@ -54,10 +54,7 @@ def test_chunker_is_bounded_deterministic_and_section_aware() -> None:
     assert all(0 < chunk.token_count <= 5 for chunk in first)
     assert all(document.text[chunk.char_start : chunk.char_end] == chunk.text for chunk in first)
     assert {chunk.section_path for chunk in first} == {("First",), ("Second",)}
-    assert not any(
-        chunk.page_start == 1 and chunk.page_end == 2
-        for chunk in first
-    )
+    assert not any(chunk.page_start == 1 and chunk.page_end == 2 for chunk in first)
 
 
 def test_changing_chunk_config_changes_ids() -> None:

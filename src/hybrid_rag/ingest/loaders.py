@@ -113,9 +113,7 @@ class PdfLoader(DocumentLoader):
                 )
         title = str(metadata.get("/Title") or path.stem)
         safe_metadata = {
-            str(key).lstrip("/"): str(value)
-            for key, value in metadata.items()
-            if value is not None
+            str(key).lstrip("/"): str(value) for key, value in metadata.items() if value is not None
         }
         safe_metadata["page_count"] = len(reader.pages)
         return self._document(path, source_uri, title, segments, safe_metadata)
@@ -124,9 +122,7 @@ class PdfLoader(DocumentLoader):
 class LoaderRegistry:
     def __init__(self, loaders: list[DocumentLoader] | None = None) -> None:
         configured = loaders or [PdfLoader(), MarkdownLoader(), TextLoader()]
-        self._by_suffix = {
-            suffix: loader for loader in configured for suffix in loader.suffixes
-        }
+        self._by_suffix = {suffix: loader for loader in configured for suffix in loader.suffixes}
 
     @property
     def supported_suffixes(self) -> frozenset[str]:

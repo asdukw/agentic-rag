@@ -46,9 +46,7 @@ def clean_document(document: ParsedDocument) -> ParsedDocument:
         start = cursor
         cursor += len(value)
         cleaned.append(
-            segment.model_copy(
-                update={"text": value, "char_start": start, "char_end": cursor}
-            )
+            segment.model_copy(update={"text": value, "char_start": start, "char_end": cursor})
         )
         text_parts.append(value)
 

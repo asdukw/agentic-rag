@@ -31,9 +31,7 @@ class CorpusPaper(BaseModel):
     @classmethod
     def validate_sha256(cls, value: str) -> str:
         normalized = value.casefold()
-        invalid_character = any(
-            character not in "0123456789abcdef" for character in normalized
-        )
+        invalid_character = any(character not in "0123456789abcdef" for character in normalized)
         if len(normalized) != 64 or invalid_character:
             raise ValueError("sha256 must be a 64-character hexadecimal digest")
         return normalized
@@ -128,9 +126,7 @@ def download_manifest(
                 raise ValueError("downloaded response is not a PDF")
             digest = sha256_file(temporary)
             if digest != paper.sha256:
-                raise ValueError(
-                    f"SHA-256 mismatch: expected {paper.sha256}, downloaded {digest}"
-                )
+                raise ValueError(f"SHA-256 mismatch: expected {paper.sha256}, downloaded {digest}")
             temporary.replace(target)
             results.append(
                 DownloadResult(
