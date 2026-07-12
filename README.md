@@ -3,7 +3,7 @@
 一个面向求职展示的轻量 Graph-RAG 项目：复刻 LightRAG 的核心工程链路，同时保留
 每一步检索和证据来源的可解释性。
 
-当前主链路覆盖文档导入、阶段二图抽取和阶段三多路检索：
+当前主链路覆盖文档导入、图谱构建、多路检索，以及可复现的评测和演示：
 
 ```text
 PDF / Markdown / TXT
@@ -17,6 +17,7 @@ PDF / Markdown / TXT
   -> SQLite canonical graph + NetworkX MultiDiGraph
   -> chunk/entity/relation embedding texts + independent SQLite vector indexes
   -> naive/local/global recall -> hybrid fusion -> cited context/answer + replayable trace
+  -> fixed benchmark -> blinded naive/hybrid comparison -> JSON/Markdown report
 ```
 
 ## Quick start
@@ -124,7 +125,8 @@ uv run hybrid-rag graph inspect <object-id> --db .tmp/demo.db --raw
 ## 阶段三：多路索引与检索
 
 先在当前 chunks 和当前规范图上构建独立的 chunk、entity、relation 索引；索引 profile 会记录
-embedding 配置、维度、来源 corpus/graph hash 和图谱 run。默认 `hash-token-v1` 是确定性、无需
+embedding 配置、维度、图谱无关的 corpus-content hash、图谱绑定 snapshot hash 和图谱 run。profile
+identity 同时绑定图谱 run，因此重建不同图谱不会覆写旧向量或旧 trace。默认 `hash-token-v1` 是确定性、无需
 下载模型或联网的开发/CI baseline；它保证链路可复现，不应替代基准后选定的语义 embedding 模型。
 可通过 `openai-compatible` adapter 接入经基准验证的外部 embedding endpoint。
 
@@ -161,6 +163,43 @@ HYBRID_RAG_RETRIEVAL_EMBEDDING_MODEL=your-embedding-model
 HYBRID_RAG_RETRIEVAL_EMBEDDING_DIMENSIONS=1024
 ```
 
+## 阶段四：评测与 Demo
+
+仓库提交了一个版本化的 24 题离线 benchmark：事实、比较、关系和跨文档综合题各 6
+题。题集绑定图谱无关的 document/chunk corpus hash；`evaluate` 在开始时解析一次 active
+profile（或显式的 `--profile`），固定该 profile 和图谱 snapshot，并拒绝错误语料库。每题每种
+模式都持久化可 replay 的 `rtr_` trace；报告包含 citation 检查、evidence-hit/faithfulness
+proxy、延迟、盲评映射和锁定的 index provenance。
+
+默认使用确定性的离线盲评 fallback，因此不会为了得到评测结果而伪造 DeepSeek 调用或成本。
+稳定的 `evr_` 表示可复现配置，唯一的 `evx_` 表示一次实际执行，产物文件名为
+`evr_<...>-evx_<...>.json/.md`，不会静默覆盖前一次延迟或成本测量。
+
+从阶段三升级的既有数据库先运行一次 `build-index`。它会在可复用 profile 上补充
+corpus-content provenance，不会重新调用 embedding provider；随后才可执行 `evaluate`。
+
+```bash
+# 先完成 ingest、build-graph 和 build-index；默认结果写入已忽略的 artifacts/ 目录。
+uv run hybrid-rag evaluate --db .tmp/demo.db --json
+uv run hybrid-rag evaluate --db .tmp/demo.db --output-dir artifacts/evaluations
+
+# 锁定一个已有 profile，适合冻结真实论文评测时使用。
+uv run hybrid-rag evaluate --db .tmp/demo.db --profile idx_<id> --json
+
+# 只有在设置 DEEPSEEK_API_KEY 后才会请求 DeepSeek judge。
+# A/B 标签会逐题确定性打乱，judge 只能看到题目、候选答案和允许的 citation ID。
+uv run hybrid-rag evaluate --db .tmp/demo.db --deepseek-judge --json
+
+# 浏览式演示：选择数据库、构建索引、比较四种模式，并查看 citation、路径和 trace。
+uv run streamlit run src/hybrid_rag/demo.py
+```
+
+外部 embedding 的调用和费用不会被伪装成离线零成本；当前 CLI 会明确标记为 `unknown`，直到
+有完整、经核实的 usage 与价格披露。hash embedding 下，外部 judge 的费用只有在显式提供每百万
+input/output token 的价格假设、且没有 judge fallback 时才会计算为 `estimated`；否则同样标记为
+`unknown`。报告会记录 judge 的模型、endpoint、JSON/Thinking 设置，但不包含密钥。对真实论文
+质量、在线延迟和实际成本的结论必须在冻结语料与凭据可用的环境中单独运行，不能由 fixture 结果替代。
+
 ## 已实现的工程保证
 
 - document/chunk ID 由来源、内容和处理配置确定性生成。
@@ -173,6 +212,8 @@ HYBRID_RAG_RETRIEVAL_EMBEDDING_DIMENSIONS=1024
 - 当前规范图可从数据库证据确定性重建为 NetworkX `MultiDiGraph`。
 - 文档内容变化会在替换旧 chunks 前使关联 graph snapshot 与 active embedding profile 失效，
   防止使用陈旧向量；历史 `rtr_` trace 仍可离线重放。
+- embedding profile 的身份绑定语义配置、切块语料和 graph run；Alembic `0004` 会把旧 profile、
+  vector 与 trace 关联迁移到这个图谱快照身份。
 - 自动化测试使用本地 fixture，不依赖网络或 DeepSeek API。
 
 ## Agent 的边界
@@ -184,7 +225,10 @@ HYBRID_RAG_RETRIEVAL_EMBEDDING_DIMENSIONS=1024
 完整阶段划分见 [实施计划](docs/implementation-plan.md)，框架复用边界见
 [ADR 001](docs/adr/001-build-vs-reuse.md)，抽取与恢复语义见
 [ADR 002](docs/adr/002-graph-extraction-checkpoints.md)，索引和 trace 语义见
-[ADR 003](docs/adr/003-retrieval-index-and-trace.md)。
+[ADR 003](docs/adr/003-retrieval-index-and-trace.md)。系统图见
+[架构图](docs/architecture.md)，真实 benchmark 的记录规则见
+[评测报告模板](docs/evaluation-report.md)，可直接用于录屏的流程见
+[90 秒演示脚本](docs/demo-script.md)。
 
 ## 当前限制
 
@@ -196,3 +240,4 @@ HYBRID_RAG_RETRIEVAL_EMBEDDING_DIMENSIONS=1024
 - 默认实体归一采用保守规则，无法可靠判定为同一对象的候选会暂时保持分离。
 - DeepSeek 在线调用存在延迟和输出波动；自动化测试全部使用本地 scripted client，不把
   外部 API 可用性作为测试前提。
+- 固定 fixture benchmark 只验证端到端契约和回归；它不是关于真实论文检索质量的结论。

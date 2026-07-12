@@ -1,0 +1,77 @@
+"""Reproducible offline evaluation primitives for Hybrid RAG."""
+
+from hybrid_rag.evaluation.benchmark import (
+    BenchmarkLoadError,
+    fixture_benchmark_path,
+    load_benchmark,
+)
+from hybrid_rag.evaluation.contracts import (
+    BENCHMARK_SCHEMA_VERSION,
+    EVALUATION_SCHEMA_VERSION,
+    BenchmarkCase,
+    BlindCandidate,
+    BlindComparison,
+    BlindJudgment,
+    BlindLabel,
+    BlindWinner,
+    ComparisonSummary,
+    CostDisclosure,
+    CostStatus,
+    EvaluationBenchmark,
+    EvaluationCategory,
+    EvaluationOptions,
+    EvaluationReport,
+    EvaluationRun,
+    ExpectedEvidence,
+    IndexProvenance,
+    JudgeProvenance,
+    ModeSummary,
+    PairwiseJudgment,
+    RetrievalEvaluation,
+)
+from hybrid_rag.evaluation.deepseek_judge import (
+    DeepSeekBlindJudge,
+    DeepSeekJudgeError,
+    JudgeUsage,
+)
+from hybrid_rag.evaluation.judge import BlindJudge, DeterministicBlindJudge, blind_comparison
+from hybrid_rag.evaluation.reports import render_markdown, write_json, write_markdown
+from hybrid_rag.evaluation.runner import EvaluationRunner
+
+__all__ = [
+    "BENCHMARK_SCHEMA_VERSION",
+    "EVALUATION_SCHEMA_VERSION",
+    "BenchmarkCase",
+    "BenchmarkLoadError",
+    "BlindCandidate",
+    "BlindComparison",
+    "BlindJudge",
+    "BlindJudgment",
+    "BlindLabel",
+    "BlindWinner",
+    "ComparisonSummary",
+    "CostDisclosure",
+    "CostStatus",
+    "DeepSeekBlindJudge",
+    "DeepSeekJudgeError",
+    "DeterministicBlindJudge",
+    "EvaluationBenchmark",
+    "EvaluationCategory",
+    "EvaluationOptions",
+    "EvaluationReport",
+    "EvaluationRun",
+    "EvaluationRunner",
+    "ExpectedEvidence",
+    "IndexProvenance",
+    "JudgeProvenance",
+    "JudgeUsage",
+    "ModeSummary",
+    "PairwiseJudgment",
+    "RetrievalEvaluation",
+    "blind_comparison",
+    "fixture_benchmark_path",
+    "load_benchmark",
+    "render_markdown",
+    "write_json",
+    "write_markdown",
+]

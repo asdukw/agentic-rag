@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -561,7 +562,8 @@ class EmbeddingProfileRecord(Base):
         UniqueConstraint(
             "config_hash",
             "source_corpus_hash",
-            name="uq_embedding_profiles_config_corpus",
+            "source_graph_run_id",
+            name="uq_embedding_profiles_config_corpus_graph_run",
         ),
         CheckConstraint("dimensions > 0", name="ck_embedding_profiles_dimensions"),
         CheckConstraint(
@@ -570,6 +572,13 @@ class EmbeddingProfileRecord(Base):
         ),
         Index("ix_embedding_profiles_active", "is_active"),
         Index("ix_embedding_profiles_source_graph_run", "source_graph_run_id"),
+        Index(
+            "uq_embedding_profiles_config_corpus_no_graph",
+            "config_hash",
+            "source_corpus_hash",
+            unique=True,
+            sqlite_where=text("source_graph_run_id IS NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

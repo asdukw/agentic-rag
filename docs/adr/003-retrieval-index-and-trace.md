@@ -15,8 +15,9 @@ embedding model remains a benchmark decision.
 
 - Persist an `embedding_profiles` record and one JSON vector row per `chunk`,
   `entity`, or `relation` in SQLite. The profile identity includes the embedding
-  provider/model/dimensions/text-schema and a hash of the current corpus plus graph
-  snapshot. An atomic replacement activates only a complete index.
+  provider/model/dimensions/text-schema, graph-independent corpus-content hash, and
+  graph build run/snapshot. An atomic replacement activates only a complete index;
+  a distinct graph run has a distinct profile identity rather than overwriting vectors.
 - Build distinct embedding texts: contextualized source text for chunks, normalized
   name/type/aliases/description for entities, and named endpoint/predicate/
   description for relations.

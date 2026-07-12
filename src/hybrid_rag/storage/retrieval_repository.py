@@ -46,7 +46,9 @@ class IndexProfile:
     """Input contract for a reproducible embedding index.
 
     ``id`` is optional.  When omitted, :func:`make_profile_id` creates a stable
-    ID from the semantic index config and source corpus hash.
+    ID from the semantic index config, source corpus hash, and source graph
+    snapshot run. A no-graph index retains the legacy two-part identity so
+    profiles created before graph extraction remain addressable after upgrade.
     """
 
     config_hash: str
@@ -187,6 +189,7 @@ class SourceSnapshot:
     """Stable database source rows used to derive all three index texts."""
 
     source_corpus_hash: str
+    corpus_content_hash: str
     graph_corpus_hash: str | None
     build_run_id: str | None
     documents: tuple[SourceDocument, ...]
@@ -231,10 +234,21 @@ class StoredRetrievalTrace:
     created_at: datetime
 
 
-def make_profile_id(config_hash: str, source_corpus_hash: str) -> str:
-    """Return the deterministic profile ID for one config/corpus pair."""
+def make_profile_id(
+    config_hash: str,
+    source_corpus_hash: str,
+    source_graph_run_id: str | None = None,
+) -> str:
+    """Return the deterministic profile ID for one configuration/snapshot.
 
-    return stable_id("idx", config_hash, source_corpus_hash)
+    The source graph run is part of the identity whenever a graph was used to
+    derive entity and relation vectors. Keeping the no-graph form unchanged
+    lets pre-``0004`` chunk-only profiles remain stable across the migration.
+    """
+
+    if source_graph_run_id is None:
+        return stable_id("idx", config_hash, source_corpus_hash)
+    return stable_id("idx", config_hash, source_corpus_hash, source_graph_run_id)
 
 
 class RetrievalRepository:
@@ -289,7 +303,14 @@ class RetrievalRepository:
         relation_ids = [record.id for record in relation_records]
         entity_evidence = self._entity_evidence(session, entity_ids)
         relation_evidence = self._relation_evidence(session, relation_ids)
+        document_parts = [(record.id, record.content_hash) for record in document_records]
         chunk_parts = [(record.id, record.content_hash) for record in chunk_records]
+        corpus_content_hash = canonical_json_hash(
+            {
+                "documents": document_parts,
+                "chunks": chunk_parts,
+            }
+        )
         source_corpus_hash = canonical_json_hash(
             {
                 "chunks": chunk_parts,
@@ -299,6 +320,7 @@ class RetrievalRepository:
         )
         return SourceSnapshot(
             source_corpus_hash=source_corpus_hash,
+            corpus_content_hash=corpus_content_hash,
             graph_corpus_hash=run.corpus_hash if run is not None else None,
             build_run_id=run.id if run is not None else None,
             documents=tuple(
@@ -403,13 +425,17 @@ class RetrievalRepository:
         profile: IndexProfile,
         items: Sequence[IndexItem],
     ) -> StoredIndexProfile:
-        """Atomically replace all vectors for a config/corpus profile.
+        """Atomically replace all vectors for a config/corpus/graph profile.
 
         Call this inside ``session_factory.begin()``.  The profile becomes the
         sole active index only after its complete replacement is flushed.
         """
 
-        profile_id = profile.id or make_profile_id(profile.config_hash, profile.source_corpus_hash)
+        profile_id = profile.id or make_profile_id(
+            profile.config_hash,
+            profile.source_corpus_hash,
+            profile.source_graph_run_id,
+        )
         self._validate_profile(profile, profile_id)
         normalized_items = self._normalize_items(profile, profile_id, items)
         record = self._upsert_profile(session, profile, profile_id)
@@ -455,6 +481,22 @@ class RetrievalRepository:
 
         record = self._profile_record(session, profile_ref)
         return self._stored_profile(record) if record is not None else None
+
+    def update_profile_metadata(
+        self,
+        session: Session,
+        profile_id: str,
+        metadata: Mapping[str, Any],
+    ) -> StoredIndexProfile:
+        """Refresh non-identity provenance without replacing ready vectors."""
+
+        record = session.get(EmbeddingProfileRecord, profile_id)
+        if record is None:
+            raise RetrievalRepositoryError(f"unknown embedding profile: {profile_id}")
+        record.metadata_json = self._json_mapping(metadata, "embedding profile metadata")
+        record.updated_at = datetime.now(UTC)
+        session.flush()
+        return self._stored_profile(record)
 
     def list_profiles(
         self,
@@ -643,15 +685,20 @@ class RetrievalRepository:
         profile_id: str,
     ) -> EmbeddingProfileRecord:
         by_id = session.get(EmbeddingProfileRecord, profile_id)
-        by_key = session.scalar(
-            select(EmbeddingProfileRecord).where(
-                EmbeddingProfileRecord.config_hash == profile.config_hash,
-                EmbeddingProfileRecord.source_corpus_hash == profile.source_corpus_hash,
+        identity_filters = [
+            EmbeddingProfileRecord.config_hash == profile.config_hash,
+            EmbeddingProfileRecord.source_corpus_hash == profile.source_corpus_hash,
+        ]
+        if profile.source_graph_run_id is None:
+            identity_filters.append(EmbeddingProfileRecord.source_graph_run_id.is_(None))
+        else:
+            identity_filters.append(
+                EmbeddingProfileRecord.source_graph_run_id == profile.source_graph_run_id
             )
-        )
+        by_key = session.scalar(select(EmbeddingProfileRecord).where(*identity_filters))
         if by_id is not None and by_key is not None and by_id.id != by_key.id:
             raise RetrievalRepositoryError(
-                "embedding profile ID conflicts with an existing config/corpus profile"
+                "embedding profile ID conflicts with an existing config/corpus/graph profile"
             )
         record = by_id or by_key
         if record is None:
@@ -678,6 +725,7 @@ class RetrievalRepository:
             profile.dimensions,
             profile.schema_version,
             profile.source_corpus_hash,
+            profile.source_graph_run_id,
         )
         actual = (
             record.config_hash,
@@ -686,12 +734,12 @@ class RetrievalRepository:
             record.dimensions,
             record.schema_version,
             record.source_corpus_hash,
+            record.source_graph_run_id,
         )
         if actual != expected:
             raise RetrievalRepositoryError(
                 f"embedding profile {record.id} conflicts with the supplied semantic configuration"
             )
-        record.source_graph_run_id = profile.source_graph_run_id
         record.metadata_json = self._json_mapping(profile.metadata, "embedding profile metadata")
         record.updated_at = datetime.now(UTC)
         return record
@@ -771,6 +819,8 @@ class RetrievalRepository:
             ("source_corpus_hash", profile.source_corpus_hash),
         ):
             RetrievalRepository._require_hash(name, value)
+        if profile.source_graph_run_id is not None and not profile.source_graph_run_id.strip():
+            raise ValueError("source_graph_run_id cannot be blank when provided")
         if not profile.provider.strip():
             raise ValueError("embedding provider cannot be blank")
         if not profile.model.strip():

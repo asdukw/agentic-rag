@@ -158,16 +158,30 @@ class RetrievalService:
                 source_corpus_hash=snapshot.source_corpus_hash,
                 source_graph_run_id=snapshot.build_run_id,
                 metadata={
+                    "corpus_content_hash": snapshot.corpus_content_hash,
                     "graph_corpus_hash": snapshot.graph_corpus_hash,
                     "tokenizer": self.token_counter.name,
                 },
-                id=make_profile_id(semantic.config_hash, snapshot.source_corpus_hash),
+                id=make_profile_id(
+                    semantic.config_hash,
+                    snapshot.source_corpus_hash,
+                    snapshot.build_run_id,
+                ),
             )
             existing = self.repository.get_profile(session, profile.id)
             if existing is not None and existing.status == "ready" and not force:
                 loaded = self.repository.load_index(session, existing.id)
                 expected = len(snapshot.chunks) + len(snapshot.entities) + len(snapshot.relations)
                 if len(loaded.items) == expected:
+                    refreshed_metadata = dict(existing.metadata)
+                    refreshed_metadata.update(profile.metadata)
+                    if refreshed_metadata != existing.metadata:
+                        existing = self.repository.update_profile_metadata(
+                            session,
+                            existing.id,
+                            refreshed_metadata,
+                        )
+                        session.commit()
                     return self._build_report(existing, snapshot, reused=True)
 
         items = self._index_items(snapshot)
@@ -190,6 +204,21 @@ class RetrievalService:
         with self.database.session_factory.begin() as session:
             stored = self.repository.replace_index(session, profile, embedded_items)
         return self._build_report(stored, snapshot, reused=False)
+
+    def resolve_profile(self, profile_ref: str | None = None) -> StoredIndexProfile:
+        """Resolve one ready index profile before a multi-query operation.
+
+        Callers that execute several retrievals (such as a benchmark) can pin
+        the returned ID rather than repeatedly resolving whichever profile is
+        active at each individual query.
+        """
+
+        with self.database.session_factory() as session:
+            profile = self.repository.get_profile(session, profile_ref)
+        if profile is None:
+            qualifier = profile_ref or "an active profile"
+            raise ValueError(f"no ready embedding index for {qualifier}")
+        return profile
 
     def retrieve(
         self,

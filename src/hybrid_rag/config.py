@@ -42,8 +42,10 @@ class DeepSeekSettings(BaseSettings):
     extraction_model: str = Field(default="deepseek-v4-flash", min_length=1)
     query_model: str = Field(default="deepseek-v4-flash", min_length=1)
     answer_model: str = Field(default="deepseek-v4-flash", min_length=1)
+    judge_model: str = Field(default="deepseek-v4-pro", min_length=1)
     max_output_tokens: int = Field(default=4096, ge=256)
     answer_max_output_tokens: int = Field(default=2048, ge=128)
+    judge_max_output_tokens: int = Field(default=1024, ge=128)
     timeout_seconds: float = Field(default=180.0, gt=0)
 
 
@@ -90,6 +92,25 @@ class RetrievalSettings(BaseSettings):
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one retrieval fusion weight must be positive")
         return self
+
+
+class EvaluationSettings(BaseSettings):
+    """Benchmark and reporting defaults; external judge use remains explicit."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="HYBRID_RAG_EVALUATION_",
+        extra="ignore",
+    )
+
+    benchmark_path: Path = Path("data/evaluation/fixture-benchmark-v1.json")
+    output_dir: Path = Path("artifacts/evaluations")
+    top_k: int = Field(default=5, ge=1)
+    context_token_budget: int = Field(default=2400, ge=128)
+    graph_max_hops: int = Field(default=2, ge=1, le=4)
+    max_questions: int | None = Field(default=None, ge=1)
+    input_cost_usd_per_million_tokens: float | None = Field(default=None, ge=0)
+    output_cost_usd_per_million_tokens: float | None = Field(default=None, ge=0)
 
 
 def sqlite_url(path: Path) -> str:

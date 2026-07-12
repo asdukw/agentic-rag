@@ -163,10 +163,11 @@ NetworkX 路径、token budget、citation、离线 answer、trace 序列化和 r
 或外部 embedding endpoint 凭据，因此没有伪造在线关键词、回答或向量模型的延迟/成本数据；
 默认确定性 hash embedding 使离线 Definition of Done 可重复验证。
 
-实现采用 SQLite JSON vector baseline 与明确的 adapter 边界：`embedding_profiles`、
-`embedding_vectors` 和 `retrieval_traces` 由 Alembic `0003` 管理。profile hash 同时绑定
-provider/model/dimension/text schema 与当前 chunks/graph snapshot；完整 profile 才会在同一事务
-中激活。默认 `hash-token-v1` 仅用于离线开发和 CI，`OpenAI-compatible` embedding adapter
+实现采用 SQLite JSON vector baseline 与明确的 adapter 边界：Alembic `0003` 建立
+`embedding_profiles`、`embedding_vectors` 和 `retrieval_traces`，`0004` 将 profile identity、
+唯一约束和历史 trace 关联扩展为 graph-run-aware。profile 同时绑定 provider/model/dimension/text
+schema、图谱无关的 corpus-content hash 与当前 graph snapshot；完整 profile 才会在同一事务中
+激活。默认 `hash-token-v1` 仅用于离线开发和 CI，`OpenAI-compatible` embedding adapter
 保留给阶段四基准选定的真实模型，不改变核心检索算法或持久化契约。
 
 - 为 chunk/entity/relation 建独立 embedding 文本与向量索引。
@@ -193,7 +194,33 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-## 6. 阶段四：评测与 Demo
+## 6. 阶段四：评测与 Demo（已完成）
+
+完成日期：2026-07-12。
+
+离线验收结果：97 项自动化测试与 Ruff 检查通过，总覆盖率 86%。仓库提交版本化 24 题 benchmark，四类
+题型（事实、比较、关系、跨文档综合）各 6 题；fixture 端到端覆盖相同图谱和索引快照上的
+naive/hybrid 成对评测、证据/citation 检查、延迟记录、持久化 `rtr_` trace、盲评映射、
+JSON/Markdown 报告和 DeepSeek judge adapter 的失败回退。`evaluate` 会在开始时锁定 profile，
+校验 benchmark 的图谱无关 corpus-content hash，并记录 graph snapshot；因此不会在运行过程中
+混用 active profile，也不会在错误语料库上静默给出分数。默认确定性 blind fallback 不发起外部
+模型调用，因而不把离线执行时间误报为模型延迟或成本。
+
+`--deepseek-judge` 为显式 opt-in：候选答案逐题映射为匿名 A/B 标签，judge 只能基于给定
+问题、候选答案、citation ID 和 rubric 返回结果；它不能检索额外资料。该调用复用自有
+OpenAI-compatible client，并保持 JSON Output、Thinking disabled、schema 校验和 usage 留档。
+报告同时记录 judge model、endpoint 与采样/输出设置。每次执行生成唯一 `evx_`，使同一
+`evr_` 可复现配置的 JSON/Markdown artifact 不会彼此覆写。外部 embedding 始终是 `unknown`
+成本，除非有完整经核实的 usage/price disclosure；任一外部 judge fallback 也会降级为
+`unknown`。当前环境没有 `DEEPSEEK_API_KEY` 或真实 embedding endpoint 凭据，因此没有把
+fixture 分数、离线延迟或确定性 hash embedding 成本包装成真实论文或在线模型结论。
+
+从阶段三升级的数据库应先执行一次 `build-index`：现有可复用 profile 会被原地补充
+corpus-content provenance，不触发外部 embedding 请求；随后 `evaluate` 才会接受它。
+
+交付物包括 Streamlit 演示（四模式结果、citation、entity/relation/chunk 命中、NetworkX
+路径和 naive/hybrid 对比）、[架构图](architecture.md)、[评测报告模板](evaluation-report.md)
+与 [90 秒演示脚本](demo-script.md)。
 
 - 固定 20-30 个事实型、对比型、关系型和跨文档综合问题。
 - 比较 naive 与 hybrid 的 evidence hit rate、faithfulness、answer win rate、延迟和成本。
@@ -201,6 +228,19 @@ uv run ruff check .
   披露同厂模型自评偏差。
 - Streamlit 展示答案、引用、实体/关系/chunk 命中、图路径和两种模式对比。
 - README、架构图、评测报告和 1-2 分钟演示素材形成求职交付物。
+
+验收入口：
+
+```bash
+uv run alembic upgrade head
+uv run hybrid-rag build-index --db .tmp/demo.db --json
+uv run hybrid-rag evaluate --db .tmp/demo.db --json
+uv run hybrid-rag evaluate --db .tmp/demo.db --profile idx_<id> --json
+uv run hybrid-rag evaluate --db .tmp/demo.db --deepseek-judge --json  # 需要 DEEPSEEK_API_KEY
+uv run streamlit run src/hybrid_rag/demo.py
+uv run pytest -q
+uv run ruff check .
+```
 
 ## 7. 数据策略
 

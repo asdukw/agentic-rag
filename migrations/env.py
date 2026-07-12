@@ -34,15 +34,23 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
-        if connection.dialect.name == "sqlite":
-            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
-            # The PRAGMA starts SQLAlchemy's implicit transaction. Commit it so
-            # Alembic owns the following migration transaction and persists its
-            # version row as well as SQLite's non-transactional DDL.
+        sqlite = connection.dialect.name == "sqlite"
+        if sqlite:
+            # SQLite cannot rewrite a referenced primary key while FK checks are
+            # enabled. Migrations verify all references before this connection
+            # closes; application Database connections enable enforcement again
+            # on every connection.
+            connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
             connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()
+        if sqlite:
+            connection.commit()
+            violations = connection.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(f"migration left SQLite foreign-key violations: {violations!r}")
+            connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
 if context.is_offline_mode():

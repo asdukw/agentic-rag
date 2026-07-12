@@ -21,6 +21,7 @@ from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
+from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
 EVIDENCE = "Atlas connects Beacon through the graph."
 
@@ -108,6 +109,100 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert replay["answer"]["citations"] == answered["answer"]["citations"]
 
 
+def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _seed_scripted_graph(tmp_path)
+    _patch_offline_retrieval(monkeypatch)
+    runner = CliRunner()
+    index = _invoke_json(runner, ["build-index", "--db", str(db_path), "--json"])
+
+    output_dir = tmp_path / "evaluation-reports"
+    fixture_path = Path(__file__).parents[2] / "data" / "evaluation" / "fixture-benchmark-v1.json"
+    mismatch = runner.invoke(
+        app,
+        [
+            "evaluate",
+            "--benchmark",
+            str(fixture_path),
+            "--db",
+            str(db_path),
+            "--limit",
+            "2",
+            "--json",
+        ],
+    )
+    assert mismatch.exit_code == 1
+    assert "expected_source_corpus_hash" in mismatch.output
+    corpus_content_hash = _profile_corpus_content_hash(db_path, index["profile_id"])
+    benchmark_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+    benchmark_payload["expected_source_corpus_hash"] = corpus_content_hash
+    benchmark_path = tmp_path / "pinned-benchmark.json"
+    benchmark_path.write_text(json.dumps(benchmark_payload), encoding="utf-8")
+    arguments = [
+        "evaluate",
+        "--benchmark",
+        str(benchmark_path),
+        "--db",
+        str(db_path),
+        "--profile",
+        index["profile_id"],
+        "--output-dir",
+        str(output_dir),
+        "--limit",
+        "2",
+        "--json",
+    ]
+    report = _invoke_json(
+        runner,
+        arguments,
+    )
+
+    assert report["run"]["benchmark_id"] == "fixture-rag-v1"
+    assert report["run"]["options"]["modes"] == ["naive", "hybrid"]
+    assert len(report["run"]["case_ids"]) == 2
+    assert report["run"]["index_provenance"]["profile_id"] == index["profile_id"]
+    assert report["run"]["index_provenance"]["corpus_content_hash"] == corpus_content_hash
+    assert report["run"]["index_provenance"]["source_corpus_hash"] == index[
+        "source_corpus_hash"
+    ]
+    assert report["cost_disclosure"] == {
+        "status": "not_applicable",
+        "retrieval_model_calls": 0,
+        "judge_model_calls": 0,
+        "cost_usd": 0.0,
+        "price_assumption": "offline deterministic retrieval, answer, and judge",
+    }
+
+    artifact_stem = f"{report['run']['id']}-{report['run']['execution_id']}"
+    json_path = output_dir / f"{artifact_stem}.json"
+    markdown_path = output_dir / f"{artifact_stem}.md"
+    assert json.loads(json_path.read_text(encoding="utf-8")) == report
+    assert markdown_path.is_file()
+    assert "# Retrieval evaluation: fixture-rag-v1" in markdown_path.read_text(encoding="utf-8")
+
+    replay = _invoke_json(
+        runner,
+        [
+            "retrieval",
+            "replay",
+            report["evaluations"][0]["retrieval_trace_id"],
+            "--db",
+            str(db_path),
+            "--json",
+        ],
+    )
+    assert replay["trace_id"] == report["evaluations"][0]["retrieval_trace_id"]
+
+    repeated = _invoke_json(runner, arguments)
+    assert repeated["run"]["id"] == report["run"]["id"]
+    assert repeated["run"]["execution_id"] != report["run"]["execution_id"]
+    repeated_stem = f"{repeated['run']['id']}-{repeated['run']['execution_id']}"
+    assert (output_dir / f"{repeated_stem}.json").is_file()
+    assert json_path.is_file()
+
+
 def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SimpleNamespace(
         embedding_provider="hash",
@@ -170,6 +265,19 @@ def _seed_scripted_graph(tmp_path: Path) -> Path:
     finally:
         database.dispose()
     return db_path
+
+
+def _profile_corpus_content_hash(db_path: Path, profile_id: str) -> str:
+    database = Database(sqlite_url(db_path))
+    try:
+        with database.session_factory() as session:
+            profile = RetrievalRepository().get_profile(session, profile_id)
+    finally:
+        database.dispose()
+    assert profile is not None
+    value = profile.metadata["corpus_content_hash"]
+    assert isinstance(value, str)
+    return value
 
 
 def _invoke_json(runner: CliRunner, arguments: list[str]) -> dict[str, Any]:

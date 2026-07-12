@@ -71,6 +71,20 @@ def test_three_indexes_support_all_retrieval_modes_replay_and_grounded_answer(
         assert not built.reused
         assert reused.reused
         assert reused.profile_id == built.profile_id
+        with database.session_factory.begin() as session:
+            RetrievalRepository().update_profile_metadata(
+                session,
+                built.profile_id,
+                {"tokenizer": "test-words"},
+            )
+        refreshed = retrieval.build_index()
+        assert refreshed.reused
+        with database.session_factory() as session:
+            snapshot = RetrievalRepository().load_source_snapshot(session)
+            profile = RetrievalRepository().get_profile(session, built.profile_id)
+        assert profile is not None
+        assert profile.metadata["corpus_content_hash"] == snapshot.corpus_content_hash
+        assert profile.metadata["graph_corpus_hash"] == snapshot.graph_corpus_hash
 
         results = {
             mode: retrieval.retrieve(
