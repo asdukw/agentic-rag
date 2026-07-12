@@ -134,7 +134,7 @@ class BenchmarkCase(_StrictEvaluationModel):
 class EvaluationBenchmark(_StrictEvaluationModel):
     """A versioned fixed benchmark containing 20--30 evaluation cases."""
 
-    schema_version: Literal[BENCHMARK_SCHEMA_VERSION] = BENCHMARK_SCHEMA_VERSION
+    schema_version: Literal["1"] = BENCHMARK_SCHEMA_VERSION
     id: BenchmarkId
     title: NonBlankText = Field(max_length=512)
     corpus_id: NonBlankText = Field(max_length=512)
@@ -213,9 +213,9 @@ class EvaluationRun(_StrictEvaluationModel):
             pattern=r"^evr_[a-f0-9]{12,64}$",
         ),
     ]
-    schema_version: Literal[EVALUATION_SCHEMA_VERSION] = EVALUATION_SCHEMA_VERSION
+    schema_version: Literal["1"] = EVALUATION_SCHEMA_VERSION
     benchmark_id: BenchmarkId
-    benchmark_schema_version: Literal[BENCHMARK_SCHEMA_VERSION] = BENCHMARK_SCHEMA_VERSION
+    benchmark_schema_version: Literal["1"] = BENCHMARK_SCHEMA_VERSION
     options: EvaluationOptions
     case_ids: tuple[CaseId, ...] = Field(min_length=1, max_length=30)
     index_provenance: IndexProvenance

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 from typing import Annotated
@@ -237,7 +238,7 @@ async def _close_query_client(client: QueryClient | None) -> None:
     close = getattr(client, "close", None)
     if callable(close):
         result = close()
-        if hasattr(result, "__await__"):
+        if inspect.isawaitable(result):
             await result
 
 
