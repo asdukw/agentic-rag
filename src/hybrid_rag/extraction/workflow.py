@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Required, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -81,16 +81,16 @@ class WorkflowOptions:
 
 
 class BuildState(TypedDict, total=False):
-    run_id: str
-    max_concurrency: int
-    max_attempts: int
-    limit: int | None
-    retry_failed: bool
-    review_required: bool
-    top_k: int
-    retry_backoff_seconds: float
-    lease_seconds: float
-    output_path: str | None
+    run_id: Required[str]
+    max_concurrency: Required[int]
+    max_attempts: Required[int]
+    limit: Required[int | None]
+    retry_failed: Required[bool]
+    review_required: Required[bool]
+    top_k: Required[int]
+    retry_backoff_seconds: Required[float]
+    lease_seconds: Required[float]
+    output_path: Required[str | None]
     scheduled_ids: list[str]
     processed_ids: list[str]
     normalized_entities: int
@@ -100,14 +100,14 @@ class BuildState(TypedDict, total=False):
 
 
 class ChunkState(TypedDict, total=False):
-    run_id: str
-    job: dict[str, Any]
-    review_required: bool
-    max_attempts: int
-    retry_backoff_seconds: float
-    lease_seconds: float
+    run_id: Required[str]
+    job: Required[dict[str, Any]]
+    review_required: Required[bool]
+    max_attempts: Required[int]
+    retry_backoff_seconds: Required[float]
+    lease_seconds: Required[float]
     stage: str
-    local_attempt: int
+    local_attempt: Required[int]
     messages: Sequence[Mapping[str, Any]]
     claim: ExtractionClaim | None
     completion: CompletionResult | None
@@ -549,6 +549,9 @@ class GraphBuildWorkflow:
         claim = state.get("claim")
         if claim is None:
             raise RuntimeError("cannot retry an unclaimed extraction")
+        outcome = state.get("outcome")
+        if outcome is None:
+            raise RuntimeError("retry requested before an attempt outcome was recorded")
         validation_error = state.get("validation_error")
         provider_error = state.get("provider_error")
         error = validation_error or provider_error
@@ -559,14 +562,15 @@ class GraphBuildWorkflow:
                 session,
                 claim,
                 error=str(error),
-                outcome=state["outcome"],
+                outcome=outcome,
             )
         delay = state["retry_backoff_seconds"] * (2 ** max(state["local_attempt"] - 1, 0))
         if delay:
             await asyncio.sleep(min(delay, 30.0))
         if validation_error is not None and validation_error.repairable:
             stage = "repair"
-            invalid_response = state["completion"].content if state.get("completion") else None
+            completion = state.get("completion")
+            invalid_response = completion.content if completion else None
             issues = validation_error.repair_messages
         else:
             stage = state.get("stage", "extract")
