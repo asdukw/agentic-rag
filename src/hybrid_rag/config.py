@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,37 @@ class Settings(BaseSettings):
         if self.chunk_overlap_tokens >= self.chunk_size_tokens:
             raise ValueError("chunk overlap must be smaller than chunk size")
         return self
+
+
+class DeepSeekSettings(BaseSettings):
+    """DeepSeek credentials and request limits, loaded only by extraction commands."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="DEEPSEEK_",
+        extra="ignore",
+    )
+
+    api_key: SecretStr | None = None
+    base_url: str = Field(default="https://api.deepseek.com", min_length=1)
+    extraction_model: str = Field(default="deepseek-v4-flash", min_length=1)
+    max_output_tokens: int = Field(default=4096, ge=256)
+    timeout_seconds: float = Field(default=180.0, gt=0)
+
+
+class GraphSettings(BaseSettings):
+    """Local graph-build execution settings; these do not affect extraction identity."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="HYBRID_RAG_GRAPH_",
+        extra="ignore",
+    )
+
+    checkpoint_path: Path = Path("storage/langgraph.db")
+    max_concurrency: int = Field(default=8, ge=1)
+    max_attempts: int = Field(default=3, ge=1)
+    top_k: int = Field(default=10, ge=1)
 
 
 def sqlite_url(path: Path) -> str:

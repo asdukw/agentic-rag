@@ -93,7 +93,19 @@ Definition of Done：
 - SQLite 不存在孤儿 chunk，外键和唯一约束实际生效。
 - 自动化测试不访问网络；真实论文 smoke test 与 CI fixture 分离。
 
-## 4. 阶段二：DeepSeek 抽取与图谱
+## 4. 阶段二：DeepSeek 抽取与图谱（已完成）
+
+完成日期：2026-07-11。
+
+离线验收结果：52 项自动化测试与 Ruff 检查通过，总覆盖率 89%。Alembic 已验证空库、
+带阶段一数据的升级以及 `0002 -> 0001 -> 0002` 往返；scripted client 端到端覆盖非法
+JSON 修复、永久失败隔离、成功缓存、人工复核暂停/恢复和 worker 中断后的 lease 回收。
+fixture smoke run 处理 5 个 chunks，生成 2 个规范实体、1 条关系和 1 个弱连通分量；第二次
+同配置运行 5 个 chunks 全部命中缓存，没有新增模型调用。
+
+当前环境未提供 `DEEPSEEK_API_KEY`，因此没有伪造在线模型的延迟、token 或成本数据；
+真实 `deepseek-v4-flash` 小批量 smoke test 仍需在有凭据的环境执行，但不阻断离线
+Definition of Done。
 
 引入 LangGraph，状态图保持显式：
 
@@ -107,6 +119,13 @@ load pending chunks
   -> merge relations
   -> persist + build NetworkX graph
 ```
+
+实际实现采用父图和 per-chunk 子图：父图只在 checkpoint 中保存 run/任务 ID 与小型指标，
+chunk 正文、raw response、attempt、validated result 和 provenance 以业务数据库为事实来源。
+每次真实 API 请求都执行“短事务 claim -> 事务外调用 -> append-only attempt ->
+complete/requeue/fail”，attempt 显式归属 run；即使 checkpoint 丢失，也能从业务库恢复
+同一调用上限和成本统计。人工复核状态归属 build item，不污染跨 run 共享的成功抽取缓存。
+LangGraph checkpoint 使用独立 SQLite 文件，run ID 同时作为 `thread_id`。
 
 关键实现要求：
 
@@ -122,6 +141,16 @@ load pending chunks
 
 验收：`build-graph` 可中断恢复，失败样本可追踪，图谱能输出节点/边/连通分量和
 Top-K 实体。
+
+验收入口：
+
+```bash
+uv run hybrid-rag build-graph --db .tmp/demo.db --limit 10
+uv run hybrid-rag graph stats --db .tmp/demo.db
+uv run hybrid-rag graph inspect <gbr_|xtr_|xat_|ent_|rel_ id> --db .tmp/demo.db
+uv run pytest --cov=hybrid_rag --cov-report=term-missing -q
+uv run ruff check .
+```
 
 ## 5. 阶段三：多路索引与四种检索
 

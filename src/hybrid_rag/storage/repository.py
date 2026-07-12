@@ -6,6 +6,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from hybrid_rag.schemas import ChunkData, IngestReport, ParsedDocument, StorageStats
+from hybrid_rag.storage.graph_repository import GraphRepository
 from hybrid_rag.storage.models import ChunkRecord, DocumentRecord, IngestRunRecord
 
 
@@ -72,6 +73,7 @@ class IngestRepository:
         else:
             for key, value in values.items():
                 setattr(existing, key, value)
+            GraphRepository().invalidate_runs_for_document(session, document.id)
             session.execute(delete(ChunkRecord).where(ChunkRecord.document_id == document.id))
             session.flush()
             status = "updated"

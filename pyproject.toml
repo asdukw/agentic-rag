@@ -6,6 +6,10 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "alembic>=1.16,<2",
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3.1,<4",
+    "networkx>=3.6,<4",
+    "openai>=2.44,<3",
     "pydantic>=2.11,<3",
     "pydantic-settings>=2.10,<3",
     "pypdf>=6,<7",
