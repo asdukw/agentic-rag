@@ -128,6 +128,9 @@ def _retrieval_options(
         naive_bm25_weight=settings.naive_bm25_weight,
         bm25_k1=settings.bm25_k1,
         bm25_b=settings.bm25_b,
+        reranker_provider=settings.reranker_provider,
+        reranker_model=settings.reranker_model,
+        rerank_candidate_multiplier=settings.rerank_candidate_multiplier,
     )
 
 
@@ -193,6 +196,9 @@ def _evaluation_options(
         naive_bm25_weight=retrieval.naive_bm25_weight,
         bm25_k1=retrieval.bm25_k1,
         bm25_b=retrieval.bm25_b,
+        reranker_provider=retrieval.reranker_provider,
+        reranker_model=retrieval.reranker_model,
+        rerank_candidate_multiplier=retrieval.rerank_candidate_multiplier,
         case_ids=case_ids,
     )
 
@@ -291,6 +297,12 @@ def _render_retrieval_result(result: RetrievalResult, *, json_output: bool) -> N
             ", ".join(f"{route}={score:.3f}" for route, score in item.route_scores.items()),
         )
     console.print(table)
+    if rerank := result.trace.rerank:
+        console.print(
+            "Rerank: "
+            f"{rerank.provider}/{rerank.model}/{rerank.version} "
+            f"({len(rerank.hits)} candidates, limit={rerank.candidate_limit})"
+        )
     if result.trace_id:
         console.print(f"Replay with: hybrid-rag retrieval replay {result.trace_id}")
     console.print(result.context or "[yellow]No evidence fit the context budget.[/yellow]")

@@ -8,6 +8,7 @@ from hybrid_rag.config import sqlite_url
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.models import CandidateHit, RetrievalMode
+from hybrid_rag.retrieval.reranker import RerankCandidate, RerankHit, RerankScoreComponent
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
@@ -44,6 +45,43 @@ class ScriptedDenseEmbeddingProvider:
         return (1.0, 0.0)
 
 
+class ScriptedReranker:
+    """Make the second-stage rerank decision observable without model calls."""
+
+    provider = "scripted"
+    model = "scripted-reranker-v1"
+    version = "scripted-v1"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def rerank(
+        self,
+        query: str,
+        candidates: Sequence[RerankCandidate],
+        *,
+        limit: int | None = None,
+    ) -> tuple[RerankHit, ...]:
+        assert query == _RARE_TERM
+        self.calls += 1
+        hits = tuple(
+            RerankHit(
+                candidate=candidate,
+                score=1.0 if _LEXICAL_MARKER in candidate.text else 0.0,
+                components={
+                    "scripted": RerankScoreComponent(
+                        raw_score=1.0 if _LEXICAL_MARKER in candidate.text else 0.0,
+                        normalized_score=1.0 if _LEXICAL_MARKER in candidate.text else 0.0,
+                        weight=1.0,
+                        weighted_score=1.0 if _LEXICAL_MARKER in candidate.text else 0.0,
+                    )
+                },
+            )
+            for candidate in candidates
+        )
+        return hits if limit is None else hits[:limit]
+
+
 def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
     tmp_path: Path,
 ) -> None:
@@ -64,6 +102,7 @@ def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
                 context_token_budget=64,
                 naive_dense_weight=1.0,
                 naive_bm25_weight=0.0,
+                reranker_provider="none",
             ),
             persist=False,
         )
@@ -76,6 +115,7 @@ def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
                 context_token_budget=64,
                 naive_dense_weight=0.0,
                 naive_bm25_weight=1.0,
+                reranker_provider="none",
             ),
             persist=False,
         )
@@ -90,6 +130,7 @@ def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
                 naive_bm25_weight=1.0,
                 bm25_k1=1.4,
                 bm25_b=0.5,
+                reranker_provider="none",
             ),
             persist=False,
         )
@@ -100,6 +141,7 @@ def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
         assert combined.trace.settings["naive_bm25_weight"] == 1.0
         assert combined.trace.settings["bm25_k1"] == 1.4
         assert combined.trace.settings["bm25_b"] == 0.5
+        assert combined.trace.rerank is None
 
         route_hits = combined.trace.routes[RetrievalMode.NAIVE.value].hits
         dense_hit = _hit_with_marker(route_hits, _DENSE_MARKER)
@@ -112,6 +154,50 @@ def test_naive_route_fuses_dense_and_bm25_and_persists_score_breakdown(
         assert lexical_hit.score_components["bm25"].raw_score > 0.0
         assert lexical_hit.score_components["bm25"].normalized_score == 1.0
         assert lexical_hit.score_components["bm25"].weighted_score == 0.5
+    finally:
+        database.dispose()
+
+
+def test_reranker_reorders_fused_candidates_and_trace_replays_without_a_new_call(
+    tmp_path: Path,
+) -> None:
+    database = _seed_two_chunk_database(tmp_path)
+    reranker = ScriptedReranker()
+    retrieval = RetrievalService(
+        database,
+        ScriptedDenseEmbeddingProvider(),
+        WordCounter(),
+        reranker=reranker,
+    )
+
+    try:
+        retrieval.build_index()
+        result = retrieval.retrieve(
+            _RARE_TERM,
+            mode=RetrievalMode.NAIVE,
+            options=RetrievalOptions(
+                top_k=2,
+                candidate_multiplier=2,
+                context_token_budget=64,
+                naive_dense_weight=1.0,
+                naive_bm25_weight=0.0,
+                reranker_provider="scripted",
+                reranker_model="scripted-reranker-v1",
+            ),
+        )
+
+        assert _LEXICAL_MARKER in result.hits[0].metadata["text"]
+        assert result.hits[0].rerank_score == 1.0
+        assert result.hits[0].retrieval_score == 0.0
+        assert result.trace.rerank is not None
+        assert result.trace.rerank.provider == "scripted"
+        assert result.trace.rerank.hits[0].pre_rerank_rank == 2
+        assert result.trace.rerank.hits[0].final_rank == 1
+        assert result.trace.rerank.hits[0].components["scripted"].weighted_score == 1.0
+        assert result.trace_id is not None
+        calls_before_replay = reranker.calls
+        assert retrieval.replay(result.trace_id) == result
+        assert reranker.calls == calls_before_replay
     finally:
         database.dispose()
 

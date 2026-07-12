@@ -172,8 +172,8 @@ schema、图谱无关的 corpus-content hash 与当前 graph snapshot；完整 p
 
 - 为 chunk/entity/relation 建独立 embedding 文本与向量索引。
 - 实现 naive、local、global、hybrid 四种 retriever，共享统一结果 schema。
-- hybrid 并行运行三路召回，执行归一化、加权融合、去重、图扩展和 token budget
-  裁剪。
+- hybrid 并行运行三路召回，执行归一化、加权融合、去重、图扩展、融合后的可替换 rerank
+  和 token budget 裁剪。
 - 返回命中分数、图路径、来源 chunk 和最终上下文，保证可解释。
 - DeepSeek 只负责关键词抽取和基于证据生成，不让 Agent 自由选择不可控工具链。
 

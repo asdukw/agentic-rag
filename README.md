@@ -32,6 +32,9 @@ uv run hybrid-rag ask "What is retrieval-augmented generation?"
 确定性本地特征哈希 embedding，适合开发、测试和演示；它不是语义模型。
 `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
 直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
+融合后的候选默认还会经过本地确定性的 lexical reranker：它比较候选集内 BM25、查询词覆盖率、
+有序词邻近度和少量首阶段分数，再决定最终 Top-K。它不是 cross-encoder；可在 `.env` 中将
+`HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 关闭。
 
 ## 可选功能
 
@@ -66,8 +69,8 @@ uv run hybrid-rag retrieval replay rtr_<id> --json
 
 可选 `--mode naive|local|global|hybrid`：`naive` 是 chunk dense + BM25 召回，`local` 从实体
 命中扩展图邻居，`global` 从关系命中汇聚证据，`hybrid` 固定融合三条路径。每次检索都会产生
-可 replay 的 `rtr_` trace；其中保留 naive 的 dense/BM25 原始、归一化和加权分数。`--deepseek`
-才会启用模型做关键词提取或受证据约束的回答。
+可 replay 的 `rtr_` trace；其中保留 naive 的 dense/BM25 分项，以及融合后 reranker 的候选池、
+原始/归一化分数和最终名次。`--deepseek` 才会启用模型做关键词提取或受证据约束的回答。
 
 ### 运行评测或演示界面
 

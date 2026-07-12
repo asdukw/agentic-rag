@@ -27,7 +27,13 @@ from hybrid_rag.retrieval.embedding import (
     HashEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
 )
-from hybrid_rag.retrieval.models import CandidateHit, GraphPath, RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.models import (
+    CandidateHit,
+    GraphPath,
+    RerankTrace,
+    RetrievalMode,
+    RetrievalResult,
+)
 from hybrid_rag.retrieval.query import (
     DeepSeekQueryClient,
     DeterministicQueryClient,
@@ -78,6 +84,14 @@ _TEXT: dict[Language, dict[str, str]] = {
         "top_k": "Top K",
         "context_token_budget": "Context token budget",
         "maximum_graph_hops": "Maximum graph hops",
+        "reranking": "Reranking",
+        "enable_reranker": "Enable lexical reranker",
+        "reranker_help": (
+            "Reranks fused candidates with local BM25, query coverage, and ordered-term "
+            "proximity. It is deterministic, not a cross-encoder."
+        ),
+        "rerank_candidate_multiplier": "Rerank candidate multiplier",
+        "rerank_candidate_help": "Rerank Top K × this many first-stage candidates.",
         "use_deepseek": "Use DeepSeek for keywords + answer",
         "deepseek_help": (
             "When off, the demo uses deterministic offline keyword and answer functions."
@@ -121,7 +135,7 @@ _TEXT: dict[Language, dict[str, str]] = {
         "not_persisted": "not persisted",
         "context_tokens": "Context tokens",
         "context_chunks": "Context chunks",
-        "fused_hits": "Fused hits",
+        "fused_hits": "Final hits",
         "graph_paths": "Graph paths",
         "citation_context": "Citation context",
         "no_context": "No chunk fit the selected context budget.",
@@ -136,6 +150,8 @@ _TEXT: dict[Language, dict[str, str]] = {
         "entities": "entities",
         "relations": "relations",
         "route_scores_candidates": "Route scores and fused candidates",
+        "rerank_trace": "Rerank decisions",
+        "no_rerank": "Reranking is disabled for this request.",
         "no_route_candidates": "This trace did not retain route candidates.",
         "final_context_trace": "Final context and replayable trace",
         "no_graph_path": "No graph path was needed for this result.",
@@ -146,6 +162,10 @@ _TEXT: dict[Language, dict[str, str]] = {
         "object": "object",
         "kind": "kind",
         "rank": "rank",
+        "pre_rerank_rank": "pre-rerank rank",
+        "pre_rerank_score": "pre-rerank score",
+        "rerank_score": "rerank score",
+        "retrieval_score": "retrieval score",
         "route_scores": "route scores",
         "score_components": "score components",
         "source_chunks": "source chunks",
@@ -175,6 +195,14 @@ _TEXT: dict[Language, dict[str, str]] = {
         "top_k": "Top K",
         "context_token_budget": "上下文 Token 预算",
         "maximum_graph_hops": "最大图跳数",
+        "reranking": "重排序",
+        "enable_reranker": "启用词法重排序器",
+        "reranker_help": (
+            "在融合候选上使用本地 BM25、查询词覆盖率和有序词邻近度重排序；"
+            "它是确定性实现，不是 cross-encoder。"
+        ),
+        "rerank_candidate_multiplier": "重排序候选倍率",
+        "rerank_candidate_help": "对 Top K × 此倍率的首阶段候选进行重排序。",
         "use_deepseek": "使用 DeepSeek 提取关键词并生成回答",
         "deepseek_help": "关闭时，演示会使用确定性的离线关键词和回答函数。",
         "deepseek_warning": (
@@ -212,7 +240,7 @@ _TEXT: dict[Language, dict[str, str]] = {
         "not_persisted": "未持久化",
         "context_tokens": "上下文 Token",
         "context_chunks": "上下文 Chunk",
-        "fused_hits": "融合命中",
+        "fused_hits": "最终命中",
         "graph_paths": "图路径",
         "citation_context": "引用上下文",
         "no_context": "没有 Chunk 能放入当前上下文预算。",
@@ -227,6 +255,8 @@ _TEXT: dict[Language, dict[str, str]] = {
         "entities": "实体",
         "relations": "关系",
         "route_scores_candidates": "路由分数与融合候选",
+        "rerank_trace": "重排序决策",
+        "no_rerank": "本次请求未启用重排序。",
         "no_route_candidates": "此 trace 未保留路由候选。",
         "final_context_trace": "最终上下文与可重放 Trace",
         "no_graph_path": "此结果不需要图路径。",
@@ -237,6 +267,10 @@ _TEXT: dict[Language, dict[str, str]] = {
         "object": "对象",
         "kind": "类型",
         "rank": "排名",
+        "pre_rerank_rank": "重排序前排名",
+        "pre_rerank_score": "重排序前分数",
+        "rerank_score": "重排序分数",
+        "retrieval_score": "召回分数",
         "route_scores": "路由分数",
         "score_components": "分数分量",
         "source_chunks": "来源 Chunk",
@@ -440,6 +474,12 @@ def hit_rows(
             ui_text(language, "kind"): _kind_label(hit.kind, language),
             ui_text(language, "score"): round(hit.score, 4),
             ui_text(language, "rank"): hit.rank,
+            ui_text(language, "retrieval_score"): (
+                round(hit.retrieval_score, 4) if hit.retrieval_score is not None else "—"
+            ),
+            ui_text(language, "rerank_score"): (
+                round(hit.rerank_score, 4) if hit.rerank_score is not None else "—"
+            ),
             ui_text(language, "route_scores"): _format_scores(hit.route_scores),
             ui_text(language, "score_components"): _format_score_components(
                 hit.score_components
@@ -447,6 +487,22 @@ def hit_rows(
             ui_text(language, "source_chunks"): ", ".join(hit.source_chunk_ids),
         }
         for hit in hits
+    ]
+
+
+def rerank_rows(rerank: RerankTrace, *, language: Language = "en") -> list[dict[str, Any]]:
+    """Flatten the second-stage decision without hiding recall provenance."""
+
+    return [
+        {
+            ui_text(language, "object"): hit.object_id,
+            ui_text(language, "pre_rerank_rank"): hit.pre_rerank_rank,
+            ui_text(language, "pre_rerank_score"): round(hit.pre_rerank_score, 4),
+            ui_text(language, "rerank_score"): round(hit.score, 4),
+            ui_text(language, "rank"): hit.final_rank,
+            ui_text(language, "score_components"): _format_score_components(hit.components),
+        }
+        for hit in rerank.hits
     ]
 
 
@@ -553,6 +609,16 @@ def _render_retrieval(st: Any, result: RetrievalResult, *, language: Language) -
         fused = hit_rows(result.hits, language=language)
         if fused:
             st.dataframe(fused, width="stretch", hide_index=True)
+        if result.trace.rerank is None:
+            st.caption(ui_text(language, "no_rerank"))
+        else:
+            rerank = result.trace.rerank
+            st.markdown("#### " + ui_text(language, "rerank_trace"))
+            st.caption(
+                f"{rerank.provider} / {rerank.model} / {rerank.version} · "
+                f"{ui_text(language, 'candidates')} ≤ {rerank.candidate_limit}"
+            )
+            st.dataframe(rerank_rows(rerank, language=language), width="stretch", hide_index=True)
 
     with st.expander(ui_text(language, "graph_paths"), expanded=False):
         paths = graph_path_rows(result.graph_paths, language=language)
@@ -660,6 +726,23 @@ def _runtime_from_sidebar(
             key="hybrid_rag_graph_hops",
         )
     )
+    st.sidebar.subheader(ui_text(language, "reranking"))
+    rerank_enabled = st.sidebar.toggle(
+        ui_text(language, "enable_reranker"),
+        value=retrieval.reranker_provider != "none",
+        help=ui_text(language, "reranker_help"),
+        key="hybrid_rag_rerank_enabled",
+    )
+    rerank_candidate_multiplier = int(
+        st.sidebar.number_input(
+            ui_text(language, "rerank_candidate_multiplier"),
+            min_value=1,
+            max_value=32,
+            value=retrieval.rerank_candidate_multiplier,
+            help=ui_text(language, "rerank_candidate_help"),
+            key="hybrid_rag_rerank_candidate_multiplier",
+        )
+    )
     use_deepseek = st.sidebar.checkbox(
         ui_text(language, "use_deepseek"),
         value=False,
@@ -681,6 +764,9 @@ def _runtime_from_sidebar(
         naive_bm25_weight=retrieval.naive_bm25_weight,
         bm25_k1=retrieval.bm25_k1,
         bm25_b=retrieval.bm25_b,
+        reranker_provider="lexical" if rerank_enabled else "none",
+        reranker_model=retrieval.reranker_model,
+        rerank_candidate_multiplier=rerank_candidate_multiplier,
     )
     runtime = DemoRuntime(
         database_url=database_url_from_input(database_input, settings),

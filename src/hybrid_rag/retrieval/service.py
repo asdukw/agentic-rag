@@ -38,6 +38,9 @@ from hybrid_rag.retrieval.models import (
     GraphPath,
     IndexBuildReport,
     IndexSemanticConfig,
+    RerankComponentTrace,
+    RerankTrace,
+    RerankTraceHit,
     RetrievalMode,
     RetrievalResult,
     RetrievalTrace,
@@ -50,6 +53,13 @@ from hybrid_rag.retrieval.query import (
     GroundedAnswer,
     KeywordExtractor,
     QueryClient,
+)
+from hybrid_rag.retrieval.reranker import (
+    LEXICAL_RERANKER_MODEL,
+    LexicalReranker,
+    RerankCandidate,
+    Reranker,
+    RerankHit,
 )
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.retrieval_repository import (
@@ -84,6 +94,9 @@ class RetrievalOptions:
     naive_bm25_weight: float = 1.0
     bm25_k1: float = DEFAULT_BM25_K1
     bm25_b: float = DEFAULT_BM25_B
+    reranker_provider: str = "lexical"
+    reranker_model: str = LEXICAL_RERANKER_MODEL
+    rerank_candidate_multiplier: int = 4
 
     def __post_init__(self) -> None:
         if self.top_k < 1:
@@ -108,6 +121,12 @@ class RetrievalOptions:
         if self.naive_dense_weight + self.naive_bm25_weight <= 0:
             raise ValueError("at least one naive subroute weight must be positive")
         BM25Config(k1=self.bm25_k1, b=self.bm25_b)
+        if not self.reranker_provider.strip():
+            raise ValueError("reranker_provider must not be empty")
+        if not self.reranker_model.strip():
+            raise ValueError("reranker_model must not be empty")
+        if self.rerank_candidate_multiplier < 1:
+            raise ValueError("rerank_candidate_multiplier must be positive")
 
     @property
     def config_hash(self) -> str:
@@ -131,6 +150,14 @@ class RetrievalOptions:
     @property
     def bm25_config(self) -> BM25Config:
         return BM25Config(k1=self.bm25_k1, b=self.bm25_b)
+
+    @property
+    def rerank_enabled(self) -> bool:
+        return self.reranker_provider != "none"
+
+    @property
+    def rerank_candidate_limit(self) -> int:
+        return self.top_k * self.rerank_candidate_multiplier
 
 
 class AnswerResult(BaseModel):
@@ -168,11 +195,13 @@ class RetrievalService:
         token_counter: TokenCounter,
         *,
         repository: RetrievalRepository | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self.database = database
         self.embedding_provider = embedding_provider
         self.token_counter = token_counter
         self.repository = repository or RetrievalRepository()
+        self.reranker = reranker or LexicalReranker()
 
     def build_index(
         self,
@@ -560,12 +589,28 @@ class RetrievalService:
             paths = route.paths
             route_traces = {mode.value: self._route_trace(route, index)}
 
-        ordered_chunk_ids = rank_ids(fused_scores, limit=options.top_k)
         chunks = {item.object_id: item for item in index.chunks}
+        rerank_trace: RerankTrace | None = None
+        if options.rerank_enabled:
+            rerank_candidate_ids = rank_ids(
+                fused_scores,
+                limit=options.rerank_candidate_limit,
+            )
+            ordered_reranked_ids, final_scores, rerank_trace = self._rerank(
+                query=query,
+                candidate_ids=rerank_candidate_ids,
+                chunks=chunks,
+                fused_scores=fused_scores,
+                options=options,
+            )
+            ordered_chunk_ids = ordered_reranked_ids[: options.top_k]
+        else:
+            final_scores = dict(fused_scores)
+            ordered_chunk_ids = rank_ids(final_scores, limit=options.top_k)
         selected_context = self._context_items(
             ordered_chunk_ids,
             chunks,
-            fused_scores,
+            final_scores,
             components,
             routes,
             budget=options.context_token_budget,
@@ -576,8 +621,10 @@ class RetrievalService:
             CandidateHit(
                 object_id=chunk_id,
                 kind="chunk",
-                score=float(fused_scores[chunk_id]),
+                score=float(final_scores[chunk_id]),
                 raw_score=float(raw_scores.get(chunk_id, fused_scores[chunk_id])),
+                retrieval_score=float(fused_scores[chunk_id]),
+                rerank_score=float(final_scores[chunk_id]) if rerank_trace is not None else None,
                 rank=rank,
                 route_scores={
                     route: float(score)
@@ -602,6 +649,7 @@ class RetrievalService:
             mode=mode,
             keywords=keywords,
             routes=route_traces,
+            rerank=rerank_trace,
             fused_hits=hit_values,
             graph_paths=paths,
             context_items=selected_context,
@@ -615,6 +663,10 @@ class RetrievalService:
                 "tokenizer": self.token_counter.name,
                 "naive_lexical_scorer": BM25_SCORER_VERSION,
                 "naive_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
+                "rerank_enabled": options.rerank_enabled,
+                "reranker_provider": options.reranker_provider,
+                "reranker_model": options.reranker_model,
+                "reranker_version": self.reranker.version if options.rerank_enabled else "none",
             },
         )
         return RetrievalResult(
@@ -628,6 +680,86 @@ class RetrievalService:
             context=context,
             context_tokens=context_tokens,
             trace=trace,
+        )
+
+    def _rerank(
+        self,
+        *,
+        query: str,
+        candidate_ids: Sequence[str],
+        chunks: Mapping[str, IndexItem],
+        fused_scores: Mapping[str, float],
+        options: RetrievalOptions,
+    ) -> tuple[tuple[str, ...], dict[str, float], RerankTrace]:
+        """Rerank first-stage candidates without changing their recall provenance."""
+
+        if options.reranker_provider != self.reranker.provider:
+            raise ValueError(
+                "reranker provider differs from the requested retrieval configuration "
+                f"({self.reranker.provider!r} != {options.reranker_provider!r})"
+            )
+        if options.reranker_model != self.reranker.model:
+            raise ValueError(
+                "reranker model differs from the requested retrieval configuration "
+                f"({self.reranker.model!r} != {options.reranker_model!r})"
+            )
+        candidates = tuple(
+            RerankCandidate(
+                object_id=chunk_id,
+                text=chunks[chunk_id].embedding_text,
+                prior_score=float(fused_scores[chunk_id]),
+            )
+            for chunk_id in candidate_ids
+        )
+        returned = self.reranker.rerank(query, candidates)
+        if any(not isinstance(hit, RerankHit) for hit in returned):
+            raise TypeError("reranker must return RerankHit values")
+        expected_ids = {candidate.object_id for candidate in candidates}
+        returned_ids = {hit.candidate.object_id for hit in returned}
+        if len(returned) != len(candidates) or returned_ids != expected_ids:
+            raise RuntimeError("reranker must return one score for every supplied candidate")
+
+        original_candidates = {candidate.object_id: candidate for candidate in candidates}
+        pre_rerank_ranks = {chunk_id: rank for rank, chunk_id in enumerate(candidate_ids, start=1)}
+        ordered = tuple(
+            sorted(
+                returned,
+                key=lambda hit: (
+                    -hit.score,
+                    -original_candidates[hit.candidate.object_id].prior_score,
+                    hit.candidate.object_id,
+                ),
+            )
+        )
+        trace_hits = tuple(
+            RerankTraceHit(
+                object_id=hit.candidate.object_id,
+                pre_rerank_rank=pre_rerank_ranks[hit.candidate.object_id],
+                pre_rerank_score=original_candidates[hit.candidate.object_id].prior_score,
+                score=hit.score,
+                final_rank=rank,
+                components={
+                    name: RerankComponentTrace(
+                        raw_score=component.raw_score,
+                        normalized_score=component.normalized_score,
+                        weight=component.weight,
+                        weighted_score=component.weighted_score,
+                    )
+                    for name, component in sorted(hit.components.items())
+                },
+            )
+            for rank, hit in enumerate(ordered, start=1)
+        )
+        return (
+            tuple(hit.candidate.object_id for hit in ordered),
+            {hit.candidate.object_id: float(hit.score) for hit in ordered},
+            RerankTrace(
+                provider=self.reranker.provider,
+                model=self.reranker.model,
+                version=self.reranker.version,
+                candidate_limit=options.rerank_candidate_limit,
+                hits=trace_hits,
+            ),
         )
 
     def _naive_route(
@@ -1118,6 +1250,11 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "bm25_b",
             "naive_lexical_scorer",
             "naive_lexical_tokenizer",
+            "rerank_enabled",
+            "reranker_provider",
+            "reranker_model",
+            "reranker_version",
+            "rerank_candidate_multiplier",
         }
     }
     return canonical_json_hash(values)

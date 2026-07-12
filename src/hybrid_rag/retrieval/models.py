@@ -55,6 +55,8 @@ class CandidateHit(_StrictRetrievalModel):
     kind: IndexKind
     score: float
     raw_score: float | None = None
+    retrieval_score: float | None = None
+    rerank_score: float | None = None
     rank: int = Field(ge=1)
     route_scores: dict[str, float] = Field(default_factory=dict)
     score_components: dict[str, ScoreComponent] = Field(default_factory=dict)
@@ -74,6 +76,44 @@ class RouteTrace(_StrictRetrievalModel):
     route: RetrievalMode
     candidate_count: int = Field(ge=0)
     hits: tuple[CandidateHit, ...] = ()
+
+
+class RerankComponentTrace(_StrictRetrievalModel):
+    """One explicit contribution retained by a second-stage reranker."""
+
+    raw_score: float
+    normalized_score: float = Field(ge=0.0, le=1.0)
+    weight: float = Field(ge=0.0, le=1.0)
+    weighted_score: float = Field(ge=0.0)
+
+
+class RerankTraceHit(_StrictRetrievalModel):
+    """One candidate before and after the deterministic rerank stage."""
+
+    object_id: str = Field(min_length=1)
+    pre_rerank_rank: int = Field(ge=1)
+    pre_rerank_score: float
+    score: float = Field(ge=0.0)
+    final_rank: int = Field(ge=1)
+    components: dict[str, RerankComponentTrace] = Field(default_factory=dict)
+
+
+class RerankTrace(_StrictRetrievalModel):
+    """Replayable identity and scores for the post-retrieval rerank stage."""
+
+    provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    candidate_limit: int = Field(ge=1)
+    hits: tuple[RerankTraceHit, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_candidates(self) -> RerankTrace:
+        if len(self.hits) > self.candidate_limit:
+            raise ValueError("rerank trace has more hits than its candidate limit")
+        if len({hit.object_id for hit in self.hits}) != len(self.hits):
+            raise ValueError("rerank trace must not contain duplicate candidate IDs")
+        return self
 
 
 class GraphPath(_StrictRetrievalModel):
@@ -136,6 +176,7 @@ class RetrievalTrace(_StrictRetrievalModel):
     mode: RetrievalMode
     keywords: tuple[str, ...] = ()
     routes: dict[str, RouteTrace] = Field(default_factory=dict)
+    rerank: RerankTrace | None = None
     fused_hits: tuple[CandidateHit, ...] = ()
     graph_paths: tuple[GraphPath, ...] = ()
     context_items: tuple[ContextItem, ...] = ()

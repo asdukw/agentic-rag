@@ -48,6 +48,12 @@ def test_evaluation_options_require_naive_and_hybrid() -> None:
     assert options.modes == (RetrievalMode.NAIVE, RetrievalMode.HYBRID)
     assert len(options.config_hash) == 64
 
+    disabled_rerank = EvaluationOptions(
+        case_ids=("fact-naive-isolated-chunks",),
+        reranker_provider="none",
+    )
+    assert disabled_rerank.config_hash != options.config_hash
+
 
 def test_benchmark_requires_a_valid_expected_source_corpus_hash() -> None:
     benchmark = load_benchmark(fixture_benchmark_path())

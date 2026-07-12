@@ -21,6 +21,19 @@ def test_naive_subroute_options_are_hashed_and_must_keep_one_scorer_enabled() ->
         RetrievalOptions(naive_dense_weight=0.0, naive_bm25_weight=0.0)
 
 
+def test_rerank_options_are_hashed_and_can_be_explicitly_disabled() -> None:
+    baseline = RetrievalOptions()
+    disabled = RetrievalOptions(reranker_provider="none", rerank_candidate_multiplier=2)
+
+    assert baseline.rerank_enabled
+    assert baseline.rerank_candidate_limit == baseline.top_k * baseline.rerank_candidate_multiplier
+    assert not disabled.rerank_enabled
+    assert disabled.config_hash != baseline.config_hash
+
+    with pytest.raises(ValueError, match="rerank_candidate_multiplier"):
+        RetrievalOptions(rerank_candidate_multiplier=0)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

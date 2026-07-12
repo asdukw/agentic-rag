@@ -27,9 +27,12 @@ embedding model remains a benchmark decision.
   a benchmark selects a real model.
 - Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
   graph expansion, per-route min-max normalization, weighted fusion,
-  de-duplication, NetworkX path expansion, and token-budget context clipping in
-  project code.  The naive trace retains raw, normalized, and weighted dense and
-  BM25 contributions.
+  de-duplication, NetworkX path expansion, a post-fusion deterministic lexical
+  rerank, and token-budget context clipping in project code. The naive trace
+  retains raw, normalized, and weighted dense/BM25 contributions; the rerank
+  trace retains its candidate pool, component scores, and final rank. The
+  lexical reranker is an offline baseline behind a project-owned adapter
+  boundary, not a disguised cross-encoder.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.

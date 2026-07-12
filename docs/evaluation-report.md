@@ -40,6 +40,7 @@ Complete this section before looking at comparative scores.
 | Graph build run ID and extraction model/settings | `NOT RUN` |
 | Embedding profile ID, provider, model, dimension, text-schema hash | `NOT RUN` |
 | Naive dense/BM25 weights, BM25 tokenizer version, k1 and b | `NOT RUN` |
+| Reranker provider, model/version, candidate multiplier, enabled/disabled state | `NOT RUN` |
 | Retrieval options per mode | `NOT RUN` |
 | Question-set version and SHA-256 | `NOT RUN` |
 | Evaluation random seed | `NOT RUN` |
@@ -174,7 +175,7 @@ For each mode, run and report cold-cache and warm-cache conditions separately.
 Use a monotonic clock around these stages:
 
 ```text
-keyword extraction -> query embedding -> route retrieval/fusion -> context crop
+keyword extraction -> query embedding -> route retrieval/fusion -> rerank -> context crop
                     -> optional answer generation -> trace persistence
 ```
 

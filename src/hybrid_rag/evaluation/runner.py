@@ -90,6 +90,9 @@ class EvaluationRunner:
             naive_bm25_weight=effective.naive_bm25_weight,
             bm25_k1=effective.bm25_k1,
             bm25_b=effective.bm25_b,
+            reranker_provider=effective.reranker_provider,
+            reranker_model=effective.reranker_model,
+            rerank_candidate_multiplier=effective.rerank_candidate_multiplier,
         )
         evaluations: list[RetrievalEvaluation] = []
         by_case: dict[str, dict[RetrievalMode, RetrievalEvaluation]] = defaultdict(dict)

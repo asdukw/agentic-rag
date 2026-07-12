@@ -54,10 +54,12 @@ flowchart LR
         Routes --> Local["local: entity vectors + graph"]
         Routes --> Global["global: relation vectors + graph"]
         Routes --> Hybrid["hybrid: run all three\nin parallel"]
-        Naive --> Context["Score normalization, weighted fusion,\ndeduplication, graph expansion, token budget"]
-        Local --> Context
-        Global --> Context
-        Hybrid --> Context
+        Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication and graph expansion"]
+        Local --> Fusion
+        Global --> Fusion
+        Hybrid --> Fusion
+        Fusion --> Rerank["Post-fusion lexical reranker\nTop-M → final Top-K"]
+        Rerank --> Context["Token-budget context selection"]
         Context --> Evidence["Cited context + graph paths"]
         Evidence --> Answer["Deterministic answer or bounded\nDeepSeek answer from supplied evidence only"]
         Evidence --> Trace[("SQLite: serializable\nretrieval trace")]
@@ -68,9 +70,13 @@ flowchart LR
 `naive`, `local`, and `global` can be selected independently.  `naive` ranks
 chunk candidates with dense vector and deterministic local BM25 lexical scores,
 normalizes each subscore independently, and records its raw/normalized/weighted
-components in the trace.  `hybrid` is not a fourth opaque vector store: it runs
-those three route calculations in parallel, records the route-level scores, then
-applies the project-owned fusion and context-selection rules.
+components in the trace. After a selected mode's route fusion, the default
+`lexical-coverage-v1` reranker scores only its Top-M chunks by candidate-set
+BM25, query coverage, ordered-term proximity, and a small first-stage prior;
+the trace records every pre/post score. It is an offline baseline rather than a
+cross-encoder and can be disabled. `hybrid` is not a fourth opaque vector store:
+it runs the three route calculations in parallel, then applies the same owned
+fusion, rerank, and context-selection rules.
 
 ## Persistent ownership and invalidation
 

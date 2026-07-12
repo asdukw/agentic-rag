@@ -11,7 +11,12 @@ from streamlit.testing.v1 import AppTest
 import hybrid_rag.demo as demo
 from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
 from hybrid_rag.retrieval.embedding import HashEmbeddingProvider, OpenAICompatibleEmbeddingProvider
-from hybrid_rag.retrieval.models import RetrievalMode
+from hybrid_rag.retrieval.models import (
+    RerankComponentTrace,
+    RerankTrace,
+    RerankTraceHit,
+    RetrievalMode,
+)
 from hybrid_rag.retrieval.query import DeepSeekQueryClient, DeterministicQueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions
 
@@ -77,6 +82,7 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
         "构建索引",
         "重放",
     ]
+    assert [item.label for item in app.toggle] == ["启用词法重排序器"]
 
     app.text_area[0].set_value("保留的问题")
     app.run(timeout=15)
@@ -91,6 +97,45 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
         "Replay",
     ]
     assert app.text_area[0].value == "保留的问题"
+
+
+def test_demo_rerank_rows_keep_pre_and_post_ranking_visible() -> None:
+    rerank = RerankTrace(
+        provider="lexical",
+        model="lexical-coverage-v1",
+        version="lexical-reranker-v1",
+        candidate_limit=4,
+        hits=(
+            RerankTraceHit(
+                object_id="chk-1",
+                pre_rerank_rank=2,
+                pre_rerank_score=0.2,
+                score=0.9,
+                final_rank=1,
+                components={
+                    "coverage": RerankComponentTrace(
+                        raw_score=1.0,
+                        normalized_score=1.0,
+                        weight=1.0,
+                        weighted_score=1.0,
+                    )
+                },
+            ),
+        ),
+    )
+
+    rows = demo.rerank_rows(rerank, language="zh")
+
+    assert rows == [
+        {
+            "对象": "chk-1",
+            "重排序前排名": 2,
+            "重排序前分数": 0.2,
+            "重排序分数": 0.9,
+            "排名": 1,
+            "分数分量": "coverage: raw=1.0000, norm=1.0000, weighted=1.0000",
+        }
+    ]
 
 
 def test_demo_embedding_provider_selection_is_explicit_and_offline() -> None:
