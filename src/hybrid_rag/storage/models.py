@@ -546,3 +546,142 @@ class RelationEvidenceRecord(Base):
     relation: Mapped[RelationRecord] = relationship(back_populates="evidence")
     chunk: Mapped[ChunkRecord] = relationship(back_populates="relation_evidence")
     extraction: Mapped[ChunkExtractionRecord] = relationship(back_populates="relation_evidence")
+
+
+class EmbeddingProfileRecord(Base):
+    """A reproducible embedding configuration over one corpus snapshot.
+
+    The actual vector search implementation intentionally lives outside the ORM.
+    This record only captures the immutable inputs that make an index rebuild
+    reproducible and points at the graph snapshot, when one was available.
+    """
+
+    __tablename__ = "embedding_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "config_hash",
+            "source_corpus_hash",
+            name="uq_embedding_profiles_config_corpus",
+        ),
+        CheckConstraint("dimensions > 0", name="ck_embedding_profiles_dimensions"),
+        CheckConstraint(
+            "status IN ('ready', 'failed')",
+            name="ck_embedding_profiles_status",
+        ),
+        Index("ix_embedding_profiles_active", "is_active"),
+        Index("ix_embedding_profiles_source_graph_run", "source_graph_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_graph_run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("graph_build_runs.id", ondelete="SET NULL"),
+    )
+    source_corpus_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ready")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+
+    vectors: Mapped[list[EmbeddingVectorRecord]] = relationship(
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    retrieval_traces: Mapped[list[RetrievalTraceRecord]] = relationship(
+        back_populates="profile",
+        passive_deletes=True,
+    )
+
+
+class EmbeddingVectorRecord(Base):
+    """One persisted vector for a chunk, canonical entity, or relation."""
+
+    __tablename__ = "embedding_vectors"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "kind",
+            "object_id",
+            name="uq_embedding_vectors_profile_kind_object",
+        ),
+        CheckConstraint(
+            "kind IN ('chunk', 'entity', 'relation')",
+            name="ck_embedding_vectors_kind",
+        ),
+        Index("ix_embedding_vectors_profile_kind", "profile_id", "kind"),
+        Index("ix_embedding_vectors_build_run", "build_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("embedding_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    build_run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("graph_build_runs.id", ondelete="SET NULL"),
+    )
+    source_content_hash: Mapped[str | None] = mapped_column(String(64))
+    embedding_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding_json: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+    source_chunk_ids_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    profile: Mapped[EmbeddingProfileRecord] = relationship(back_populates="vectors")
+
+
+class RetrievalTraceRecord(Base):
+    """A durable, serializable retrieval result that can be replayed offline."""
+
+    __tablename__ = "retrieval_traces"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('naive', 'local', 'global', 'hybrid')",
+            name="ck_retrieval_traces_mode",
+        ),
+        Index("ix_retrieval_traces_profile_created", "profile_id", "created_at"),
+        Index("ix_retrieval_traces_query_hash", "query_hash"),
+        Index("ix_retrieval_traces_build_run", "graph_build_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("embedding_profiles.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    index_config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    graph_build_run_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("graph_build_runs.id", ondelete="SET NULL"),
+    )
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    query_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    retrieval_config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    trace_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    model_info_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    profile: Mapped[EmbeddingProfileRecord] = relationship(back_populates="retrieval_traces")

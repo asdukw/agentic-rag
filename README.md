@@ -3,7 +3,7 @@
 一个面向求职展示的轻量 Graph-RAG 项目：复刻 LightRAG 的核心工程链路，同时保留
 每一步检索和证据来源的可解释性。
 
-当前主链路覆盖文档导入和阶段二图抽取：
+当前主链路覆盖文档导入、阶段二图抽取和阶段三多路检索：
 
 ```text
 PDF / Markdown / TXT
@@ -15,6 +15,8 @@ PDF / Markdown / TXT
   -> LangGraph: extract -> validate -> repair/review
   -> deterministic entity normalization + relation merge
   -> SQLite canonical graph + NetworkX MultiDiGraph
+  -> chunk/entity/relation embedding texts + independent SQLite vector indexes
+  -> naive/local/global recall -> hybrid fusion -> cited context/answer + replayable trace
 ```
 
 ## Quick start
@@ -119,6 +121,46 @@ uv run hybrid-rag graph inspect <object-id> --db .tmp/demo.db --raw
 普通 inspect 会显示经过验证的 evidence quotes 以支持溯源；`--raw` 额外用于失败诊断，
 可能显示完整 prompt、原始 chunk 和模型响应。认证信息不会持久化或输出。
 
+## 阶段三：多路索引与检索
+
+先在当前 chunks 和当前规范图上构建独立的 chunk、entity、relation 索引；索引 profile 会记录
+embedding 配置、维度、来源 corpus/graph hash 和图谱 run。默认 `hash-token-v1` 是确定性、无需
+下载模型或联网的开发/CI baseline；它保证链路可复现，不应替代基准后选定的语义 embedding 模型。
+可通过 `openai-compatible` adapter 接入经基准验证的外部 embedding endpoint。
+
+```bash
+uv run hybrid-rag build-index --db .tmp/demo.db
+uv run hybrid-rag retrieval stats --db .tmp/demo.db
+
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode naive --db .tmp/demo.db
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode local --db .tmp/demo.db
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode global --db .tmp/demo.db
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --db .tmp/demo.db --json
+
+# 默认离线回答只复述选中的证据；加 --deepseek 才会请求模型做关键词和受证据约束的回答。
+uv run hybrid-rag ask "How does LightRAG use entities?" --mode hybrid --db .tmp/demo.db --json
+uv run hybrid-rag ask "How does LightRAG use entities?" --mode hybrid --deepseek --db .tmp/demo.db
+
+# 每次 retrieve/ask 产生 rtr_ trace；重放不重新 embedding 或调用模型。
+uv run hybrid-rag retrieval replay rtr_<id> --db .tmp/demo.db --json
+```
+
+`hybrid` 用线程池并行运行三条召回路径：chunk 向量的 naive、以实体命中展开相邻关系的
+local、以关系命中汇聚证据的 global。随后项目代码按路归一化、加权融合、按 chunk 去重、补充
+有界 NetworkX 路径，并在 token budget 内选择最终上下文。每一项结果都返回分数、路由贡献、
+图路径、source chunk 和稳定 citation ID；模型输出的 citation 必须是这些选中 chunk ID 的
+精确子集。
+
+默认配置可在 `.env.example` 查看。选择外部 adapter 时设置：
+
+```dotenv
+HYBRID_RAG_RETRIEVAL_EMBEDDING_PROVIDER=openai-compatible
+HYBRID_RAG_RETRIEVAL_EMBEDDING_BASE_URL=https://your-compatible-endpoint/v1
+HYBRID_RAG_RETRIEVAL_EMBEDDING_API_KEY=
+HYBRID_RAG_RETRIEVAL_EMBEDDING_MODEL=your-embedding-model
+HYBRID_RAG_RETRIEVAL_EMBEDDING_DIMENSIONS=1024
+```
+
 ## 已实现的工程保证
 
 - document/chunk ID 由来源、内容和处理配置确定性生成。
@@ -129,6 +171,8 @@ uv run hybrid-rag graph inspect <object-id> --db .tmp/demo.db --raw
 - 模型 JSON 必须通过 schema、局部引用和来源证据校验，合法空抽取不会进入无效重试。
 - 抽取配置与图配置分别哈希；修改归一规则可复用成功抽取，不必重新调用模型。
 - 当前规范图可从数据库证据确定性重建为 NetworkX `MultiDiGraph`。
+- 文档内容变化会在替换旧 chunks 前使关联 graph snapshot 与 active embedding profile 失效，
+  防止使用陈旧向量；历史 `rtr_` trace 仍可离线重放。
 - 自动化测试使用本地 fixture，不依赖网络或 DeepSeek API。
 
 ## Agent 的边界
@@ -139,15 +183,16 @@ uv run hybrid-rag graph inspect <object-id> --db .tmp/demo.db --raw
 
 完整阶段划分见 [实施计划](docs/implementation-plan.md)，框架复用边界见
 [ADR 001](docs/adr/001-build-vs-reuse.md)，抽取与恢复语义见
-[ADR 002](docs/adr/002-graph-extraction-checkpoints.md)。
+[ADR 002](docs/adr/002-graph-extraction-checkpoints.md)，索引和 trace 语义见
+[ADR 003](docs/adr/003-retrieval-index-and-trace.md)。
 
 ## 当前限制
 
 - 默认 PDF adapter 面向有文本层的论文；扫描件不做 OCR。
 - 复杂多栏阅读顺序、公式和表格结构不是本阶段承诺，可在既有 loader 接口后替换为
   Docling。
-- 当前 token 计数使用可配置的 tiktoken encoding；阶段三确定 embedding 模型后会做
-  tokenizer 对齐并通过 config hash 触发可重复重建。
+- 当前 token 计数使用可配置的 tiktoken encoding；context budget 使用同一计数器。更换
+  embedding provider、模型、维度或 embedding-text schema 会生成新的 profile，可确定性重建。
 - 默认实体归一采用保守规则，无法可靠判定为同一对象的候选会暂时保持分离。
 - DeepSeek 在线调用存在延迟和输出波动；自动化测试全部使用本地 scripted client，不把
   外部 API 可用性作为测试前提。

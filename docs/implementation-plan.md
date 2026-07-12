@@ -152,7 +152,22 @@ uv run pytest --cov=hybrid_rag --cov-report=term-missing -q
 uv run ruff check .
 ```
 
-## 5. 阶段三：多路索引与四种检索
+## 5. 阶段三：多路索引与四种检索（已完成）
+
+完成日期：2026-07-12。
+
+离线验收结果：68 项自动化测试与 Ruff 检查通过，总覆盖率 87%。fixture 端到端链路覆盖导入、scripted
+图谱构建、chunk/entity/relation 三路索引、naive/local/global/hybrid 四种模式、并行融合、
+NetworkX 路径、token budget、citation、离线 answer、trace 序列化和 replay；CLI 端到端覆盖
+`build-index`、`retrieve`、`ask` 与 `retrieval replay`。当前环境未提供 `DEEPSEEK_API_KEY`
+或外部 embedding endpoint 凭据，因此没有伪造在线关键词、回答或向量模型的延迟/成本数据；
+默认确定性 hash embedding 使离线 Definition of Done 可重复验证。
+
+实现采用 SQLite JSON vector baseline 与明确的 adapter 边界：`embedding_profiles`、
+`embedding_vectors` 和 `retrieval_traces` 由 Alembic `0003` 管理。profile hash 同时绑定
+provider/model/dimension/text schema 与当前 chunks/graph snapshot；完整 profile 才会在同一事务
+中激活。默认 `hash-token-v1` 仅用于离线开发和 CI，`OpenAI-compatible` embedding adapter
+保留给阶段四基准选定的真实模型，不改变核心检索算法或持久化契约。
 
 - 为 chunk/entity/relation 建独立 embedding 文本与向量索引。
 - 实现 naive、local、global、hybrid 四种 retriever，共享统一结果 schema。
@@ -162,6 +177,21 @@ uv run ruff check .
 - DeepSeek 只负责关键词抽取和基于证据生成，不让 Agent 自由选择不可控工具链。
 
 验收：同一问题可切换四种模式，答案有引用，retrieval trace 可序列化并重放。
+
+验收入口：
+
+```bash
+uv run alembic upgrade head
+uv run hybrid-rag build-index --db .tmp/demo.db --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode naive --db .tmp/demo.db --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode local --db .tmp/demo.db --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode global --db .tmp/demo.db --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --db .tmp/demo.db --json
+uv run hybrid-rag ask "How does LightRAG use entities?" --mode hybrid --db .tmp/demo.db --json
+uv run hybrid-rag retrieval replay rtr_<id> --db .tmp/demo.db --json
+uv run pytest -q
+uv run ruff check .
+```
 
 ## 6. 阶段四：评测与 Demo
 

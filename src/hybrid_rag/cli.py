@@ -9,7 +9,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from hybrid_rag.config import DeepSeekSettings, GraphSettings, Settings, sqlite_url
+from hybrid_rag.config import (
+    DeepSeekSettings,
+    GraphSettings,
+    RetrievalSettings,
+    Settings,
+    sqlite_url,
+)
 from hybrid_rag.corpus import download_manifest
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
@@ -19,23 +25,170 @@ from hybrid_rag.extraction.workflow import WorkflowOptions
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
+from hybrid_rag.retrieval.embedding import (
+    EmbeddingConfigurationError,
+    HashEmbeddingProvider,
+    OpenAICompatibleEmbeddingProvider,
+)
+from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.query import DeepSeekQueryClient, QueryClient
+from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import GraphRepository
 from hybrid_rag.storage.migrations import upgrade_database
 from hybrid_rag.storage.repository import IngestRepository
+from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
 app = typer.Typer(no_args_is_help=True, help="Hybrid RAG development CLI")
 db_app = typer.Typer(no_args_is_help=True, help="Database schema commands")
 corpus_app = typer.Typer(no_args_is_help=True, help="Versioned public corpus commands")
 graph_app = typer.Typer(no_args_is_help=True, help="Graph extraction and inspection commands")
+retrieval_app = typer.Typer(
+    no_args_is_help=True,
+    help="Retrieval index inspection and trace replay",
+)
 app.add_typer(db_app, name="db")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(graph_app, name="graph")
+app.add_typer(retrieval_app, name="retrieval")
 console = Console()
 
 
 def _database_url(db_path: Path | None, settings: Settings) -> str:
     return sqlite_url(db_path) if db_path is not None else settings.database_url
+
+
+def _embedding_provider(
+    settings: RetrievalSettings,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    dimensions: int | None = None,
+):
+    selected_provider = provider or settings.embedding_provider
+    selected_model = model or settings.embedding_model
+    selected_dimensions = dimensions or settings.embedding_dimensions
+    if selected_provider == "hash":
+        return HashEmbeddingProvider(dimensions=selected_dimensions, model=selected_model)
+    if selected_provider == "openai-compatible":
+        if not settings.embedding_base_url:
+            raise typer.BadParameter(
+                "HYBRID_RAG_RETRIEVAL_EMBEDDING_BASE_URL is required for openai-compatible"
+            )
+        api_key = (
+            settings.embedding_api_key.get_secret_value().strip()
+            if settings.embedding_api_key
+            else ""
+        )
+        return OpenAICompatibleEmbeddingProvider(
+            api_key=api_key or None,
+            base_url=settings.embedding_base_url,
+            model=selected_model,
+            dimensions=selected_dimensions,
+        )
+    raise typer.BadParameter(
+        "--provider must be 'hash' or 'openai-compatible'",
+        param_hint="--provider",
+    )
+
+
+def _retrieval_options(
+    settings: RetrievalSettings,
+    *,
+    top_k: int | None = None,
+    context_tokens: int | None = None,
+    graph_hops: int | None = None,
+) -> RetrievalOptions:
+    return RetrievalOptions(
+        top_k=top_k or settings.top_k,
+        candidate_multiplier=settings.candidate_multiplier,
+        context_token_budget=context_tokens or settings.context_token_budget,
+        graph_max_hops=graph_hops or settings.graph_max_hops,
+        naive_weight=settings.naive_weight,
+        local_weight=settings.local_weight,
+        global_weight=settings.global_weight,
+    )
+
+
+def _deepseek_query_client() -> DeepSeekQueryClient:
+    settings = DeepSeekSettings()
+    api_key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
+    if not api_key:
+        raise typer.BadParameter("--deepseek requires DEEPSEEK_API_KEY")
+    return DeepSeekQueryClient(
+        api_key=api_key,
+        model=settings.query_model,
+        answer_model=settings.answer_model,
+        base_url=settings.base_url,
+        max_output_tokens=max(512, settings.answer_max_output_tokens),
+        timeout_seconds=settings.timeout_seconds,
+    )
+
+
+async def _close_query_client(client: QueryClient | None) -> None:
+    if client is None:
+        return
+    close = getattr(client, "close", None)
+    if callable(close):
+        result = close()
+        if hasattr(result, "__await__"):
+            await result
+
+
+def _render_index_build_report(report: IndexBuildReport, *, json_output: bool) -> None:
+    if json_output:
+        console.print_json(report.model_dump_json())
+        return
+    table = Table(title=f"Embedding index {report.profile_id}")
+    table.add_column("Chunks", justify="right")
+    table.add_column("Entities", justify="right")
+    table.add_column("Relations", justify="right")
+    table.add_column("Provider")
+    table.add_column("Model")
+    table.add_column("Dimensions", justify="right")
+    table.add_column("Reused")
+    table.add_row(
+        str(report.chunks),
+        str(report.entities),
+        str(report.relations),
+        report.provider,
+        report.model,
+        str(report.dimensions),
+        str(report.reused).lower(),
+    )
+    console.print(table)
+
+
+def _render_retrieval_result(result: RetrievalResult, *, json_output: bool) -> None:
+    if json_output:
+        console.print_json(result.model_dump_json())
+        return
+    table = Table(title=f"{result.mode.value} retrieval ({result.profile_id})")
+    table.add_column("Rank", justify="right")
+    table.add_column("Citation")
+    table.add_column("Score", justify="right")
+    table.add_column("Routes")
+    for rank, item in enumerate(result.context_items, start=1):
+        table.add_row(
+            str(rank),
+            item.citation_id,
+            f"{item.score:.4f}",
+            ", ".join(f"{route}={score:.3f}" for route, score in item.route_scores.items()),
+        )
+    console.print(table)
+    if result.trace_id:
+        console.print(f"Replay with: hybrid-rag retrieval replay {result.trace_id}")
+    console.print(result.context or "[yellow]No evidence fit the context budget.[/yellow]")
+
+
+def _render_answer_result(result: AnswerResult, *, json_output: bool) -> None:
+    if json_output:
+        console.print_json(result.model_dump_json())
+        return
+    _render_retrieval_result(result.retrieval, json_output=False)
+    console.print("\n[bold]Answer[/bold]")
+    console.print(result.answer.answer)
+    console.print(f"Citations: {', '.join(result.answer.citations) or '(insufficient evidence)'}")
 
 
 def _build_extraction_config(
@@ -392,6 +545,264 @@ def build_graph(
     _render_graph_build_report(report, json_output=json_output)
     if report.status in {"completed_with_failures", "failed"}:
         raise typer.Exit(code=1)
+
+
+@app.command("build-index")
+def build_index(
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite input/output file")] = None,
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run", help="Use a specific completed graph snapshot; defaults to current"),
+    ] = None,
+    provider: Annotated[
+        str | None,
+        typer.Option("--provider", help="hash (default) or openai-compatible"),
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model", help="Embedding model identity")] = None,
+    dimensions: Annotated[int | None, typer.Option("--dimensions", min=1)] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-embed an otherwise current profile"),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Print a JSON report")] = False,
+) -> None:
+    settings = Settings()
+    retrieval_settings = RetrievalSettings()
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    try:
+        service = RetrievalService(
+            database,
+            _embedding_provider(
+                retrieval_settings,
+                provider=provider,
+                model=model,
+                dimensions=dimensions,
+            ),
+            TiktokenCounter(settings.tokenizer_name),
+        )
+        report = service.build_index(build_run_id=run_id, force=force)
+    except (EmbeddingConfigurationError, ValueError, RuntimeError) as error:
+        console.print(f"[red]{type(error).__name__}:[/red] {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        database.dispose()
+    _render_index_build_report(report, json_output=json_output)
+
+
+@app.command("retrieve")
+def retrieve(
+    question: Annotated[str, typer.Argument(help="Question to retrieve evidence for")],
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
+    mode: Annotated[str, typer.Option("--mode", help="naive, local, global, or hybrid")] = "hybrid",
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", help="idx_ profile ID or config hash"),
+    ] = None,
+    top: Annotated[int | None, typer.Option("--top", min=1)] = None,
+    context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
+    graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
+    deepseek: Annotated[
+        bool,
+        typer.Option("--deepseek", help="Use DeepSeek only to extract bounded query keywords"),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print a JSON result and trace"),
+    ] = False,
+) -> None:
+    try:
+        selected_mode = RetrievalMode(mode)
+    except ValueError as error:
+        raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
+    settings = Settings()
+    retrieval_settings = RetrievalSettings()
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    client: QueryClient | None = None
+    try:
+        client = _deepseek_query_client() if deepseek else None
+        service = RetrievalService(
+            database,
+            _embedding_provider(retrieval_settings),
+            TiktokenCounter(settings.tokenizer_name),
+        )
+        options = _retrieval_options(
+            retrieval_settings,
+            top_k=top,
+            context_tokens=context_tokens,
+            graph_hops=graph_hops,
+        )
+
+        async def run() -> RetrievalResult:
+            try:
+                return await service.retrieve_with_keywords(
+                    question,
+                    keyword_extractor=client,
+                    mode=selected_mode,
+                    options=options,
+                    profile_ref=profile,
+                )
+            finally:
+                await _close_query_client(client)
+
+        result = asyncio.run(run())
+    except (EmbeddingConfigurationError, ValueError, RuntimeError) as error:
+        console.print(f"[red]{type(error).__name__}:[/red] {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        database.dispose()
+    _render_retrieval_result(result, json_output=json_output)
+
+
+@app.command("ask")
+def ask(
+    question: Annotated[str, typer.Argument(help="Question to answer from retrieved evidence")],
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
+    mode: Annotated[str, typer.Option("--mode", help="naive, local, global, or hybrid")] = "hybrid",
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", help="idx_ profile ID or config hash"),
+    ] = None,
+    top: Annotated[int | None, typer.Option("--top", min=1)] = None,
+    context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
+    graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
+    deepseek: Annotated[
+        bool,
+        typer.Option("--deepseek", help="Use DeepSeek for keywords and a citation-bound answer"),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print JSON answer, evidence, and trace"),
+    ] = False,
+) -> None:
+    try:
+        selected_mode = RetrievalMode(mode)
+    except ValueError as error:
+        raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
+    settings = Settings()
+    retrieval_settings = RetrievalSettings()
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    client: QueryClient | None = None
+    try:
+        client = _deepseek_query_client() if deepseek else None
+        service = RetrievalService(
+            database,
+            _embedding_provider(retrieval_settings),
+            TiktokenCounter(settings.tokenizer_name),
+        )
+        options = _retrieval_options(
+            retrieval_settings,
+            top_k=top,
+            context_tokens=context_tokens,
+            graph_hops=graph_hops,
+        )
+
+        async def run() -> AnswerResult:
+            try:
+                return await service.ask(
+                    question,
+                    query_client=client,
+                    mode=selected_mode,
+                    options=options,
+                    profile_ref=profile,
+                )
+            finally:
+                await _close_query_client(client)
+
+        result = asyncio.run(run())
+    except (EmbeddingConfigurationError, ValueError, RuntimeError) as error:
+        console.print(f"[red]{type(error).__name__}:[/red] {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        database.dispose()
+    _render_answer_result(result, json_output=json_output)
+
+
+@retrieval_app.command("stats")
+def retrieval_stats(
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    settings = Settings()
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    try:
+        with database.session_factory() as session:
+            profiles = RetrievalRepository().list_profiles(session)
+            payload = [
+                {
+                    "id": profile.id,
+                    "active": profile.is_active,
+                    "status": profile.status,
+                    "provider": profile.provider,
+                    "model": profile.model,
+                    "dimensions": profile.dimensions,
+                    "source_corpus_hash": profile.source_corpus_hash,
+                    "graph_build_run_id": profile.source_graph_run_id,
+                    "created_at": profile.created_at,
+                    "updated_at": profile.updated_at,
+                }
+                for profile in profiles
+            ]
+    finally:
+        database.dispose()
+    if json_output:
+        console.print_json(json.dumps(payload, ensure_ascii=False, default=_json_default))
+        return
+    table = Table(title="Embedding indexes")
+    table.add_column("ID")
+    table.add_column("Active")
+    table.add_column("Provider")
+    table.add_column("Model")
+    table.add_column("Dims", justify="right")
+    table.add_column("Graph run")
+    for profile in payload:
+        table.add_row(
+            str(profile["id"]),
+            "yes" if profile["active"] else "",
+            str(profile["provider"]),
+            str(profile["model"]),
+            str(profile["dimensions"]),
+            str(profile["graph_build_run_id"] or "-"),
+        )
+    console.print(table)
+
+
+@retrieval_app.command("replay")
+def retrieval_replay(
+    trace_id: Annotated[str, typer.Argument(help="rtr_ retrieval trace ID")],
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    if not trace_id.startswith("rtr_"):
+        raise typer.BadParameter("replay requires an rtr_ trace ID")
+    settings = Settings()
+    retrieval_settings = RetrievalSettings()
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    try:
+        service = RetrievalService(
+            database,
+            _embedding_provider(retrieval_settings),
+            TiktokenCounter(settings.tokenizer_name),
+        )
+        answer = service.replay_answer(trace_id)
+        if answer is not None:
+            _render_answer_result(answer, json_output=json_output)
+        else:
+            _render_retrieval_result(service.replay(trace_id), json_output=json_output)
+    except (EmbeddingConfigurationError, ValueError, RuntimeError) as error:
+        console.print(f"[red]{type(error).__name__}:[/red] {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        database.dispose()
 
 
 @graph_app.command("stats")

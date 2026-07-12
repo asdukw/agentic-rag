@@ -27,6 +27,9 @@ def test_alembic_builds_empty_database(tmp_path: Path) -> None:
             "entity_evidence",
             "relations",
             "relation_evidence",
+            "embedding_profiles",
+            "embedding_vectors",
+            "retrieval_traces",
         }
     finally:
         database.dispose()
