@@ -1,40 +1,49 @@
 # Hybrid RAG
 
-一个轻量、可解释的 Graph-RAG 项目：从 PDF、Markdown 或 TXT 导入文档，构建可追溯的
-chunk、实体和关系，再以 `naive`、`local`、`global` 或 `hybrid` 模式返回带 citation 的证据。
+一个以学习和演示为主的 Hybrid/Graph RAG 项目。项目使用一组固定版本的 RAG 相关论文作为
+语料，展示从论文 PDF 导入、索引与可选知识图谱构建，到检索、回答和 citation 追溯的完整效果；
+不以生产部署或通用知识库能力为主要目标。
 
 ```text
-文件 → 文本与 chunk → 可选知识图谱 → 三路索引 → 检索/回答 → citation 与 replay trace
+论文 PDF → 文本与 chunk → 可选知识图谱 → 三路索引 → 检索/回答 → citation 与 replay trace
 ```
 
 项目自身实现实体归一、关系合并、图谱检索、融合评分、上下文裁剪和引用追踪；第三方库只
 承担解析、持久化、编排或模型 API 适配。
 
-## 基础工作流
+## Quick Start
 
-需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。下面使用仓库内置的 fixture，
-无需网络、模型或 API key；默认数据库为 `storage/app.db`，把目录替换成自己的论文目录即可。
+需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。默认流程会下载
+`data/corpus.json` 中定义、版本固定且经过 SHA-256 校验的 RAG 论文到 `data/raw`；下载需要网络，
+其余步骤不需要模型或 API key。默认数据库为 `storage/app.db`。
 
 ```bash
 uv sync --dev
 
-# 导入文件并切成可追溯的 chunks。
-uv run hybrid-rag ingest tests/fixtures/corpus
+# 下载内置论文语料（需要网络）。
+uv run hybrid-rag corpus download
+
+# 导入论文并切成可追溯的 chunks。
+uv run hybrid-rag ingest data/raw
 
 # 为 chunk 建立默认的本地确定性索引。
 uv run hybrid-rag build-index
 
-# 检索并生成基于所选证据的离线回答。
-uv run hybrid-rag ask "What is retrieval-augmented generation?"
+# 检索并生成基于论文证据的离线回答。
+uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge-intensive NLP tasks?"
 ```
 
-`ingest`、`build-index` 等命令会自动升级 SQLite schema。默认的 `hash-token-v1` 是一个
-确定性本地特征哈希 embedding，适合开发、测试和演示；它不是语义模型。
-`naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
-直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
-融合后的候选默认还会经过本地确定性的 lexical reranker：它比较候选集内 BM25、查询词覆盖率、
-有序词邻近度和少量首阶段分数，再决定最终 Top-K。它不是 cross-encoder；可在 `.env` 中将
-`HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 关闭。
+完成后可在输出中查看回答所依据的论文 citation，用于观察 RAG 的检索与证据归因效果。若只想
+离线验证命令流程，可将 `data/raw` 替换为 `tests/fixtures/corpus`；fixture 仅用于测试，不代表论文
+语料的演示效果。
+
+- `ingest`、`build-index` 等命令会自动升级 SQLite schema。
+- 默认的 `hash-token-v1` 是确定性本地特征哈希 embedding，适合开发、测试和演示；它不是语义模型。
+- `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
+  直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
+- 融合后的候选默认还会经过本地确定性的 lexical reranker：它比较候选集内 BM25、查询词覆盖率、
+  有序词邻近度和少量首阶段分数，再决定最终 Top-K。它不是 cross-encoder；可在 `.env` 中将
+  `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 关闭。
 
 ## 可选功能
 
@@ -82,13 +91,13 @@ uv run streamlit run src/hybrid_rag/demo.py
 `evaluate` 使用固定题集对比 `naive` 与 `hybrid`，并写出带 profile、图谱快照、citation、trace、
 延迟和成本状态的 JSON/Markdown artifact。Streamlit 演示可查看四种模式、证据、图路径和对比结果。
 
-### 接入外部 embedding 或真实论文语料
+### 接入外部 embedding 或自定义论文语料
 
 查看 [.env.example](.env.example) 配置 OpenAI-compatible embedding endpoint、DeepSeek 模型和
-评测选项。可选的公开语料下载命令是：
+评测选项。内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
 
 ```bash
-uv run hybrid-rag corpus download
+uv run hybrid-rag corpus download --manifest path/to/corpus.json --output data/raw
 ```
 
 下载受本机网络与证书配置影响；也可以手动将允许使用的 PDF 放入 `data/raw` 后直接执行
