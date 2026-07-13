@@ -31,8 +31,8 @@ class FakeJudgeClient:
             finish_reason="stop",
             prompt_tokens=13,
             completion_tokens=7,
-            cache_hit_tokens=None,
-            cache_miss_tokens=None,
+            cache_hit_tokens=5,
+            cache_miss_tokens=8,
             raw_response={},
         )
 
@@ -62,6 +62,9 @@ def test_deepseek_blind_judge_hides_modes_validates_json_and_tracks_usage() -> N
     assert judge.usage.calls == 1
     assert judge.usage.prompt_tokens == 13
     assert judge.usage.completion_tokens == 7
+    assert judge.usage.records[0].model == "judge-model"
+    assert judge.usage.records[0].cache_hit_tokens == 5
+    assert judge.usage.records[0].cache_miss_tokens == 8
     assert judge.provenance.model == "deepseek-v4-pro"
     assert judge.provenance.base_url == "https://judge.example.test/v1"
     assert judge.provenance.response_format == "json_object"

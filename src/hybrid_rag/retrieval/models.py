@@ -7,9 +7,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from hybrid_rag.deepseek_costs import DeepSeekCostSummary
 from hybrid_rag.ids import canonical_json_hash
 
-RETRIEVAL_SCHEMA_VERSION = "1"
+RETRIEVAL_SCHEMA_VERSION = "2"
 INDEX_TEXT_SCHEMA_VERSION = "1"
 
 
@@ -188,6 +189,7 @@ class RetrievalTrace(_StrictRetrievalModel):
     context_token_budget: int = Field(ge=1)
     context_tokens: int = Field(ge=0)
     settings: dict[str, Any] = Field(default_factory=dict)
+    deepseek_cost: DeepSeekCostSummary | None = None
 
     @model_validator(mode="after")
     def validate_context_budget(self) -> RetrievalTrace:

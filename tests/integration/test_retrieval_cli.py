@@ -236,9 +236,11 @@ def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
     assert report["run"]["index_provenance"]["source_corpus_hash"] == index["source_corpus_hash"]
     assert report["cost_disclosure"] == {
         "status": "not_applicable",
+        "currency": "CNY",
         "retrieval_model_calls": 0,
         "judge_model_calls": 0,
-        "cost_usd": 0.0,
+        "cost_cny": 0.0,
+        "deepseek_usage": [],
         "price_assumption": "offline deterministic retrieval, answer, and judge",
     }
 

@@ -3,11 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from hybrid_rag.config import sqlite_url
+from hybrid_rag.deepseek_costs import (
+    DeepSeekCostStatus,
+    DeepSeekModelPricing,
+    DeepSeekPricing,
+    DeepSeekUsage,
+    aggregate_deepseek_usage,
+    deepseek_usage,
+)
 from hybrid_rag.extraction.client import CompletionResult
 from hybrid_rag.extraction.schemas import ExtractionConfig
 from hybrid_rag.extraction.service import GraphBuildService
@@ -16,6 +25,7 @@ from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.embedding import HashEmbeddingProvider
 from hybrid_rag.retrieval.models import RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, KeywordExtraction
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
@@ -44,6 +54,50 @@ class ScriptedGraphClient:
     async def repair(self, chunk_text: str, **_: object) -> CompletionResult:
         assert self.quote in chunk_text
         return _completion(_graph_payload(self.quote))
+
+
+class UsageReportingQueryClient:
+    def __init__(self) -> None:
+        self._usage: list[DeepSeekUsage] = []
+
+    @property
+    def usage(self) -> tuple[DeepSeekUsage, ...]:
+        return aggregate_deepseek_usage(self._usage)
+
+    async def extract_keywords(self, _question: str) -> KeywordExtraction:
+        self._usage.append(
+            deepseek_usage(
+                operation="keyword",
+                model="deepseek-v4-flash",
+                prompt_tokens=10,
+                cache_hit_tokens=4,
+                cache_miss_tokens=6,
+                completion_tokens=1,
+            )
+        )
+        return KeywordExtraction(keywords=("Atlas", "Beacon"))
+
+    async def answer(
+        self,
+        _question: str,
+        evidence: list[EvidenceItem] | tuple[EvidenceItem, ...],
+    ) -> GroundedAnswer:
+        self._usage.append(
+            deepseek_usage(
+                operation="answer",
+                model="deepseek-v4-flash",
+                prompt_tokens=20,
+                cache_hit_tokens=5,
+                cache_miss_tokens=15,
+                completion_tokens=2,
+            )
+        )
+        first = evidence[0]
+        return GroundedAnswer(
+            answer=first.text,
+            citations=(first.citation_id,),
+            insufficient_evidence=False,
+        )
 
 
 def test_three_indexes_support_all_retrieval_modes_replay_and_grounded_answer(
@@ -99,9 +153,7 @@ def test_three_indexes_support_all_retrieval_modes_replay_and_grounded_answer(
         for mode, result in results.items():
             _assert_shared_result_contract(result, mode, options.context_token_budget)
             expected_routes = (
-                {"naive", "local", "global"}
-                if mode is RetrievalMode.HYBRID
-                else {mode.value}
+                {"naive", "local", "global"} if mode is RetrievalMode.HYBRID else {mode.value}
             )
             assert set(result.trace.routes) == expected_routes
 
@@ -187,6 +239,36 @@ def test_changed_source_document_invalidates_its_active_retrieval_index(
         database.dispose()
 
 
+def test_online_query_usage_is_priced_and_persisted_in_the_replay_trace(tmp_path: Path) -> None:
+    database = _ingested_scripted_graph(tmp_path)
+    retrieval = RetrievalService(
+        database,
+        HashEmbeddingProvider(dimensions=256),
+        WordCounter(),
+        deepseek_pricing=_pricing(),
+    )
+    try:
+        retrieval.build_index()
+        result = asyncio.run(
+            retrieval.ask(
+                "How does Atlas connect Beacon in the graph?",
+                query_client=UsageReportingQueryClient(),
+                mode=RetrievalMode.HYBRID,
+                options=RetrievalOptions(context_token_budget=40),
+            )
+        )
+
+        cost = result.retrieval.trace.deepseek_cost
+        assert cost is not None
+        assert cost.status is DeepSeekCostStatus.ESTIMATED
+        assert {item.operation for item in cost.usage} == {"keyword", "answer"}
+        assert cost.cost_cny == pytest.approx((4 * 0.02 + 6 + 2 + 5 * 0.02 + 15 + 4) / 1_000_000)
+        assert result.retrieval.trace_id is not None
+        assert retrieval.replay_answer(result.retrieval.trace_id) == result
+    finally:
+        database.dispose()
+
+
 def _assert_shared_result_contract(
     result: RetrievalResult,
     mode: RetrievalMode,
@@ -260,6 +342,21 @@ def _completion(content: str) -> CompletionResult:
         cache_hit_tokens=None,
         cache_miss_tokens=None,
         raw_response={},
+    )
+
+
+def _pricing() -> DeepSeekPricing:
+    return DeepSeekPricing(
+        flash=DeepSeekModelPricing(
+            cache_hit_input_cny_per_million_tokens=Decimal("0.02"),
+            cache_miss_input_cny_per_million_tokens=Decimal("1"),
+            output_cny_per_million_tokens=Decimal("2"),
+        ),
+        pro=DeepSeekModelPricing(
+            cache_hit_input_cny_per_million_tokens=Decimal("0.025"),
+            cache_miss_input_cny_per_million_tokens=Decimal("3"),
+            output_cny_per_million_tokens=Decimal("6"),
+        ),
     )
 
 

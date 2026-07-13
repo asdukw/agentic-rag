@@ -179,12 +179,14 @@ keyword extraction -> query embedding -> route retrieval/fusion -> rerank -> con
                     -> optional answer generation -> trace persistence
 ```
 
-Record request count, retry count, errors, input/output tokens, and provider
-response metadata without storing secrets.  If an endpoint does not return
-usage or a rate is unavailable, write `unavailable`; never invent a cost from a
-latency measurement.  If cost is estimated from public pricing, label it
-`estimated`, cite the pricing date/source in the run artifact, and state which
-tokens and retries were included.
+Record request count, retry count, errors, cache-hit input tokens, cache-miss
+input tokens, output tokens, and provider response metadata without storing
+secrets.  If an endpoint does not return a complete cache split or a rate is
+unavailable, write `unavailable`; never infer that all input was a cache miss or
+derive a cost from latency.  For DeepSeek estimates, store the actual response
+model, the six configured CNY-per-million-token prices, and the formula
+`hit × hit_price + miss × miss_price + output × output_price`; label the result
+`estimated` rather than a provider bill.
 
 Fixture-only tests use deterministic hash embeddings and deterministic/offline
 query behavior.  They may report local execution time for regression tracking,

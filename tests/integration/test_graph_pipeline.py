@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from hybrid_rag.config import sqlite_url
+from hybrid_rag.deepseek_costs import (
+    DeepSeekCostStatus,
+    DeepSeekModelPricing,
+    DeepSeekPricing,
+)
 from hybrid_rag.extraction.client import (
     CompletionResult,
     TerminalProviderError,
@@ -52,6 +58,12 @@ class ScriptedClient:
         return _completion(_payload_for(chunk_text))
 
 
+class PricedClient(ScriptedClient):
+    async def extract(self, chunk_text: str, **_: object) -> CompletionResult:
+        self.extract_calls.append(chunk_text)
+        return _priced_completion(_payload_for(chunk_text))
+
+
 def _database(tmp_path: Path) -> Database:
     url = sqlite_url(tmp_path / "graph.db")
     upgrade_database(url)
@@ -73,6 +85,7 @@ def _service(
     model: str,
     max_attempts: int = 3,
     checkpoint_name: str = "langgraph.db",
+    deepseek_pricing: DeepSeekPricing | None = None,
 ) -> GraphBuildService:
     config = ExtractionConfig(
         base_url="https://example.test",
@@ -85,6 +98,7 @@ def _service(
         client,  # type: ignore[arg-type]
         config,
         checkpoint_path=tmp_path / checkpoint_name,
+        deepseek_pricing=deepseek_pricing,
     )
 
 
@@ -130,6 +144,48 @@ def test_graph_build_repairs_persists_and_reuses_cached_extractions(tmp_path: Pa
             "graph_config",
             "final_report",
         }
+    finally:
+        database.dispose()
+
+
+def test_graph_build_reports_cny_cost_from_persisted_cache_usage(tmp_path: Path) -> None:
+    database = _database(tmp_path)
+    pricing = DeepSeekPricing(
+        flash=DeepSeekModelPricing(
+            cache_hit_input_cny_per_million_tokens=Decimal("0.02"),
+            cache_miss_input_cny_per_million_tokens=Decimal("1"),
+            output_cny_per_million_tokens=Decimal("2"),
+        ),
+        pro=DeepSeekModelPricing(
+            cache_hit_input_cny_per_million_tokens=Decimal("0.025"),
+            cache_miss_input_cny_per_million_tokens=Decimal("3"),
+            output_cny_per_million_tokens=Decimal("6"),
+        ),
+    )
+    service = _service(
+        tmp_path,
+        database,
+        PricedClient(),
+        model="deepseek-v4-flash",
+        deepseek_pricing=pricing,
+    )
+    try:
+        report = asyncio.run(
+            service.build(
+                WorkflowOptions(
+                    max_concurrency=1,
+                    max_attempts=3,
+                    limit=1,
+                    retry_backoff_seconds=0,
+                )
+            )
+        )
+
+        assert report.deepseek_cost is not None
+        assert report.deepseek_cost.status is DeepSeekCostStatus.ESTIMATED
+        assert report.usage.cache_hit_tokens == 4
+        assert report.usage.cache_miss_tokens == 6
+        assert report.deepseek_cost.cost_cny == pytest.approx((4 * 0.02 + 6 + 5 * 2) / 1_000_000)
     finally:
         database.dispose()
 
@@ -394,6 +450,21 @@ def _completion(content: str) -> CompletionResult:
         completion_tokens=5,
         cache_hit_tokens=None,
         cache_miss_tokens=None,
+        raw_response={},
+    )
+
+
+def _priced_completion(content: str) -> CompletionResult:
+    return CompletionResult(
+        provider_request_id="request-priced",
+        model="deepseek-v4-flash",
+        system_fingerprint=None,
+        content=content,
+        finish_reason="stop",
+        prompt_tokens=10,
+        completion_tokens=5,
+        cache_hit_tokens=4,
+        cache_miss_tokens=6,
         raw_response={},
     )
 

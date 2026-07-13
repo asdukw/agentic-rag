@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from hybrid_rag.config import (
+    DeepSeekPricingSettings,
     DeepSeekSettings,
     EvaluationSettings,
     GraphSettings,
@@ -19,6 +20,7 @@ from hybrid_rag.config import (
     sqlite_url,
 )
 from hybrid_rag.corpus import download_manifest
+from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary, DeepSeekPricing
 from hybrid_rag.evaluation import (
     CostDisclosure,
     CostStatus,
@@ -167,6 +169,17 @@ def _deepseek_blind_judge() -> DeepSeekBlindJudge:
     )
 
 
+def _configured_deepseek_pricing(settings: object) -> DeepSeekPricing | None:
+    """Read pricing only when a fully configured settings object provides it.
+
+    Keeping this tolerant makes cached/read-only commands usable with the
+    deliberately minimal settings doubles used by integrations and callers.
+    """
+
+    pricing = getattr(settings, "pricing", None)
+    return pricing if isinstance(pricing, DeepSeekPricing) else None
+
+
 def _evaluation_options(
     evaluation: EvaluationSettings,
     retrieval: RetrievalSettings,
@@ -210,7 +223,7 @@ def _evaluation_options(
 
 def _judge_cost_disclosure(
     judge: DeepSeekBlindJudge,
-    settings: EvaluationSettings,
+    settings: DeepSeekSettings,
     report: EvaluationReport,
 ) -> CostDisclosure:
     usage = judge.usage
@@ -218,36 +231,40 @@ def _judge_cost_disclosure(
         return CostDisclosure.unknown_judge_fallback(
             retrieval_model_calls=report.cost_disclosure.retrieval_model_calls,
             judge_model_calls=usage.calls,
-        )
+        ).model_copy(update={"deepseek_usage": usage.records})
     if report.run.index_provenance.embedding_provider.casefold() not in {"hash", "flagembedding"}:
         return CostDisclosure.unknown_external_embedding(
             provider=report.run.index_provenance.embedding_provider,
             retrieval_model_calls=report.cost_disclosure.retrieval_model_calls or 0,
             judge_model_calls=usage.calls,
-        )
-    input_price = settings.input_cost_usd_per_million_tokens
-    output_price = settings.output_cost_usd_per_million_tokens
-    if input_price is None or output_price is None:
+        ).model_copy(update={"deepseek_usage": usage.records})
+    pricing = _configured_deepseek_pricing(settings)
+    if pricing is None:
         return CostDisclosure(
             status=CostStatus.UNKNOWN,
             retrieval_model_calls=0,
             judge_model_calls=usage.calls,
-            cost_usd=None,
-            price_assumption=(
-                "DeepSeek blind judge was requested, but no verified per-million-token pricing "
-                "was configured"
-            ),
+            cost_cny=None,
+            deepseek_usage=usage.records,
+            price_assumption="DeepSeek CNY price configuration is unavailable",
         )
-    cost = (usage.prompt_tokens * input_price + usage.completion_tokens * output_price) / 1_000_000
+    estimate = pricing.estimate(usage.records)
+    if estimate.status is not DeepSeekCostStatus.ESTIMATED:
+        return CostDisclosure(
+            status=CostStatus.UNKNOWN,
+            retrieval_model_calls=0,
+            judge_model_calls=usage.calls,
+            cost_cny=None,
+            deepseek_usage=estimate.usage,
+            price_assumption=estimate.price_assumption,
+        )
     return CostDisclosure(
         status=CostStatus.ESTIMATED,
         retrieval_model_calls=0,
         judge_model_calls=usage.calls,
-        cost_usd=cost,
-        price_assumption=(
-            "User-configured DeepSeek judge price assumption: "
-            f"input=${input_price}/M tokens, output=${output_price}/M tokens"
-        ),
+        cost_cny=estimate.cost_cny,
+        deepseek_usage=estimate.usage,
+        price_assumption=estimate.price_assumption,
     )
 
 
@@ -310,6 +327,7 @@ def _render_retrieval_result(result: RetrievalResult, *, json_output: bool) -> N
         )
     if result.trace_id:
         console.print(f"Replay with: hybrid-rag retrieval replay {result.trace_id}")
+    _render_deepseek_cost(result.trace.deepseek_cost)
     console.print(result.context or "[yellow]No evidence fit the context budget.[/yellow]")
 
 
@@ -361,7 +379,7 @@ def _render_evaluation_report(
     )
     cost = report.cost_disclosure
     console.print(
-        f"Cost: status={cost.status.value}, usd={cost.cost_usd}, "
+        f"Cost: status={cost.status.value}, cny={cost.cost_cny}, "
         f"retrieval_calls={cost.retrieval_model_calls}, judge_calls={cost.judge_model_calls}"
     )
     console.print(
@@ -434,6 +452,7 @@ def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -
         str(report.attempts.total),
     )
     console.print(chunks)
+    _render_deepseek_cost(report.deepseek_cost)
     graph = GraphStorageStats(
         run_id=report.run_id,
         status=report.status,
@@ -458,6 +477,38 @@ def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -
         )
 
 
+def _render_deepseek_cost(cost: DeepSeekCostSummary | None) -> None:
+    """Render the same explicit CNY breakdown used by JSON reports and traces."""
+
+    if cost is None:
+        return
+    console.print(
+        f"DeepSeek cost: status={cost.status.value}, {cost.currency}={cost.cost_cny}; "
+        f"{cost.price_assumption}"
+    )
+    if not cost.usage:
+        return
+    usage = Table(title="DeepSeek response usage")
+    usage.add_column("Operation")
+    usage.add_column("Model")
+    usage.add_column("Calls", justify="right")
+    usage.add_column("Cache hit", justify="right")
+    usage.add_column("Cache miss", justify="right")
+    usage.add_column("Output", justify="right")
+    usage.add_column("Complete")
+    for item in cost.usage:
+        usage.add_row(
+            item.operation,
+            item.model,
+            str(item.calls),
+            str(item.cache_hit_tokens) if item.cache_hit_tokens is not None else "-",
+            str(item.cache_miss_tokens) if item.cache_miss_tokens is not None else "-",
+            str(item.completion_tokens),
+            "yes" if item.cache_breakdown_complete else "no",
+        )
+    console.print(usage)
+
+
 def _render_graph_stats(result: GraphStorageStats) -> None:
     metrics = Table(title=f"Knowledge graph ({result.run_id or 'empty'})")
     metrics.add_column("Nodes", justify="right")
@@ -473,6 +524,7 @@ def _render_graph_stats(result: GraphStorageStats) -> None:
         str(result.isolated_nodes),
     )
     console.print(metrics)
+    _render_deepseek_cost(result.deepseek_cost)
     if not result.top_entities:
         return
     top = Table(title="Top entities")
@@ -706,6 +758,7 @@ def build_graph(
             checkpoint_path=checkpoint or graph_settings.checkpoint_path,
             graph_config=graph_config,
             repository=repository,
+            deepseek_pricing=_configured_deepseek_pricing(deepseek),
         )
         try:
             report = asyncio.run(_run_graph_build(service, client, options, resume))
@@ -803,6 +856,7 @@ def retrieve(
         raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
+    deepseek_settings = DeepSeekSettings()
     url = _database_url(db_path, settings)
     upgrade_database(url)
     database = Database(url)
@@ -814,6 +868,7 @@ def retrieve(
             _embedding_provider(retrieval_settings),
             TiktokenCounter(settings.tokenizer_name),
             reranker=_reranker(retrieval_settings),
+            deepseek_pricing=_configured_deepseek_pricing(deepseek_settings),
         )
         options = _retrieval_options(
             retrieval_settings,
@@ -870,6 +925,7 @@ def ask(
         raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
+    deepseek_settings = DeepSeekSettings()
     url = _database_url(db_path, settings)
     upgrade_database(url)
     database = Database(url)
@@ -881,6 +937,7 @@ def ask(
             _embedding_provider(retrieval_settings),
             TiktokenCounter(settings.tokenizer_name),
             reranker=_reranker(retrieval_settings),
+            deepseek_pricing=_configured_deepseek_pricing(deepseek_settings),
         )
         options = _retrieval_options(
             retrieval_settings,
@@ -948,6 +1005,7 @@ def evaluate(
     settings = Settings()
     retrieval_settings = RetrievalSettings()
     evaluation_settings = EvaluationSettings()
+    deepseek_settings = DeepSeekSettings()
     selected_benchmark_path = benchmark_path or evaluation_settings.benchmark_path
     try:
         benchmark = load_benchmark(selected_benchmark_path)
@@ -986,7 +1044,7 @@ def evaluate(
                 update={
                     "cost_disclosure": _judge_cost_disclosure(
                         judge,
-                        evaluation_settings,
+                        deepseek_settings,
                         report,
                     )
                 }
@@ -1098,14 +1156,25 @@ def graph_stats(
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
     settings = Settings()
+    deepseek = DeepSeekPricingSettings()
     url = _database_url(db_path, settings)
     upgrade_database(url)
     database = Database(url)
     try:
         with database.session_factory() as session:
+            repository = GraphRepository()
             result = GraphStorageStats.model_validate(
-                GraphRepository().stats(session, run_id=run_id, top_k=top)
+                repository.stats(session, run_id=run_id, top_k=top)
             )
+            pricing = _configured_deepseek_pricing(deepseek)
+            if result.run_id is not None and pricing is not None:
+                result = result.model_copy(
+                    update={
+                        "deepseek_cost": pricing.estimate(
+                            repository.deepseek_usage(session, result.run_id)
+                        )
+                    }
+                )
     finally:
         database.dispose()
     if json_output:

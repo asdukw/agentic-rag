@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
+from hybrid_rag.deepseek_costs import DeepSeekPricing
 from hybrid_rag.extraction.client import ExtractionClient
 from hybrid_rag.extraction.reports import (
     GraphBuildReport,
@@ -37,6 +38,7 @@ class GraphBuildService:
         checkpoint_path: Path,
         graph_config: GraphConfig | None = None,
         repository: GraphRepository | None = None,
+        deepseek_pricing: DeepSeekPricing | None = None,
     ) -> None:
         self.database = database
         self.client = client
@@ -48,6 +50,7 @@ class GraphBuildService:
             raise ValueError("graph config must reference the active extraction config")
         self.checkpoint_path = checkpoint_path.expanduser().resolve()
         self.repository = repository or GraphRepository()
+        self.deepseek_pricing = deepseek_pricing
         self.workflow = GraphBuildWorkflow(database, client, self.repository)
         self.last_run_id: str | None = None
 
@@ -68,9 +71,9 @@ class GraphBuildService:
             effective_options = self._persisted_options(run.report, fallback=options)
             self._validate_attempt_budget(effective_options)
             if run.status in {"completed", "completed_with_failures", "failed"}:
-                return self.workflow.report(run_id, top_k=effective_options.top_k)
+                return self._with_cost(self.workflow.report(run_id, top_k=effective_options.top_k))
             if run.status == "awaiting_review" and run.needs_review_chunks:
-                return self.workflow.report(run_id, top_k=effective_options.top_k)
+                return self._with_cost(self.workflow.report(run_id, top_k=effective_options.top_k))
         self.last_run_id = run_id
 
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +102,9 @@ class GraphBuildService:
                         if current.status == "running":
                             graph_input = workflow_state(run_id, effective_options)
                         else:
-                            return self.workflow.report(run_id, top_k=effective_options.top_k)
+                            return self._with_cost(
+                                self.workflow.report(run_id, top_k=effective_options.top_k)
+                            )
                 result = await graph.ainvoke(
                     graph_input,
                     config,
@@ -120,13 +125,33 @@ class GraphBuildService:
             raise
 
         if isinstance(result, dict) and result.get("report"):
-            return GraphBuildReport.model_validate(result["report"])
-        return self.workflow.report(run_id, top_k=effective_options.top_k)
+            report = GraphBuildReport.model_validate(result["report"])
+        else:
+            report = self.workflow.report(run_id, top_k=effective_options.top_k)
+        return self._with_cost(report)
+
+    def _with_cost(self, report: GraphBuildReport) -> GraphBuildReport:
+        if self.deepseek_pricing is None:
+            return report
+        return report.model_copy(
+            update={
+                "deepseek_cost": self.deepseek_pricing.estimate(report.usage.by_operation_and_model)
+            }
+        )
 
     def stats(self, *, run_id: str | None = None, top_k: int = 10) -> GraphStorageStats:
         with self.database.session_factory() as session:
             payload = self.repository.stats(session, run_id=run_id, top_k=top_k)
-        return GraphStorageStats.model_validate(payload)
+            stats = GraphStorageStats.model_validate(payload)
+            if self.deepseek_pricing is not None and stats.run_id is not None:
+                stats = stats.model_copy(
+                    update={
+                        "deepseek_cost": self.deepseek_pricing.estimate(
+                            self.repository.deepseek_usage(session, stats.run_id)
+                        )
+                    }
+                )
+        return stats
 
     def inspect(self, object_id: str, *, raw: bool = False) -> dict[str, Any] | None:
         with self.database.session_factory() as session:

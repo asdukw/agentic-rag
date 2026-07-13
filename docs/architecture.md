@@ -175,8 +175,10 @@ The corpus-content hash only covers documents/chunks, so a fixed question set ca
 be reused after a graph rebuild.  The report still names the graph-bound index
 snapshot and graph run, so results from different graph builds are never silently
 combined. A failed external judge produces an `unknown` cost disclosure unless
-complete verified usage and price evidence is available; locally executed BGE-M3
-and hash profiles have no embedding API cost.
+complete response usage and a configured price table are available. DeepSeek
+estimates record the actual response model plus cache-hit input, cache-miss
+input, and output tokens against the configured CNY prices; locally executed
+BGE-M3 and hash profiles have no embedding API cost.
 
 ## Operational checkpoints
 

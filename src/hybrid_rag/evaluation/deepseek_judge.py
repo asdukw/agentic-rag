@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from hybrid_rag.deepseek_costs import DeepSeekUsage, aggregate_deepseek_usage, deepseek_usage
 from hybrid_rag.evaluation.contracts import BlindComparison, BlindJudgment, JudgeProvenance
 from hybrid_rag.extraction.client import CompletionResult, DeepSeekClient
 from hybrid_rag.extraction.prompts import ChatMessage
@@ -30,9 +31,21 @@ class _DuplicateJsonKeyError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class JudgeUsage:
-    calls: int
-    prompt_tokens: int
-    completion_tokens: int
+    """Response usage observed from the external blind judge."""
+
+    records: tuple[DeepSeekUsage, ...]
+
+    @property
+    def calls(self) -> int:
+        return sum(record.calls for record in self.records)
+
+    @property
+    def prompt_tokens(self) -> int:
+        return sum(record.prompt_tokens for record in self.records)
+
+    @property
+    def completion_tokens(self) -> int:
+        return sum(record.completion_tokens for record in self.records)
 
 
 class DeepSeekBlindJudge:
@@ -66,17 +79,11 @@ class DeepSeekBlindJudge:
         self._max_output_tokens = max_output_tokens
         self._timeout_seconds = timeout_seconds
         self._client_factory = client_factory
-        self._calls = 0
-        self._prompt_tokens = 0
-        self._completion_tokens = 0
+        self._usage_records: list[DeepSeekUsage] = []
 
     @property
     def usage(self) -> JudgeUsage:
-        return JudgeUsage(
-            calls=self._calls,
-            prompt_tokens=self._prompt_tokens,
-            completion_tokens=self._completion_tokens,
-        )
+        return JudgeUsage(records=aggregate_deepseek_usage(self._usage_records))
 
     @property
     def provenance(self) -> JudgeProvenance:
@@ -112,9 +119,16 @@ class DeepSeekBlindJudge:
             completion = await client.complete_messages(_messages(comparison))
         finally:
             await client.close()
-        self._calls += 1
-        self._prompt_tokens += completion.prompt_tokens
-        self._completion_tokens += completion.completion_tokens
+        self._usage_records.append(
+            deepseek_usage(
+                operation="judge",
+                model=completion.model,
+                prompt_tokens=completion.prompt_tokens,
+                cache_hit_tokens=completion.cache_hit_tokens,
+                cache_miss_tokens=completion.cache_miss_tokens,
+                completion_tokens=completion.completion_tokens,
+            )
+        )
         return _validate_completion(completion)
 
     def _new_client(self) -> DeepSeekClient:

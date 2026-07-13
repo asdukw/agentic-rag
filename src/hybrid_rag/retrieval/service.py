@@ -14,6 +14,7 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, ConfigDict
 
+from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekPricing, DeepSeekUsage
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.ingest.tokenizer import TokenCounter
 from hybrid_rag.retrieval.bm25 import (
@@ -198,12 +199,14 @@ class RetrievalService:
         *,
         repository: RetrievalRepository | None = None,
         reranker: Reranker | None = None,
+        deepseek_pricing: DeepSeekPricing | None = None,
     ) -> None:
         self.database = database
         self.embedding_provider = embedding_provider
         self.token_counter = token_counter
         self.repository = repository or RetrievalRepository()
         self.reranker = reranker
+        self.deepseek_pricing = deepseek_pricing
 
     def build_index(
         self,
@@ -340,15 +343,18 @@ class RetrievalService:
         extracted = await extractor.extract_keywords(question)
         details = dict(model_info or {})
         details.setdefault("keyword_extractor", type(extractor).__name__)
-        return self.retrieve(
+        result = self.retrieve(
             question,
             mode=mode,
             options=options,
             profile_ref=profile_ref,
             keywords=extracted.keywords,
-            persist=persist,
-            model_info=details,
+            persist=False,
         )
+        result = self._with_query_cost(result, extractor)
+        if not persist:
+            return result
+        return self._persist_result(result, model_info=details)
 
     async def ask(
         self,
@@ -380,12 +386,33 @@ class RetrievalService:
             for item in retrieval.context_items
         )
         answer = await client.answer(question, evidence)
+        retrieval = self._with_query_cost(retrieval, client)
         persisted = self._persist_result(
             retrieval,
             answer=answer,
             model_info={"query_client": type(client).__name__},
         )
         return AnswerResult(retrieval=persisted, answer=answer)
+
+    def _with_query_cost(
+        self,
+        result: RetrievalResult,
+        client: KeywordExtractor | QueryClient,
+    ) -> RetrievalResult:
+        """Attach only observed DeepSeek response usage to a replayable trace."""
+
+        if self.deepseek_pricing is None:
+            return result
+        records = getattr(client, "usage", None)
+        if not isinstance(records, tuple) or not all(
+            isinstance(record, DeepSeekUsage) for record in records
+        ):
+            return result
+        cost = self.deepseek_pricing.estimate(records)
+        if cost.status is DeepSeekCostStatus.NOT_APPLICABLE:
+            return result
+        trace = result.trace.model_copy(update={"deepseek_cost": cost})
+        return result.model_copy(update={"trace": trace})
 
     def replay(self, trace_id: str) -> RetrievalResult:
         """Load the exact stored retrieval result without re-embedding or re-ranking."""

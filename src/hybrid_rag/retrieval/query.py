@@ -18,6 +18,7 @@ from typing import Annotated, Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
+from hybrid_rag.deepseek_costs import DeepSeekUsage, aggregate_deepseek_usage, deepseek_usage
 from hybrid_rag.extraction.client import CompletionResult, DeepSeekClient
 from hybrid_rag.extraction.prompts import ChatMessage
 
@@ -276,11 +277,19 @@ class OpenAICompatibleQueryClient:
         self._sdk_client = sdk_client
         self._owns_sdk_client = False
         self._delegates: dict[str, DeepSeekClient] = {}
+        self._usage_records: list[DeepSeekUsage] = []
+
+    @property
+    def usage(self) -> tuple[DeepSeekUsage, ...]:
+        """Aggregate response usage from keywording and answer calls so far."""
+
+        return aggregate_deepseek_usage(self._usage_records)
 
     async def extract_keywords(self, question: str) -> KeywordExtraction:
         from hybrid_rag.retrieval.prompts import build_keyword_messages
 
         completion = await self._complete(
+            operation="keyword",
             model=self.keyword_model,
             messages=build_keyword_messages(question),
         )
@@ -300,6 +309,7 @@ class OpenAICompatibleQueryClient:
         if not normalized_evidence:
             return _insufficient_evidence_answer()
         completion = await self._complete(
+            operation="answer",
             model=self.answer_model,
             messages=build_answer_messages(question, normalized_evidence),
         )
@@ -328,10 +338,22 @@ class OpenAICompatibleQueryClient:
     async def _complete(
         self,
         *,
+        operation: str,
         model: str,
         messages: Sequence[ChatMessage],
     ) -> CompletionResult:
-        return await self._delegate_for(model).complete_messages(messages)
+        completion = await self._delegate_for(model).complete_messages(messages)
+        self._usage_records.append(
+            deepseek_usage(
+                operation=operation,
+                model=completion.model,
+                prompt_tokens=completion.prompt_tokens,
+                cache_hit_tokens=completion.cache_hit_tokens,
+                cache_miss_tokens=completion.cache_miss_tokens,
+                completion_tokens=completion.completion_tokens,
+            )
+        )
+        return completion
 
     def _delegate_for(self, model: str) -> DeepSeekClient:
         delegate = self._delegates.get(model)

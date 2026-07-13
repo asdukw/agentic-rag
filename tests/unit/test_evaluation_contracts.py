@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
 
+from hybrid_rag.config import DeepSeekSettings
 from hybrid_rag.evaluation import (
     CostDisclosure,
     CostStatus,
@@ -78,14 +80,40 @@ def test_cost_disclosure_does_not_invent_external_prices() -> None:
     unknown = CostDisclosure.unknown_external_judge()
 
     assert offline.status is CostStatus.NOT_APPLICABLE
-    assert offline.cost_usd == 0.0
+    assert offline.cost_cny == 0.0
     assert unknown.status is CostStatus.UNKNOWN
-    assert unknown.cost_usd is None
+    assert unknown.cost_cny is None
     with pytest.raises(ValidationError, match="requires amount and price_assumption"):
         CostDisclosure(
             status=CostStatus.VERIFIED,
             retrieval_model_calls=0,
             judge_model_calls=20,
-            cost_usd=None,
+            cost_cny=None,
             price_assumption=None,
         )
+
+
+def test_deepseek_settings_expose_six_cny_price_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "DEEPSEEK_FLASH_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS",
+        "0.27",
+    )
+    monkeypatch.setenv(
+        "DEEPSEEK_FLASH_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS",
+        "1.10",
+    )
+    monkeypatch.setenv("DEEPSEEK_FLASH_OUTPUT_CNY_PER_MILLION_TOKENS", "2.10")
+    monkeypatch.setenv("DEEPSEEK_PRO_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS", "0.037")
+    monkeypatch.setenv("DEEPSEEK_PRO_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS", "3.10")
+    monkeypatch.setenv("DEEPSEEK_PRO_OUTPUT_CNY_PER_MILLION_TOKENS", "6.10")
+
+    settings = DeepSeekSettings(_env_file=None)
+
+    assert settings.flash_input_cache_hit_cny_per_million_tokens == Decimal("0.27")
+    assert settings.flash_input_cache_miss_cny_per_million_tokens == Decimal("1.10")
+    assert settings.flash_output_cny_per_million_tokens == Decimal("2.10")
+    assert settings.pro_input_cache_hit_cny_per_million_tokens == Decimal("0.037")
+    assert settings.pro_input_cache_miss_cny_per_million_tokens == Decimal("3.10")
+    assert settings.pro_output_cny_per_million_tokens == Decimal("6.10")

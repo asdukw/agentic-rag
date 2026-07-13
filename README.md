@@ -54,17 +54,7 @@ uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge
 ### FlagEmbedding cross-encoder 精排
 
 默认已启用 `BAAI/bge-reranker-v2-m3`。`uv sync` 会安装 FlagEmbedding，首次检索会下载相应权重。
-项目不再提供 lexical reranker；已有 `.env` 若配置了 `lexical`，请替换为以下配置。
-
-1. 在项目根目录的 `.env` 中写入以下配置（若尚未创建 `.env`，可参考 `.env.example`）：
-
-```dotenv
-HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding
-HYBRID_RAG_RETRIEVAL_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=false
-```
-
-2. 正常执行检索或问答命令即可：
+正常执行检索或问答命令即可：
 
 ```bash
 uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json
@@ -74,16 +64,6 @@ uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --jso
 原始 logit 与 sigmoid 归一化后的 0--1 分数。仅在兼容 CUDA 的 GPU 环境中将
 `HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=true`；CPU 环境保持 `false`。仍可将 provider 设为 `none`，
 跳过所有二阶段精排。
-
-### 使用自己的文档
-
-```bash
-uv run hybrid-rag ingest data/raw
-uv run hybrid-rag build-index
-```
-
-支持 PDF、Markdown 和 TXT。重复导入未变化文件会跳过；文档变化会使旧索引失效，需要再次
-运行 `build-index`。
 
 ### 构建知识图谱
 
@@ -96,6 +76,26 @@ uv run hybrid-rag build-index
 
 没有图谱时，`naive` 可正常使用，`hybrid` 会保留 chunk 路径；构图后 `local` 和 `global`
 也能提供实体、关系和 NetworkX 路径证据。
+
+### DeepSeek 人民币成本估算
+
+DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响应中的实际模型、缓存命中输入、
+缓存未命中输入和输出 token，结合 `.env` 中的六项单价估算人民币成本；`build-graph`、
+`retrieve --deepseek`、`ask --deepseek` 与 `evaluate --deepseek-judge` 的 JSON/trace/报告都会保留
+对应的用量和估算结果。
+
+```dotenv
+DEEPSEEK_FLASH_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS=0.02
+DEEPSEEK_FLASH_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS=1.00
+DEEPSEEK_FLASH_OUTPUT_CNY_PER_MILLION_TOKENS=2.00
+DEEPSEEK_PRO_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS=0.025
+DEEPSEEK_PRO_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS=3.00
+DEEPSEEK_PRO_OUTPUT_CNY_PER_MILLION_TOKENS=6.00
+```
+
+模型仅按实际响应中的 `deepseek-v4-flash` 或 `deepseek-v4-pro` 精确匹配价格表。若上游没有返回两类
+缓存 token，或两者之和与输入 token 不一致，成本状态会显示为 `unknown`，而不会猜测为缓存未命中；
+因此金额是基于 response usage 的估算，不是 DeepSeek 账单。
 
 ### 选择检索模式与查看证据
 

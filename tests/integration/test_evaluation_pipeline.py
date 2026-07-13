@@ -70,12 +70,13 @@ def test_runner_uses_the_real_sqlite_graph_and_retrieval_pipeline(tmp_path: Path
         assert (index.entities, index.relations) == (2, 1)
         assert report.run.case_ids == options.case_ids
         assert report.run.index_provenance.profile_id == index.profile_id
-        assert report.run.index_provenance.corpus_content_hash == profile.metadata[
-            "corpus_content_hash"
-        ]
+        assert (
+            report.run.index_provenance.corpus_content_hash
+            == profile.metadata["corpus_content_hash"]
+        )
         assert report.run.index_provenance.source_corpus_hash == index.source_corpus_hash
         assert len(report.evaluations) == 4
-        assert report.cost_disclosure.cost_usd == 0.0
+        assert report.cost_disclosure.cost_cny == 0.0
         hybrid = [item for item in report.evaluations if item.mode is RetrievalMode.HYBRID]
         assert all(item.evidence_hit_rate == 1.0 for item in hybrid)
         assert all(item.citation_grounded_faithfulness for item in hybrid)

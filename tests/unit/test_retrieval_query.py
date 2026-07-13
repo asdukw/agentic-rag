@@ -38,8 +38,8 @@ class FakeCompletions:
             usage=SimpleNamespace(
                 prompt_tokens=11,
                 completion_tokens=7,
-                prompt_cache_hit_tokens=None,
-                prompt_cache_miss_tokens=None,
+                prompt_cache_hit_tokens=3,
+                prompt_cache_miss_tokens=8,
             ),
         )
 
@@ -89,6 +89,11 @@ def test_deepseek_query_client_uses_json_mode_disabled_thinking_and_allowlisted_
     assert "not answer the question" in keyword_system
     assert "ALLOWED_CITATION_IDS_JSON" in sdk.completions.requests[1]["messages"][1]["content"]
     assert "Never invent citations" in answer_system
+    assert [(item.operation, item.model) for item in client.usage] == [
+        ("answer", "answer-model"),
+        ("keyword", "keyword-model"),
+    ]
+    assert all(item.cache_breakdown_complete for item in client.usage)
 
 
 def test_answer_rejects_citation_outside_exact_retrieval_allowlist() -> None:

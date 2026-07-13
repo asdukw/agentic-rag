@@ -155,7 +155,7 @@ def test_runner_pins_profiles_persists_replayable_traces_and_serializes_reports(
     assert naive.evidence_hit_rate == 0.5
     assert hybrid.evidence_hit_rate == 1.0
     assert hybrid.citation_grounded_faithfulness
-    assert report.cost_disclosure.cost_usd == 0.0
+    assert report.cost_disclosure.cost_cny == 0.0
     assert report.run.index_provenance.profile_id == "idx-fixture"
     assert report.run.index_provenance.corpus_content_hash == "c" * 64
     assert report.run.index_provenance.source_corpus_hash == "a" * 64
@@ -180,7 +180,7 @@ def test_runner_falls_back_after_a_custom_blind_judge_failure() -> None:
         options=EvaluationOptions(case_ids=("case-01",)),
     )
 
-    assert report.cost_disclosure.cost_usd is None
+    assert report.cost_disclosure.cost_cny is None
     assert report.cost_disclosure.status.value == "unknown"
     assert all(judgment.used_fallback for judgment in report.pairwise_judgments)
     assert "network unavailable" in report.pairwise_judgments[0].fallback_reason
@@ -204,7 +204,7 @@ def test_runner_marks_unknown_legacy_embedding_cost_without_full_disclosure() ->
     )
 
     assert report.cost_disclosure.status is CostStatus.UNKNOWN
-    assert report.cost_disclosure.cost_usd is None
+    assert report.cost_disclosure.cost_cny is None
     assert report.cost_disclosure.retrieval_model_calls == 2
 
 
@@ -216,7 +216,7 @@ def test_runner_treats_local_bge_embedding_as_no_embedding_api_cost() -> None:
 
     assert report.cost_disclosure.status is CostStatus.NOT_APPLICABLE
     assert report.cost_disclosure.retrieval_model_calls == 0
-    assert report.cost_disclosure.cost_usd == 0.0
+    assert report.cost_disclosure.cost_cny == 0.0
 
 
 def test_runner_accepts_only_a_verified_legacy_embedding_cost_disclosure() -> None:
@@ -224,7 +224,7 @@ def test_runner_accepts_only_a_verified_legacy_embedding_cost_disclosure() -> No
         status=CostStatus.VERIFIED,
         retrieval_model_calls=2,
         judge_model_calls=0,
-        cost_usd=0.02,
+        cost_cny=0.02,
         price_assumption="provider invoice reconciled for the two query embeddings",
     )
     report = EvaluationRunner(FakeRetrievalService(provider="legacy-external")).run(  # type: ignore[arg-type]
@@ -241,7 +241,7 @@ def test_runner_invalidates_a_supplied_cost_after_external_judge_fallback() -> N
         status=CostStatus.ESTIMATED,
         retrieval_model_calls=0,
         judge_model_calls=1,
-        cost_usd=0.01,
+        cost_cny=0.01,
         price_assumption="test-only fully specified price",
     )
     report = EvaluationRunner(FakeRetrievalService(), judge=BrokenJudge()).run(  # type: ignore[arg-type]
@@ -251,7 +251,7 @@ def test_runner_invalidates_a_supplied_cost_after_external_judge_fallback() -> N
     )
 
     assert report.cost_disclosure.status is CostStatus.UNKNOWN
-    assert report.cost_disclosure.cost_usd is None
+    assert report.cost_disclosure.cost_cny is None
     assert "fallback" in (report.cost_disclosure.price_assumption or "")
 
 

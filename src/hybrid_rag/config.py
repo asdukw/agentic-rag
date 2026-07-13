@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from hybrid_rag.deepseek_costs import DeepSeekModelPricing, DeepSeekPricing
 
 
 class Settings(BaseSettings):
@@ -28,14 +31,48 @@ class Settings(BaseSettings):
         return self
 
 
-class DeepSeekSettings(BaseSettings):
-    """DeepSeek credentials and request limits, loaded only by extraction commands."""
+class DeepSeekPricingSettings(BaseSettings):
+    """Local DeepSeek CNY price assumptions, safe for read-only reports."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="DEEPSEEK_",
         extra="ignore",
     )
+
+    flash_input_cache_hit_cny_per_million_tokens: Decimal = Field(default=Decimal("0.02"), ge=0)
+    flash_input_cache_miss_cny_per_million_tokens: Decimal = Field(default=Decimal("1.00"), ge=0)
+    flash_output_cny_per_million_tokens: Decimal = Field(default=Decimal("2.00"), ge=0)
+    pro_input_cache_hit_cny_per_million_tokens: Decimal = Field(default=Decimal("0.025"), ge=0)
+    pro_input_cache_miss_cny_per_million_tokens: Decimal = Field(default=Decimal("3.00"), ge=0)
+    pro_output_cny_per_million_tokens: Decimal = Field(default=Decimal("6.00"), ge=0)
+
+    @property
+    def pricing(self) -> DeepSeekPricing:
+        """Return the six configured CNY prices as one immutable table."""
+
+        return DeepSeekPricing(
+            flash=DeepSeekModelPricing(
+                cache_hit_input_cny_per_million_tokens=(
+                    self.flash_input_cache_hit_cny_per_million_tokens
+                ),
+                cache_miss_input_cny_per_million_tokens=(
+                    self.flash_input_cache_miss_cny_per_million_tokens
+                ),
+                output_cny_per_million_tokens=self.flash_output_cny_per_million_tokens,
+            ),
+            pro=DeepSeekModelPricing(
+                cache_hit_input_cny_per_million_tokens=self.pro_input_cache_hit_cny_per_million_tokens,
+                cache_miss_input_cny_per_million_tokens=(
+                    self.pro_input_cache_miss_cny_per_million_tokens
+                ),
+                output_cny_per_million_tokens=self.pro_output_cny_per_million_tokens,
+            ),
+        )
+
+
+class DeepSeekSettings(DeepSeekPricingSettings):
+    """DeepSeek credentials and request limits, including CNY price assumptions."""
 
     api_key: SecretStr | None = None
     base_url: str = Field(default="https://api.deepseek.com", min_length=1)
@@ -119,8 +156,6 @@ class EvaluationSettings(BaseSettings):
     context_token_budget: int = Field(default=2400, ge=128)
     graph_max_hops: int = Field(default=2, ge=1, le=4)
     max_questions: int | None = Field(default=None, ge=1)
-    input_cost_usd_per_million_tokens: float | None = Field(default=None, ge=0)
-    output_cost_usd_per_million_tokens: float | None = Field(default=None, ge=0)
 
 
 def sqlite_url(path: Path) -> str:

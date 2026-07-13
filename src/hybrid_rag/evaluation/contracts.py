@@ -7,12 +7,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from hybrid_rag.deepseek_costs import DeepSeekUsage
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.retrieval.models import RetrievalMode, RetrievalTrace
 from hybrid_rag.retrieval.query import GroundedAnswer
 
 BENCHMARK_SCHEMA_VERSION = "1"
-EVALUATION_SCHEMA_VERSION = "1"
+EVALUATION_SCHEMA_VERSION = "2"
 
 NonBlankText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 BenchmarkId = Annotated[
@@ -87,7 +88,7 @@ class BlindWinner(StrEnum):
 
 
 class CostStatus(StrEnum):
-    """Whether a report's dollar value is usable for comparison."""
+    """Whether a report's configured cost estimate is usable for comparison."""
 
     NOT_APPLICABLE = "not_applicable"
     VERIFIED = "verified"
@@ -223,7 +224,7 @@ class EvaluationRun(_StrictEvaluationModel):
             pattern=r"^evr_[a-f0-9]{12,64}$",
         ),
     ]
-    schema_version: Literal["1"] = EVALUATION_SCHEMA_VERSION
+    schema_version: Literal["2"] = EVALUATION_SCHEMA_VERSION
     benchmark_id: BenchmarkId
     benchmark_schema_version: Literal["1"] = BENCHMARK_SCHEMA_VERSION
     options: EvaluationOptions
@@ -389,29 +390,31 @@ class CostDisclosure(_StrictEvaluationModel):
     """Explicit cost metadata; never silently invent a provider price.
 
     Callers that configure every external model price can pass a verified or
-    estimated price assumption into :meth:`EvaluationRunner.run`.  A zero
-    dollar value is reserved for fully local embedding/deterministic execution.
+    estimated price assumption into :meth:`EvaluationRunner.run`.  A zero CNY
+    value is reserved for fully local embedding/deterministic execution.
     """
 
     status: CostStatus
+    currency: Literal["CNY"] = "CNY"
     retrieval_model_calls: int | None = Field(default=0, ge=0)
     judge_model_calls: int | None = Field(default=0, ge=0)
-    cost_usd: float | None = Field(default=0.0, ge=0.0)
+    cost_cny: float | None = Field(default=0.0, ge=0.0)
+    deepseek_usage: tuple[DeepSeekUsage, ...] = ()
     price_assumption: str | None = Field(default=None, min_length=1, max_length=2_000)
 
     @model_validator(mode="after")
     def validate_cost_status(self) -> CostDisclosure:
         calls = (self.retrieval_model_calls, self.judge_model_calls)
         if self.status is CostStatus.NOT_APPLICABLE:
-            if calls != (0, 0) or self.cost_usd != 0.0:
+            if calls != (0, 0) or self.cost_cny != 0.0:
                 raise ValueError("not_applicable cost requires zero known calls and zero cost")
         elif self.status in {CostStatus.VERIFIED, CostStatus.ESTIMATED}:
-            if self.cost_usd is None or self.price_assumption is None:
+            if self.cost_cny is None or self.price_assumption is None:
                 raise ValueError("verified or estimated cost requires amount and price_assumption")
             if any(value is None for value in calls):
                 raise ValueError("verified or estimated cost requires known model call counts")
-        elif self.status is CostStatus.UNKNOWN and self.cost_usd is not None:
-            raise ValueError("unknown cost must not provide a dollar value")
+        elif self.status is CostStatus.UNKNOWN and self.cost_cny is not None:
+            raise ValueError("unknown cost must not provide a CNY value")
         return self
 
     @classmethod
@@ -422,7 +425,7 @@ class CostDisclosure(_StrictEvaluationModel):
             status=CostStatus.NOT_APPLICABLE,
             retrieval_model_calls=0,
             judge_model_calls=0,
-            cost_usd=0.0,
+            cost_cny=0.0,
             price_assumption="offline deterministic retrieval, answer, and judge",
         )
 
@@ -440,7 +443,7 @@ class CostDisclosure(_StrictEvaluationModel):
             status=CostStatus.UNKNOWN,
             retrieval_model_calls=retrieval_model_calls,
             judge_model_calls=judge_model_calls,
-            cost_usd=None,
+            cost_cny=None,
             price_assumption=(
                 f"external embedding provider {provider!r} has no verified evaluation "
                 "price/usage disclosure"
@@ -455,7 +458,7 @@ class CostDisclosure(_StrictEvaluationModel):
             status=CostStatus.UNKNOWN,
             retrieval_model_calls=0,
             judge_model_calls=None,
-            cost_usd=None,
+            cost_cny=None,
             price_assumption="caller-supplied blind judge did not disclose model usage or price",
         )
 
@@ -466,13 +469,13 @@ class CostDisclosure(_StrictEvaluationModel):
         retrieval_model_calls: int | None,
         judge_model_calls: int | None,
     ) -> CostDisclosure:
-        """Invalidate a dollar estimate after any external judge fallback."""
+        """Invalidate an estimate after any external judge fallback."""
 
         return cls(
             status=CostStatus.UNKNOWN,
             retrieval_model_calls=retrieval_model_calls,
             judge_model_calls=judge_model_calls,
-            cost_usd=None,
+            cost_cny=None,
             price_assumption=(
                 "one or more external blind-judge calls failed and used the deterministic "
                 "fallback; total model cost is not comparable"

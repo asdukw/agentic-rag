@@ -12,6 +12,7 @@ from typing import Any, Required, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from hybrid_rag.deepseek_costs import DeepSeekUsage
 from hybrid_rag.extraction.client import (
     CompletionResult,
     ExtractionClient,
@@ -651,13 +652,19 @@ class GraphBuildWorkflow:
             run = self.repository.get_run(session, run_id)
             if run is None:
                 raise RuntimeError(f"graph build run not found: {run_id}")
+            usage = self._usage_summary(
+                run,
+                self.repository.deepseek_usage(session, run_id),
+            )
             persisted_report = run.report.get("final_report")
             if (
                 isinstance(persisted_report, dict)
                 and persisted_report.get("run_id") == run.id
                 and persisted_report.get("status") == run.status
             ):
-                return GraphBuildReport.model_validate(persisted_report)
+                return GraphBuildReport.model_validate(persisted_report).model_copy(
+                    update={"usage": usage, "deepseek_cost": None}
+                )
             stats = self.repository.stats(session, run_id=run_id, top_k=top_k)
             inspected = self.repository.inspect(session, run_id) or {}
             failures = self._failure_summaries(session, inspected)
@@ -691,9 +698,13 @@ class GraphBuildWorkflow:
                 repair=run.repair_attempt_count,
             ),
             usage=UsageSummary(
-                prompt_tokens=run.prompt_tokens,
-                completion_tokens=run.completion_tokens,
-                total_tokens=run.total_tokens,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                cache_hit_tokens=usage.cache_hit_tokens,
+                cache_miss_tokens=usage.cache_miss_tokens,
+                cache_breakdown_complete=usage.cache_breakdown_complete,
+                by_operation_and_model=usage.by_operation_and_model,
             ),
             graph=GraphSummary(
                 nodes=int(stats["nodes"]),
@@ -706,6 +717,32 @@ class GraphBuildWorkflow:
                 ),
             ),
             failures=failures,
+        )
+
+    @staticmethod
+    def _usage_summary(run: Any, records: tuple[DeepSeekUsage, ...]) -> UsageSummary:
+        """Summarize persisted response usage without guessing missing cache data."""
+
+        prompt_tokens = int(run.prompt_tokens)
+        completion_tokens = int(run.completion_tokens)
+        records_prompt = sum(record.prompt_tokens for record in records)
+        complete = records_prompt == prompt_tokens and all(
+            record.cache_breakdown_complete for record in records
+        )
+        if not records and prompt_tokens == 0:
+            complete = True
+        return UsageSummary(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=int(run.total_tokens),
+            cache_hit_tokens=(
+                sum(record.cache_hit_tokens or 0 for record in records) if complete else None
+            ),
+            cache_miss_tokens=(
+                sum(record.cache_miss_tokens or 0 for record in records) if complete else None
+            ),
+            cache_breakdown_complete=complete,
+            by_operation_and_model=records,
         )
 
     def _failure_summaries(

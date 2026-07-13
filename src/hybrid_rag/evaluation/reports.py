@@ -29,8 +29,7 @@ def render_markdown(report: EvaluationReport) -> str:
         f"({report.run.index_provenance.embedding_dimensions} dimensions)",
         "- Graph-independent corpus content hash: "
         f"`{report.run.index_provenance.corpus_content_hash}`",
-        "- Graph-bound source snapshot hash: "
-        f"`{report.run.index_provenance.source_corpus_hash}`",
+        f"- Graph-bound source snapshot hash: `{report.run.index_provenance.source_corpus_hash}`",
         "- Graph snapshot: "
         f"`{report.run.index_provenance.source_graph_run_id or 'none'}`; corpus hash "
         f"`{report.run.index_provenance.source_graph_corpus_hash or 'none'}`",
@@ -49,15 +48,38 @@ def render_markdown(report: EvaluationReport) -> str:
         f"`{report.judge_provenance.thinking or 'none'}` / "
         f"`{judge_temperature if judge_temperature is not None else 'none'}`",
         f"Cost status: `{report.cost_disclosure.status.value}`; "
-        f"cost (USD): `{report.cost_disclosure.cost_usd}`",
+        f"cost (CNY): `{report.cost_disclosure.cost_cny}`",
         f"Price assumption: {report.cost_disclosure.price_assumption or '—'}",
         "",
-        "## Mode summary",
-        "",
-        "| Mode | Evidence hit | Cited evidence hit | Citation-grounded faithfulness | "
-        "Mean retrieval latency (ms) | Median retrieval latency (ms) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    if report.cost_disclosure.deepseek_usage:
+        lines.extend(
+            [
+                "DeepSeek response usage:",
+                "",
+                "| Operation | Model | Calls | Cache-hit input | Cache-miss input | Output | "
+                "Cache split complete |",
+                "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+            ]
+        )
+        for usage in report.cost_disclosure.deepseek_usage:
+            lines.append(
+                "| "
+                f"{usage.operation} | {usage.model} | {usage.calls} | "
+                f"{usage.cache_hit_tokens if usage.cache_hit_tokens is not None else '—'} | "
+                f"{usage.cache_miss_tokens if usage.cache_miss_tokens is not None else '—'} | "
+                f"{usage.completion_tokens} | {str(usage.cache_breakdown_complete).lower()} |"
+            )
+        lines.append("")
+    lines.extend(
+        [
+            "## Mode summary",
+            "",
+            "| Mode | Evidence hit | Cited evidence hit | Citation-grounded faithfulness | "
+            "Mean retrieval latency (ms) | Median retrieval latency (ms) |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for summary in report.summaries:
         lines.append(
             "| "

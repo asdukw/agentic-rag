@@ -351,6 +351,7 @@ def create_service(
     runtime: DemoRuntime,
     settings: Settings,
     retrieval: RetrievalSettings,
+    deepseek: DeepSeekSettings | None = None,
 ) -> tuple[Database, RetrievalService]:
     """Upgrade the selected database and return a short-lived retrieval service."""
 
@@ -365,6 +366,7 @@ def create_service(
             runtime.options.reranker_model,
             use_fp16=runtime.options.reranker_use_fp16,
         ),
+        deepseek_pricing=(deepseek or DeepSeekSettings()).pricing,
     )
     return database, service
 

@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from hybrid_rag.deepseek_costs import DeepSeekCostSummary, DeepSeekUsage
+
 
 class _ReportModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -29,6 +31,10 @@ class UsageSummary(_ReportModel):
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)
     total_tokens: int = Field(ge=0)
+    cache_hit_tokens: int | None = Field(default=None, ge=0)
+    cache_miss_tokens: int | None = Field(default=None, ge=0)
+    cache_breakdown_complete: bool = False
+    by_operation_and_model: tuple[DeepSeekUsage, ...] = ()
 
 
 class TopEntitySummary(_ReportModel):
@@ -71,6 +77,7 @@ class GraphBuildReport(_ReportModel):
     chunks: ChunkProgress
     attempts: AttemptSummary
     usage: UsageSummary
+    deepseek_cost: DeepSeekCostSummary | None = None
     graph: GraphSummary
     failures: tuple[BuildFailure, ...] = ()
 
@@ -87,3 +94,4 @@ class GraphStorageStats(_ReportModel):
     largest_component_nodes: int = Field(ge=0)
     isolated_nodes: int = Field(ge=0)
     top_entities: tuple[TopEntitySummary, ...] = ()
+    deepseek_cost: DeepSeekCostSummary | None = None

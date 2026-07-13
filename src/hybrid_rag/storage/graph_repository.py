@@ -10,6 +10,13 @@ from uuid import uuid4
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from hybrid_rag.deepseek_costs import (
+    DeepSeekUsage,
+    aggregate_deepseek_usage,
+)
+from hybrid_rag.deepseek_costs import (
+    deepseek_usage as make_deepseek_usage,
+)
 from hybrid_rag.ids import canonical_json_hash, stable_id
 from hybrid_rag.storage.models import (
     ChunkExtractionRecord,
@@ -32,6 +39,12 @@ RUN_STATUSES = {
 }
 EXTRACTION_STATUSES = {"pending", "running", "succeeded", "needs_review", "failed"}
 ATTEMPT_STAGES = {"extract", "repair"}
+
+
+def _nonnegative_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 class GraphRepositoryError(RuntimeError):
@@ -981,6 +994,48 @@ class GraphRepository:
                 for entity in ordered
             ],
         }
+
+    def deepseek_usage(self, session: Session, run_id: str) -> tuple[DeepSeekUsage, ...]:
+        """Return response usage grouped by graph stage and actual response model.
+
+        Cache token fields have been persisted in attempt response metadata since
+        the graph workflow was introduced.  Keeping this projection at the
+        repository boundary lets old runs remain readable: a run without a
+        complete cache split is reported as unpriced instead of guessed.
+        """
+
+        run = session.get(GraphBuildRunRecord, run_id)
+        if run is None:
+            raise GraphRepositoryError(f"graph build run not found: {run_id}")
+        rows = session.execute(
+            select(
+                ExtractionAttemptRecord.stage,
+                ExtractionAttemptRecord.response_metadata_json,
+                ExtractionAttemptRecord.prompt_tokens,
+                ExtractionAttemptRecord.completion_tokens,
+            )
+            .where(ExtractionAttemptRecord.run_id == run_id)
+            .order_by(ExtractionAttemptRecord.id)
+        ).all()
+        records: list[DeepSeekUsage] = []
+        for stage, metadata, prompt_tokens, completion_tokens in rows:
+            response = metadata if isinstance(metadata, Mapping) else {}
+            model = response.get("model")
+            if not isinstance(model, str) or not model.strip():
+                if not prompt_tokens and not completion_tokens:
+                    continue
+                model = "<response-model-unavailable>"
+            records.append(
+                make_deepseek_usage(
+                    operation=str(stage),
+                    model=model,
+                    prompt_tokens=int(prompt_tokens),
+                    cache_hit_tokens=_nonnegative_optional_int(response.get("cache_hit_tokens")),
+                    cache_miss_tokens=_nonnegative_optional_int(response.get("cache_miss_tokens")),
+                    completion_tokens=int(completion_tokens),
+                )
+            )
+        return aggregate_deepseek_usage(records)
 
     def inspect(self, session: Session, object_id: str) -> dict[str, Any] | None:
         if object_id.startswith("gbr_"):
