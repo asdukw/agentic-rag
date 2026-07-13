@@ -49,6 +49,7 @@ from hybrid_rag.retrieval.embedding import (
 )
 from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
 from hybrid_rag.retrieval.query import DeepSeekQueryClient, QueryClient
+from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import GraphRepository
@@ -109,6 +110,16 @@ def _embedding_provider(
     )
 
 
+def _reranker(settings: RetrievalSettings):
+    """Construct the configured reranker without eagerly loading model weights."""
+
+    return create_reranker(
+        settings.reranker_provider,
+        settings.reranker_model,
+        use_fp16=settings.reranker_use_fp16,
+    )
+
+
 def _retrieval_options(
     settings: RetrievalSettings,
     *,
@@ -130,6 +141,7 @@ def _retrieval_options(
         bm25_b=settings.bm25_b,
         reranker_provider=settings.reranker_provider,
         reranker_model=settings.reranker_model,
+        reranker_use_fp16=settings.reranker_use_fp16,
         rerank_candidate_multiplier=settings.rerank_candidate_multiplier,
     )
 
@@ -198,6 +210,7 @@ def _evaluation_options(
         bm25_b=retrieval.bm25_b,
         reranker_provider=retrieval.reranker_provider,
         reranker_model=retrieval.reranker_model,
+        reranker_use_fp16=retrieval.reranker_use_fp16,
         rerank_candidate_multiplier=retrieval.rerank_candidate_multiplier,
         case_ids=case_ids,
     )
@@ -806,6 +819,7 @@ def retrieve(
             database,
             _embedding_provider(retrieval_settings),
             TiktokenCounter(settings.tokenizer_name),
+            reranker=_reranker(retrieval_settings),
         )
         options = _retrieval_options(
             retrieval_settings,
@@ -872,6 +886,7 @@ def ask(
             database,
             _embedding_provider(retrieval_settings),
             TiktokenCounter(settings.tokenizer_name),
+            reranker=_reranker(retrieval_settings),
         )
         options = _retrieval_options(
             retrieval_settings,
@@ -965,6 +980,7 @@ def evaluate(
             database,
             _embedding_provider(retrieval_settings),
             TiktokenCounter(settings.tokenizer_name),
+            reranker=_reranker(retrieval_settings),
         )
         report = EvaluationRunner(service, judge=judge).run(
             benchmark,

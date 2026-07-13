@@ -1,10 +1,10 @@
-"""Deterministic, query-aware reranking contracts and an offline baseline.
+"""Query-aware reranking contracts, an offline baseline, and a BGE adapter.
 
 The first-stage retrievers intentionally optimise recall.  This module receives
 their already-selected chunk candidates and scores only those candidates again;
-it does not load an index, call a model, or mutate persistence.  The
-``LexicalReranker`` is a transparent offline baseline that can later be swapped
-for a cross-encoder behind the same :class:`Reranker` protocol.
+they do not load an index or mutate persistence.  ``LexicalReranker`` is a
+transparent offline baseline. ``FlagEmbeddingReranker`` lazily loads an optional
+local cross-encoder behind the same :class:`Reranker` protocol.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from hybrid_rag.retrieval.bm25 import (
     DEFAULT_BM25_B,
@@ -26,6 +26,13 @@ from hybrid_rag.retrieval.bm25 import (
 LEXICAL_RERANKER_VERSION = "lexical-reranker-v1"
 LEXICAL_RERANKER_PROVIDER = "lexical"
 LEXICAL_RERANKER_MODEL = "lexical-coverage-v1"
+FLAG_EMBEDDING_RERANKER_VERSION = "flagembedding-reranker-v1"
+FLAG_EMBEDDING_RERANKER_PROVIDER = "flagembedding"
+FLAG_EMBEDDING_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+
+
+class RerankerConfigurationError(RuntimeError):
+    """Raised when an optional reranker cannot be constructed locally."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +273,172 @@ class LexicalReranker:
         return ordered if limit is None else ordered[:limit]
 
 
+class FlagEmbeddingReranker:
+    """Rerank candidates with a local FlagEmbedding cross-encoder.
+
+    The adapter batches all ``[query, passage]`` pairs into one
+    :meth:`FlagReranker.compute_score` call.  It keeps the model's raw logit in
+    the trace and applies the same sigmoid used by FlagEmbedding's
+    ``normalize=True`` option for the final 0--1 relevance score.
+
+    Importing and constructing ``FlagReranker`` is deliberately deferred until
+    the first rerank call, so the default offline workflow does not require the
+    optional dependency or download model weights.
+    """
+
+    provider = FLAG_EMBEDDING_RERANKER_PROVIDER
+    version = FLAG_EMBEDDING_RERANKER_VERSION
+
+    def __init__(
+        self,
+        model: str = FLAG_EMBEDDING_RERANKER_MODEL,
+        *,
+        use_fp16: bool = False,
+        client: Any | None = None,
+    ) -> None:
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("FlagEmbedding reranker model must be a non-blank string")
+        if not isinstance(use_fp16, bool):
+            raise TypeError("use_fp16 must be a boolean")
+        self.model = model
+        self.use_fp16 = use_fp16
+        self._client = client
+
+    def rerank(
+        self,
+        query: str,
+        candidates: Sequence[RerankCandidate],
+        *,
+        limit: int | None = None,
+    ) -> tuple[RerankHit, ...]:
+        """Return all supplied candidates ordered by cross-encoder relevance."""
+
+        if not isinstance(query, str):
+            raise TypeError("query must be a string")
+        if limit is not None and limit < 0:
+            raise ValueError("limit must not be negative")
+        if limit == 0:
+            return ()
+
+        candidate_rows = tuple(candidates)
+        _validate_candidates(candidate_rows)
+        if not candidate_rows:
+            return ()
+
+        pairs = [[query, candidate.text] for candidate in candidate_rows]
+        raw_scores = _coerce_flag_embedding_scores(
+            self._get_client().compute_score(pairs, normalize=False),
+            expected_count=len(candidate_rows),
+        )
+        hits = tuple(
+            _cross_encoder_hit(candidate, raw_score)
+            for candidate, raw_score in zip(candidate_rows, raw_scores, strict=True)
+        )
+        ordered = tuple(
+            sorted(
+                hits,
+                key=lambda hit: (-hit.score, -hit.candidate.prior_score, hit.candidate.object_id),
+            )
+        )
+        return ordered if limit is None else ordered[:limit]
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        try:
+            from FlagEmbedding import FlagReranker
+        except ImportError as error:
+            raise RerankerConfigurationError(
+                "FlagEmbedding reranker is not installed. Run `uv sync --extra reranker` "
+                "or set HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none."
+            ) from error
+        try:
+            self._client = FlagReranker(self.model, use_fp16=self.use_fp16)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise RerankerConfigurationError(
+                f"Unable to load FlagEmbedding reranker model {self.model!r}: "
+                f"{type(error).__name__}: {error}"
+            ) from error
+        return self._client
+
+
+def create_reranker(
+    provider: str,
+    model: str,
+    *,
+    use_fp16: bool = False,
+) -> Reranker | None:
+    """Create the configured reranker without loading an optional model yet."""
+
+    if provider == "none":
+        return None
+    if provider == LEXICAL_RERANKER_PROVIDER:
+        if model != LEXICAL_RERANKER_MODEL:
+            raise ValueError(
+                f"lexical reranker requires model {LEXICAL_RERANKER_MODEL!r}, got {model!r}"
+            )
+        return LexicalReranker()
+    if provider == FLAG_EMBEDDING_RERANKER_PROVIDER:
+        if model == LEXICAL_RERANKER_MODEL:
+            raise ValueError(
+                "flagembedding reranker requires a FlagEmbedding model ID; set "
+                "HYBRID_RAG_RETRIEVAL_RERANKER_MODEL="
+                f"{FLAG_EMBEDDING_RERANKER_MODEL}"
+            )
+        return FlagEmbeddingReranker(model, use_fp16=use_fp16)
+    raise ValueError(
+        f"reranker provider must be 'none', 'lexical', or 'flagembedding' (got {provider!r})"
+    )
+
+
+def _cross_encoder_hit(candidate: RerankCandidate, raw_score: float) -> RerankHit:
+    normalized_score = _sigmoid(raw_score)
+    component = RerankScoreComponent(
+        raw_score=raw_score,
+        normalized_score=normalized_score,
+        weight=1.0,
+        weighted_score=normalized_score,
+    )
+    return RerankHit(
+        candidate=candidate,
+        score=normalized_score,
+        components={"cross_encoder": component},
+    )
+
+
+def _coerce_flag_embedding_scores(response: object, *, expected_count: int) -> tuple[float, ...]:
+    """Convert FlagEmbedding's scalar-or-sequence response into finite logits."""
+
+    if isinstance(response, (str, bytes)):
+        raw_values = (response,)
+    else:
+        try:
+            raw_values = tuple(iter(response))  # type: ignore[arg-type]
+        except TypeError:
+            raw_values = (response,)
+    try:
+        scores = tuple(float(value) for value in raw_values)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("FlagEmbedding returned a non-numeric rerank score") from error
+    if len(scores) != expected_count:
+        raise RuntimeError(
+            "FlagEmbedding returned an unexpected number of rerank scores "
+            f"({len(scores)} != {expected_count})"
+        )
+    if not all(math.isfinite(score) for score in scores):
+        raise RuntimeError("FlagEmbedding returned a non-finite rerank score")
+    return scores
+
+
+def _sigmoid(value: float) -> float:
+    """Return a stable logistic normalization matching FlagEmbedding's option."""
+
+    if value >= 0.0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exponent = math.exp(value)
+    return exponent / (1.0 + exponent)
+
+
 def _hit(
     candidate: RerankCandidate,
     *,
@@ -412,14 +585,20 @@ def _validate_candidates(candidates: Sequence[RerankCandidate]) -> None:
 
 
 __all__ = [
+    "FLAG_EMBEDDING_RERANKER_MODEL",
+    "FLAG_EMBEDDING_RERANKER_PROVIDER",
+    "FLAG_EMBEDDING_RERANKER_VERSION",
     "LEXICAL_RERANKER_MODEL",
     "LEXICAL_RERANKER_PROVIDER",
     "LEXICAL_RERANKER_VERSION",
     "LEXICAL_TOKENIZER_VERSION",
+    "FlagEmbeddingReranker",
     "LexicalReranker",
     "LexicalRerankerConfig",
     "RerankCandidate",
     "RerankHit",
     "RerankScoreComponent",
     "Reranker",
+    "RerankerConfigurationError",
+    "create_reranker",
 ]

@@ -39,6 +39,7 @@ from hybrid_rag.retrieval.query import (
     DeterministicQueryClient,
     QueryClient,
 )
+from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
@@ -85,10 +86,10 @@ _TEXT: dict[Language, dict[str, str]] = {
         "context_token_budget": "Context token budget",
         "maximum_graph_hops": "Maximum graph hops",
         "reranking": "Reranking",
-        "enable_reranker": "Enable lexical reranker",
+        "enable_reranker": "Enable configured reranker",
         "reranker_help": (
-            "Reranks fused candidates with local BM25, query coverage, and ordered-term "
-            "proximity. It is deterministic, not a cross-encoder."
+            "Uses the reranker selected in .env. lexical is deterministic; flagembedding "
+            "uses a local cross-encoder after installing the reranker extra."
         ),
         "rerank_candidate_multiplier": "Rerank candidate multiplier",
         "rerank_candidate_help": "Rerank Top K × this many first-stage candidates.",
@@ -196,10 +197,10 @@ _TEXT: dict[Language, dict[str, str]] = {
         "context_token_budget": "上下文 Token 预算",
         "maximum_graph_hops": "最大图跳数",
         "reranking": "重排序",
-        "enable_reranker": "启用词法重排序器",
+        "enable_reranker": "启用已配置的重排序器",
         "reranker_help": (
-            "在融合候选上使用本地 BM25、查询词覆盖率和有序词邻近度重排序；"
-            "它是确定性实现，不是 cross-encoder。"
+            "使用 .env 中选择的重排序器：lexical 为确定性本地规则，"
+            "flagembedding 在安装可选依赖后使用本地 cross-encoder。"
         ),
         "rerank_candidate_multiplier": "重排序候选倍率",
         "rerank_candidate_help": "对 Top K × 此倍率的首阶段候选进行重排序。",
@@ -371,6 +372,11 @@ def create_service(
         database,
         create_embedding_provider(runtime, retrieval),
         TiktokenCounter(settings.tokenizer_name),
+        reranker=create_reranker(
+            runtime.options.reranker_provider,
+            runtime.options.reranker_model,
+            use_fp16=runtime.options.reranker_use_fp16,
+        ),
     )
     return database, service
 
@@ -764,8 +770,9 @@ def _runtime_from_sidebar(
         naive_bm25_weight=retrieval.naive_bm25_weight,
         bm25_k1=retrieval.bm25_k1,
         bm25_b=retrieval.bm25_b,
-        reranker_provider="lexical" if rerank_enabled else "none",
+        reranker_provider=retrieval.reranker_provider if rerank_enabled else "none",
         reranker_model=retrieval.reranker_model,
+        reranker_use_fp16=retrieval.reranker_use_fp16,
         rerank_candidate_multiplier=rerank_candidate_multiplier,
     )
     runtime = DemoRuntime(

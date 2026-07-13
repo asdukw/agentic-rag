@@ -42,10 +42,29 @@ uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge
 - `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
   直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
 - 融合后的候选默认还会经过本地确定性的 lexical reranker：它比较候选集内 BM25、查询词覆盖率、
-  有序词邻近度和少量首阶段分数，再决定最终 Top-K。它不是 cross-encoder；可在 `.env` 中将
+  有序词邻近度和少量首阶段分数，再决定最终 Top-K。可在 `.env` 中将
   `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 关闭。
 
 ## 可选功能
+
+### 使用 FlagEmbedding cross-encoder 精排
+
+默认 lexical reranker 不依赖模型，适合离线学习和演示。若想使用真正的 query-passage
+cross-encoder 精排，安装可选依赖并在 `.env` 中切换 provider：
+
+```bash
+uv sync --extra reranker
+```
+
+```dotenv
+HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding
+HYBRID_RAG_RETRIEVAL_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=false
+```
+
+首次检索会下载模型权重。实现会批量计算 `[query, passage]` 对的交叉编码器分数，并在 trace 中保留
+原始 logit 与 sigmoid 归一化后的 0--1 分数。GPU 环境可将 `RERANKER_USE_FP16` 改为 `true`；CPU
+环境保持 `false`。仍可将 provider 设为 `none`，跳过所有二阶段精排。
 
 ### 使用自己的文档
 

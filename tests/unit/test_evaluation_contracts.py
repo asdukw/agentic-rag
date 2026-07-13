@@ -54,6 +54,15 @@ def test_evaluation_options_require_naive_and_hybrid() -> None:
     )
     assert disabled_rerank.config_hash != options.config_hash
 
+    cross_encoder = EvaluationOptions(
+        case_ids=("fact-naive-isolated-chunks",),
+        reranker_provider="flagembedding",
+        reranker_model="BAAI/bge-reranker-v2-m3",
+        reranker_use_fp16=True,
+    )
+    assert cross_encoder.reranker_use_fp16 is True
+    assert cross_encoder.config_hash != options.config_hash
+
 
 def test_benchmark_requires_a_valid_expected_source_corpus_hash() -> None:
     benchmark = load_benchmark(fixture_benchmark_path())

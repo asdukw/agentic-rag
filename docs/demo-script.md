@@ -21,13 +21,13 @@ embedding provider、模型、维度、corpus-content hash 和 graph snapshot，
 - `naive` 将 chunk 的 dense 向量与本地 BM25 词法分数分别归一化后融合；
 - `local` 从实体命中扩展图邻居；
 - `global` 从关系命中汇聚证据；
-- `hybrid` 并行执行前三条路径，按路归一化、融合、去重；融合后的 Top-M 再经过本地 lexical
-  reranker，最后才在 token budget 内裁剪上下文。
+- `hybrid` 并行执行前三条路径，按路归一化、融合、去重；融合后的 Top-M 再经过 `.env` 配置的
+  reranker（默认本地 lexical，也可为 FlagEmbedding cross-encoder），最后才在 token budget 内裁剪上下文。
 
 ## 50--70 秒：证据而不是黑盒答案
 
 展示最终答案下方的 citation、chunk 原文、实体/关系命中和 NetworkX 路径。展开 rerank 表格，
-指出候选的重排序前排名、词法分项与最终排名。回答模型只能接收已经选中的证据，citation
+指出候选的重排序前排名、重排序分项与最终排名。回答模型只能接收已经选中的证据，citation
 必须是允许 chunk ID 的子集；点击 trace/replay 可查看本次分数、路径和最终上下文，无需重新调用
 embedding 或模型。
 

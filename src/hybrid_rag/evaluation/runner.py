@@ -92,6 +92,7 @@ class EvaluationRunner:
             bm25_b=effective.bm25_b,
             reranker_provider=effective.reranker_provider,
             reranker_model=effective.reranker_model,
+            reranker_use_fp16=effective.reranker_use_fp16,
             rerank_candidate_multiplier=effective.rerank_candidate_multiplier,
         )
         evaluations: list[RetrievalEvaluation] = []

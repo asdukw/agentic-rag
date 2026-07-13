@@ -58,7 +58,7 @@ flowchart LR
         Local --> Fusion
         Global --> Fusion
         Hybrid --> Fusion
-        Fusion --> Rerank["Post-fusion lexical reranker\nTop-M → final Top-K"]
+        Fusion --> Rerank["Optional post-fusion reranker\nTop-M → final Top-K"]
         Rerank --> Context["Token-budget context selection"]
         Context --> Evidence["Cited context + graph paths"]
         Evidence --> Answer["Deterministic answer or bounded\nDeepSeek answer from supplied evidence only"]
@@ -72,11 +72,13 @@ chunk candidates with dense vector and deterministic local BM25 lexical scores,
 normalizes each subscore independently, and records its raw/normalized/weighted
 components in the trace. After a selected mode's route fusion, the default
 `lexical-coverage-v1` reranker scores only its Top-M chunks by candidate-set
-BM25, query coverage, ordered-term proximity, and a small first-stage prior;
-the trace records every pre/post score. It is an offline baseline rather than a
-cross-encoder and can be disabled. `hybrid` is not a fourth opaque vector store:
-it runs the three route calculations in parallel, then applies the same owned
-fusion, rerank, and context-selection rules.
+BM25, query coverage, ordered-term proximity, and a small first-stage prior.
+It is an offline baseline and can be disabled. The optional `flagembedding`
+provider instead runs a local FlagEmbedding cross-encoder over each
+`[query, passage]` pair and records its raw logit plus sigmoid-normalized score.
+`hybrid` is not a fourth opaque vector store: it runs the three route
+calculations in parallel, then applies the same owned fusion, rerank, and
+context-selection rules.
 
 ## Persistent ownership and invalidation
 

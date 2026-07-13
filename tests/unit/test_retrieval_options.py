@@ -24,14 +24,23 @@ def test_naive_subroute_options_are_hashed_and_must_keep_one_scorer_enabled() ->
 def test_rerank_options_are_hashed_and_can_be_explicitly_disabled() -> None:
     baseline = RetrievalOptions()
     disabled = RetrievalOptions(reranker_provider="none", rerank_candidate_multiplier=2)
+    cross_encoder = RetrievalOptions(
+        reranker_provider="flagembedding",
+        reranker_model="BAAI/bge-reranker-v2-m3",
+        reranker_use_fp16=True,
+    )
 
     assert baseline.rerank_enabled
     assert baseline.rerank_candidate_limit == baseline.top_k * baseline.rerank_candidate_multiplier
     assert not disabled.rerank_enabled
     assert disabled.config_hash != baseline.config_hash
+    assert cross_encoder.reranker_use_fp16 is True
+    assert cross_encoder.config_hash != baseline.config_hash
 
     with pytest.raises(ValueError, match="rerank_candidate_multiplier"):
         RetrievalOptions(rerank_candidate_multiplier=0)
+    with pytest.raises(TypeError, match="reranker_use_fp16"):
+        RetrievalOptions(reranker_use_fp16="true")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

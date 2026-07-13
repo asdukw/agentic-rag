@@ -20,6 +20,11 @@ dependencies = [
     "typer>=0.16,<1",
 ]
 
+[project.optional-dependencies]
+reranker = [
+    "FlagEmbedding>=1.4,<2",
+]
+
 [project.scripts]
 hybrid-rag = "hybrid_rag.cli:app"
 

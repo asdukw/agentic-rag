@@ -82,7 +82,7 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
         "构建索引",
         "重放",
     ]
-    assert [item.label for item in app.toggle] == ["启用词法重排序器"]
+    assert [item.label for item in app.toggle] == ["启用已配置的重排序器"]
 
     app.text_area[0].set_value("保留的问题")
     app.run(timeout=15)
@@ -96,6 +96,7 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
         "Build index",
         "Replay",
     ]
+    assert [item.label for item in app.toggle] == ["Enable configured reranker"]
     assert app.text_area[0].value == "保留的问题"
 
 

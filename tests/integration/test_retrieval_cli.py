@@ -43,6 +43,27 @@ class ScriptedGraphClient:
         return _completion()
 
 
+def test_cli_constructs_the_flag_embedding_reranker_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SimpleNamespace(
+        reranker_provider="flagembedding",
+        reranker_model="BAAI/bge-reranker-v2-m3",
+        reranker_use_fp16=True,
+    )
+    calls: list[tuple[str, str, bool]] = []
+    marker = object()
+
+    def create(provider: str, model: str, *, use_fp16: bool) -> object:
+        calls.append((provider, model, use_fp16))
+        return marker
+
+    monkeypatch.setattr(cli_module, "create_reranker", create)
+
+    assert cli_module._reranker(settings) is marker
+    assert calls == [("flagembedding", "BAAI/bge-reranker-v2-m3", True)]
+
+
 def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -83,6 +104,7 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert retrieved["trace"]["settings"]["bm25_b"] == 0.3
     assert retrieved["trace"]["settings"]["rerank_enabled"] is True
     assert retrieved["trace"]["settings"]["reranker_provider"] == "lexical"
+    assert retrieved["trace"]["settings"]["reranker_use_fp16"] is False
     assert retrieved["trace"]["settings"]["rerank_candidate_multiplier"] == 4
     assert retrieved["trace"]["rerank"]["provider"] == "lexical"
     citation_id = retrieved["context_items"][0]["citation_id"]
@@ -174,6 +196,7 @@ def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
     assert report["run"]["options"]["bm25_k1"] == 1.7
     assert report["run"]["options"]["bm25_b"] == 0.3
     assert report["run"]["options"]["reranker_provider"] == "lexical"
+    assert report["run"]["options"]["reranker_use_fp16"] is False
     assert report["run"]["options"]["rerank_candidate_multiplier"] == 4
     assert len(report["run"]["case_ids"]) == 2
     assert report["run"]["index_provenance"]["profile_id"] == index["profile_id"]
@@ -237,6 +260,7 @@ def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         bm25_b=0.3,
         reranker_provider="lexical",
         reranker_model="lexical-coverage-v1",
+        reranker_use_fp16=False,
         rerank_candidate_multiplier=4,
     )
     monkeypatch.setattr(cli_module, "RetrievalSettings", lambda: settings)

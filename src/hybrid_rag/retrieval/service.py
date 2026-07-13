@@ -96,6 +96,7 @@ class RetrievalOptions:
     bm25_b: float = DEFAULT_BM25_B
     reranker_provider: str = "lexical"
     reranker_model: str = LEXICAL_RERANKER_MODEL
+    reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = 4
 
     def __post_init__(self) -> None:
@@ -125,6 +126,8 @@ class RetrievalOptions:
             raise ValueError("reranker_provider must not be empty")
         if not self.reranker_model.strip():
             raise ValueError("reranker_model must not be empty")
+        if not isinstance(self.reranker_use_fp16, bool):
+            raise TypeError("reranker_use_fp16 must be a boolean")
         if self.rerank_candidate_multiplier < 1:
             raise ValueError("rerank_candidate_multiplier must be positive")
 
@@ -666,6 +669,7 @@ class RetrievalService:
                 "rerank_enabled": options.rerank_enabled,
                 "reranker_provider": options.reranker_provider,
                 "reranker_model": options.reranker_model,
+                "reranker_use_fp16": options.reranker_use_fp16,
                 "reranker_version": self.reranker.version if options.rerank_enabled else "none",
             },
         )
@@ -1253,6 +1257,7 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "rerank_enabled",
             "reranker_provider",
             "reranker_model",
+            "reranker_use_fp16",
             "reranker_version",
             "rerank_candidate_multiplier",
         }
