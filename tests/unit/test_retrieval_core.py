@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import math
-from types import SimpleNamespace
 
 import pytest
 
 from hybrid_rag.retrieval.embedding import (
     BGEM3EmbeddingProvider,
-    EmbeddingConfigurationError,
     HashEmbeddingProvider,
-    OpenAICompatibleEmbeddingProvider,
     cosine_similarity,
     min_max_normalize,
 )
@@ -47,54 +44,6 @@ def test_cosine_similarity_is_safe_and_rejects_mismatched_dimensions() -> None:
 
     with pytest.raises(ValueError, match="embedding dimensions differ"):
         cosine_similarity((1.0,), (1.0, 0.0))
-
-
-def test_openai_compatible_embedding_provider_uses_sdk_and_orders_response_vectors() -> None:
-    sdk = FakeEmbeddingSdk(
-        [
-            SimpleNamespace(index=1, embedding=[0.3, 0.4]),
-            SimpleNamespace(index=0, embedding=[0.1, 0.2]),
-        ]
-    )
-    provider = OpenAICompatibleEmbeddingProvider(
-        api_key=None,
-        base_url="https://embeddings.example.test/v1",
-        model="embedding-test-model",
-        dimensions=2,
-        sdk_client=sdk,
-    )
-
-    vectors = provider.embed(("first", "second"))
-
-    assert vectors == ((0.1, 0.2), (0.3, 0.4))
-    assert sdk.embeddings.requests == [
-        {"model": "embedding-test-model", "input": ["first", "second"]}
-    ]
-
-
-def test_openai_compatible_embedding_provider_rejects_wrong_response_dimension() -> None:
-    provider = OpenAICompatibleEmbeddingProvider(
-        api_key=None,
-        base_url="https://embeddings.example.test/v1",
-        model="embedding-test-model",
-        dimensions=2,
-        sdk_client=FakeEmbeddingSdk([SimpleNamespace(index=0, embedding=[0.1, 0.2, 0.3])]),
-    )
-
-    with pytest.raises(RuntimeError, match=r"dimensions differ from configured 2: \[3\]"):
-        provider.embed(("only",))
-
-
-def test_openai_compatible_embedding_provider_requires_credentials_without_fake_sdk() -> None:
-    provider = OpenAICompatibleEmbeddingProvider(
-        api_key=None,
-        base_url="https://embeddings.example.test/v1",
-        model="embedding-test-model",
-        dimensions=2,
-    )
-
-    with pytest.raises(EmbeddingConfigurationError, match="API key is required"):
-        provider.embed(("only",))
 
 
 def test_bge_m3_embedding_provider_encodes_dense_vectors_with_explicit_options() -> None:
@@ -197,21 +146,6 @@ def test_weighted_average_fusion_retains_subscore_breakdown_and_skips_empty_maps
     )
     assert fallback == {"chunk_a": 1.0}
     assert fallback_components["chunk_a"]["dense"].weighted_score == 1.0
-
-
-class FakeEmbeddingSdk:
-    def __init__(self, data: list[object]) -> None:
-        self.embeddings = FakeEmbeddings(data)
-
-
-class FakeEmbeddings:
-    def __init__(self, data: list[object]) -> None:
-        self.data = data
-        self.requests: list[dict[str, object]] = []
-
-    def create(self, **kwargs: object) -> object:
-        self.requests.append(kwargs)
-        return SimpleNamespace(data=self.data)
 
 
 class FakeBGEM3Client:

@@ -119,10 +119,10 @@ uv run streamlit run src/hybrid_rag/demo.py
 `evaluate` 使用固定题集对比 `naive` 与 `hybrid`，并写出带 profile、图谱快照、citation、trace、
 延迟和成本状态的 JSON/Markdown artifact。Streamlit 演示可查看四种模式、证据、图路径和对比结果。
 
-### 接入外部 embedding 或自定义论文语料
+### 配置 DeepSeek 或自定义论文语料
 
-查看 [.env.example](.env.example) 配置 OpenAI-compatible embedding endpoint、DeepSeek 模型和
-评测选项。内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
+本项目的 embedding 固定使用本地 FlagEmbedding 模型；查看 [.env.example](.env.example) 可配置
+DeepSeek 模型和评测选项。内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
 
 ```bash
 uv run hybrid-rag corpus download --manifest path/to/corpus.json --output data/raw

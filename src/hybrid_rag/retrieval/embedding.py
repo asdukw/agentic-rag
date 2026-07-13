@@ -17,7 +17,7 @@ BGE_M3_MAX_LENGTH = 8192
 
 
 class EmbeddingProvider(Protocol):
-    """Adapter boundary for deterministic or external embedding implementations."""
+    """Adapter boundary for deterministic or local embedding implementations."""
 
     provider: str
     model: str
@@ -167,80 +167,6 @@ class BGEM3EmbeddingProvider:
         return cached
 
 
-class OpenAICompatibleEmbeddingProvider:
-    """Thin synchronous adapter for a configured OpenAI-compatible embeddings API.
-
-    It is intentionally optional: the project ships with a local BGE-M3 adapter,
-    while deployments can choose a hosted provider without changing index or
-    retrieval algorithms.
-    """
-
-    provider = "openai-compatible"
-
-    def __init__(
-        self,
-        *,
-        api_key: str | None,
-        base_url: str,
-        model: str,
-        dimensions: int,
-        timeout_seconds: float = 180.0,
-        sdk_client: object | None = None,
-    ) -> None:
-        if not base_url.strip():
-            raise ValueError("base_url must not be blank")
-        if not model.strip():
-            raise ValueError("model must not be blank")
-        if dimensions < 1:
-            raise ValueError("dimensions must be positive")
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
-        self.base_url = base_url
-        self.model = model
-        self.dimensions = dimensions
-        self.timeout_seconds = timeout_seconds
-        self._api_key = api_key
-        self._sdk_client = sdk_client
-
-    def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
-        if not texts:
-            return ()
-        response = self._client().embeddings.create(model=self.model, input=list(texts))
-        data = sorted(
-            _attribute(response, "data", ()),
-            key=lambda item: _integer(_attribute(item, "index")),
-        )
-        if len(data) != len(texts):
-            raise RuntimeError("embedding provider returned a different number of vectors")
-        vectors = tuple(
-            tuple(float(value) for value in _attribute(item, "embedding", ())) for item in data
-        )
-        if any(len(vector) != self.dimensions for vector in vectors):
-            observed = sorted({len(vector) for vector in vectors})
-            raise RuntimeError(
-                "embedding provider dimensions differ from configured "
-                f"{self.dimensions}: {observed}"
-            )
-        return vectors
-
-    def _client(self) -> Any:
-        if self._sdk_client is not None:
-            return self._sdk_client
-        if not self._api_key:
-            raise EmbeddingConfigurationError(
-                "an API key is required before an OpenAI-compatible embedding request"
-            )
-        from openai import OpenAI
-
-        self._sdk_client = OpenAI(
-            api_key=self._api_key,
-            base_url=self.base_url,
-            max_retries=0,
-            timeout=self.timeout_seconds,
-        )
-        return self._sdk_client
-
-
 def _dense_vectors(
     dense_vectors: object,
     *,
@@ -322,15 +248,3 @@ def min_max_normalize(values: dict[str, float]) -> dict[str, float]:
     if math.isclose(lower, upper):
         return {key: 1.0 for key in values}
     return {key: (value - lower) / (upper - lower) for key, value in values.items()}
-
-
-def _attribute(value: object | None, name: str, default: Any = None) -> Any:
-    if value is None:
-        return default
-    if isinstance(value, dict):
-        return value.get(name, default)
-    return getattr(value, name, default)
-
-
-def _integer(value: object | None) -> int:
-    return value if isinstance(value, int) else 0

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 import hybrid_rag.cli as cli_module
@@ -73,8 +74,6 @@ def test_cli_constructs_bge_m3_embedding_from_settings() -> None:
         embedding_batch_size=12,
         embedding_max_length=8192,
         embedding_use_fp16=False,
-        embedding_base_url=None,
-        embedding_api_key=None,
     )
 
     provider = cli_module._embedding_provider(settings)
@@ -85,6 +84,16 @@ def test_cli_constructs_bge_m3_embedding_from_settings() -> None:
     assert provider.batch_size == 12
     assert provider.max_length == 8192
     assert not provider.use_fp16
+
+
+def test_cli_rejects_removed_external_embedding_provider() -> None:
+    with pytest.raises(typer.BadParameter, match=r"flagembedding.*hash"):
+        cli_module._embedding_provider(
+            SimpleNamespace(),
+            provider="openai-compatible",
+            model="embedding-test",
+            dimensions=1024,
+        )
 
 
 def test_retrieval_cli_builds_queries_answers_and_replays_offline(
@@ -266,8 +275,6 @@ def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         embedding_provider="hash",
         embedding_model="hash-token-v1",
         embedding_dimensions=384,
-        embedding_base_url=None,
-        embedding_api_key=None,
         top_k=8,
         candidate_multiplier=4,
         context_token_budget=128,

@@ -26,7 +26,6 @@ from hybrid_rag.ingest.tokenizer import TiktokenCounter
 from hybrid_rag.retrieval.embedding import (
     BGEM3EmbeddingProvider,
     HashEmbeddingProvider,
-    OpenAICompatibleEmbeddingProvider,
 )
 from hybrid_rag.retrieval.models import (
     CandidateHit,
@@ -79,9 +78,8 @@ _TEXT: dict[Language, dict[str, str]] = {
         "embedding_model": "Embedding model",
         "embedding_dimensions": "Embedding dimensions",
         "embedding_help": (
-            "`flagembedding` uses local BGE-M3 by default. `openai-compatible` reads its base "
-            "URL and key from HYBRID_RAG_RETRIEVAL_EMBEDDING_* settings; `hash` is retained "
-            "only for compatibility and tests."
+            "`flagembedding` uses local BGE-M3 by default. `hash` is retained only for "
+            "compatibility and tests."
         ),
         "retrieval_budget": "Retrieval budget",
         "top_k": "Top K",
@@ -190,11 +188,7 @@ _TEXT: dict[Language, dict[str, str]] = {
         "embedding_provider": "Embedding 提供方",
         "embedding_model": "Embedding 模型",
         "embedding_dimensions": "Embedding 维度",
-        "embedding_help": (
-            "默认 `flagembedding` 使用本地 BGE-M3。`openai-compatible` 会从 "
-            "HYBRID_RAG_RETRIEVAL_EMBEDDING_* 配置读取 base URL 和密钥；`hash` 仅保留用于"
-            "兼容和测试。"
-        ),
+        "embedding_help": "默认 `flagembedding` 使用本地 BGE-M3；`hash` 仅保留用于兼容和测试。",
         "retrieval_budget": "检索预算",
         "top_k": "Top K",
         "context_token_budget": "上下文 Token 预算",
@@ -332,24 +326,7 @@ def create_embedding_provider(runtime: DemoRuntime, settings: RetrievalSettings)
             dimensions=runtime.embedding_dimensions,
             model=runtime.embedding_model,
         )
-    if runtime.embedding_provider == "openai-compatible":
-        if not settings.embedding_base_url:
-            raise ValueError(
-                "HYBRID_RAG_RETRIEVAL_EMBEDDING_BASE_URL is required for "
-                "openai-compatible embeddings"
-            )
-        api_key = (
-            settings.embedding_api_key.get_secret_value().strip()
-            if settings.embedding_api_key
-            else ""
-        )
-        return OpenAICompatibleEmbeddingProvider(
-            api_key=api_key or None,
-            base_url=settings.embedding_base_url,
-            model=runtime.embedding_model,
-            dimensions=runtime.embedding_dimensions,
-        )
-    raise ValueError("embedding provider must be 'flagembedding', 'openai-compatible', or 'hash'")
+    raise ValueError("embedding provider must be 'flagembedding' or 'hash'")
 
 
 def create_query_client(use_deepseek: bool, settings: DeepSeekSettings) -> QueryClient:
@@ -681,7 +658,7 @@ def _runtime_from_sidebar(
         help=ui_text(language, "database_help"),
         key="hybrid_rag_database_input",
     )
-    available_providers = ("flagembedding", "openai-compatible", "hash")
+    available_providers = ("flagembedding", "hash")
     default_provider = (
         retrieval.embedding_provider
         if retrieval.embedding_provider in available_providers

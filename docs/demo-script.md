@@ -42,7 +42,7 @@ uv run hybrid-rag evaluate --json
 说明固定 24 题 benchmark 会先锁定 profile、校验 corpus-content hash，再输出
 `evr_...-evx_...` JSON/Markdown artifact。它记录 evidence hit、citation grounding proxy、
 延迟、可 replay 的 `rtr_` trace、匿名 A/B 盲评和成本状态。默认离线 fallback 不伪造外部模型
-成本；外部 embedding 的成本在无完整核实披露时为 `unknown`，有凭据时才使用 `--deepseek-judge`。
+成本；本地 embedding 没有 API 成本，有凭据时才使用 `--deepseek-judge`。
 
 ## 85--90 秒：收束
 

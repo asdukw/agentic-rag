@@ -196,8 +196,8 @@ def test_runner_rejects_a_benchmark_for_a_different_pinned_source_snapshot() -> 
     assert service.retrieve_calls == 0
 
 
-def test_runner_marks_external_embedding_cost_unknown_without_full_disclosure() -> None:
-    report = EvaluationRunner(FakeRetrievalService(provider="openai-compatible")).run(  # type: ignore[arg-type]
+def test_runner_marks_unknown_legacy_embedding_cost_without_full_disclosure() -> None:
+    report = EvaluationRunner(FakeRetrievalService(provider="legacy-external")).run(  # type: ignore[arg-type]
         _benchmark(),
         options=EvaluationOptions(case_ids=("case-01",)),
         cost_disclosure=CostDisclosure.offline(),
@@ -219,7 +219,7 @@ def test_runner_treats_local_bge_embedding_as_no_embedding_api_cost() -> None:
     assert report.cost_disclosure.cost_usd == 0.0
 
 
-def test_runner_accepts_only_a_verified_external_embedding_cost_disclosure() -> None:
+def test_runner_accepts_only_a_verified_legacy_embedding_cost_disclosure() -> None:
     supplied = CostDisclosure(
         status=CostStatus.VERIFIED,
         retrieval_model_calls=2,
@@ -227,7 +227,7 @@ def test_runner_accepts_only_a_verified_external_embedding_cost_disclosure() -> 
         cost_usd=0.02,
         price_assumption="provider invoice reconciled for the two query embeddings",
     )
-    report = EvaluationRunner(FakeRetrievalService(provider="openai-compatible")).run(  # type: ignore[arg-type]
+    report = EvaluationRunner(FakeRetrievalService(provider="legacy-external")).run(  # type: ignore[arg-type]
         _benchmark(),
         options=EvaluationOptions(case_ids=("case-01",)),
         cost_disclosure=supplied,

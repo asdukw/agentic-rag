@@ -188,7 +188,7 @@ tokens and retries were included.
 
 Fixture-only tests use deterministic hash embeddings and deterministic/offline
 query behavior.  They may report local execution time for regression tracking,
-but they must not be presented as external embedding or DeepSeek latency/cost.
+but they must not be presented as DeepSeek latency/cost or production performance.
 
 ## 8. Results table (leave unfilled until a run completes)
 

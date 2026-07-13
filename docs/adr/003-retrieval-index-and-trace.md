@@ -23,8 +23,7 @@ offline-testable adapter for CI.
   description for relations.
 - Use a project-owned `EmbeddingProvider` protocol. The default is the local
   FlagEmbedding `BAAI/bge-m3` adapter. `hash-token-v1` remains an explicit
-  deterministic adapter for CI and historical profile compatibility; an
-  OpenAI-compatible adapter remains configurable for external models.
+  deterministic adapter for CI and historical profile compatibility.
 - Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
   graph expansion, per-route min-max normalization, weighted fusion,
   de-duplication, NetworkX path expansion, a post-fusion local FlagEmbedding
@@ -43,8 +42,8 @@ offline-testable adapter for CI.
 
 ## Consequences
 
-- An external embedding provider can replace the default adapter without changing
-  the index schema or retrieval algorithms.
+- The learning project supports only local FlagEmbedding and compatibility hash
+  embedding adapters; adding another provider requires an explicit adapter and ADR.
 - JSON vector storage is deliberately simple and explainable, not a large-corpus
   ANN solution. A future vector-store adapter can retain the same profile/vector
   contract after benchmark evidence justifies it.

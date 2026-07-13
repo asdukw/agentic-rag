@@ -6,8 +6,8 @@
 
 The project owns the domain contracts and the retrieval decisions.  Third-party
 libraries are confined to adapters: PDF parsing, token counting, SQLAlchemy and
-Alembic persistence, LangGraph checkpointing, NetworkX projection, and
-OpenAI-compatible HTTP clients.
+Alembic persistence, LangGraph checkpointing, NetworkX projection, and the
+opt-in DeepSeek API client.
 
 ## End-to-end data flow
 
@@ -105,10 +105,10 @@ flowchart TB
     Domain["Pydantic domain contracts\nIDs, provenance, retrieval result schema"]
     Services["Ingestion / graph / retrieval services\nproject-owned algorithms"]
     Repositories["SQLAlchemy repositories\ntransactions and constraints"]
-    Adapters["Adapters only\nloaders · tiktoken · DeepSeek/OpenAI-compatible\nLangGraph checkpoint · NetworkX"]
+    Adapters["Adapters only\nloaders · tiktoken · DeepSeek API\nLangGraph checkpoint · NetworkX"]
     SQLite[("SQLite business database")]
     Checkpoint[("Separate LangGraph checkpoint SQLite")]
-    Provider["External model endpoints"]
+    Provider["Optional DeepSeek endpoint"]
 
     CLI --> Services
     Services --> Domain
@@ -174,9 +174,9 @@ flowchart LR
 The corpus-content hash only covers documents/chunks, so a fixed question set can
 be reused after a graph rebuild.  The report still names the graph-bound index
 snapshot and graph run, so results from different graph builds are never silently
-combined.  An external embedding provider or a failed external judge produces an
-`unknown` cost disclosure unless complete verified usage and price evidence is
-available; locally executed BGE-M3 and hash profiles have no embedding API cost.
+combined. A failed external judge produces an `unknown` cost disclosure unless
+complete verified usage and price evidence is available; locally executed BGE-M3
+and hash profiles have no embedding API cost.
 
 ## Operational checkpoints
 

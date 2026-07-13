@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from hybrid_rag.config import RetrievalSettings
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.retrieval.models import IndexSemanticConfig
@@ -14,6 +17,11 @@ def test_retrieval_settings_default_to_local_bge_m3() -> None:
     assert settings.embedding_batch_size == 12
     assert settings.embedding_max_length == 8192
     assert not settings.embedding_use_fp16
+
+
+def test_retrieval_settings_reject_removed_external_embedding_provider() -> None:
+    with pytest.raises(ValidationError, match="embedding_provider"):
+        RetrievalSettings(_env_file=None, embedding_provider="openai-compatible")
 
 
 def test_embedding_options_participate_in_index_identity_without_changing_legacy_hashes() -> None:

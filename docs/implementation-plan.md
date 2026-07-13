@@ -159,18 +159,16 @@ uv run ruff check .
 离线验收结果：68 项自动化测试与 Ruff 检查通过，总覆盖率 87%。fixture 端到端链路覆盖导入、scripted
 图谱构建、chunk/entity/relation 三路索引、naive/local/global/hybrid 四种模式、并行融合、
 NetworkX 路径、token budget、citation、离线 answer、trace 序列化和 replay；CLI 端到端覆盖
-`build-index`、`retrieve`、`ask` 与 `retrieval replay`。当前环境未提供 `DEEPSEEK_API_KEY`
-或外部 embedding endpoint 凭据，因此没有伪造在线关键词、回答或向量模型的延迟/成本数据；
-测试显式使用确定性 hash embedding，使离线 Definition of Done 可重复验证；应用默认使用本地
-BGE-M3 语义 embedding。
+`build-index`、`retrieve`、`ask` 与 `retrieval replay`。当前环境未提供 `DEEPSEEK_API_KEY`，
+因此没有伪造在线关键词、回答或 judge 的延迟/成本数据；测试显式使用确定性 hash embedding，
+使离线 Definition of Done 可重复验证；应用默认使用本地 BGE-M3 语义 embedding。
 
 实现采用 SQLite JSON vector baseline 与明确的 adapter 边界：Alembic `0003` 建立
 `embedding_profiles`、`embedding_vectors` 和 `retrieval_traces`，`0004` 将 profile identity、
 唯一约束和历史 trace 关联扩展为 graph-run-aware。profile 同时绑定 provider/model/dimension、影响
 向量值的编码参数、text schema、图谱无关的 corpus-content hash 与当前 graph snapshot；完整 profile 才会在同一事务中
 激活。默认 `BAAI/bge-m3` 通过 FlagEmbedding 在本地生成 1024 维语义向量；`hash-token-v1`
-仅保留给离线开发、CI 和历史 profile 兼容。`OpenAI-compatible` embedding adapter 保留给外部
-模型，不改变核心检索算法或持久化契约。
+仅保留给离线开发、CI 和历史 profile 兼容。
 
 - 为 chunk/entity/relation 建独立 embedding 文本与向量索引。
 - 实现 naive、local、global、hybrid 四种 retriever，共享统一结果 schema。
@@ -210,12 +208,11 @@ JSON/Markdown 报告和 DeepSeek judge adapter 的失败回退。`evaluate` 会�
 
 `--deepseek-judge` 为显式 opt-in：候选答案逐题映射为匿名 A/B 标签，judge 只能基于给定
 问题、候选答案、citation ID 和 rubric 返回结果；它不能检索额外资料。该调用复用自有
-OpenAI-compatible client，并保持 JSON Output、Thinking disabled、schema 校验和 usage 留档。
+DeepSeek API client，并保持 JSON Output、Thinking disabled、schema 校验和 usage 留档。
 报告同时记录 judge model、endpoint 与采样/输出设置。每次执行生成唯一 `evx_`，使同一
-`evr_` 可复现配置的 JSON/Markdown artifact 不会彼此覆写。外部 embedding 始终是 `unknown`
-成本，除非有完整经核实的 usage/price disclosure；任一外部 judge fallback 也会降级为
-`unknown`。当前环境没有 `DEEPSEEK_API_KEY` 或真实 embedding endpoint 凭据，因此没有把
-fixture 分数、离线延迟或本地 hash/BGE-M3 embedding 成本包装成真实论文或在线模型结论。
+`evr_` 可复现配置的 JSON/Markdown artifact 不会彼此覆写。任一外部 judge fallback 都会降级为
+`unknown`。当前环境没有 `DEEPSEEK_API_KEY`，因此没有把 fixture 分数、离线延迟或本地
+hash/BGE-M3 embedding 成本包装成真实论文或在线模型结论。
 
 从阶段三升级的数据库应先执行一次 `build-index`：现有可复用 profile 会被原地补充
 corpus-content provenance，不触发外部 embedding 请求；随后 `evaluate` 才会接受它。

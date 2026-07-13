@@ -73,11 +73,9 @@ class RetrievalSettings(BaseSettings):
         extra="ignore",
     )
 
-    embedding_provider: str = Field(default="flagembedding", min_length=1)
+    embedding_provider: str = Field(default="flagembedding", pattern=r"^(flagembedding|hash)$")
     embedding_model: str = Field(default="BAAI/bge-m3", min_length=1)
     embedding_dimensions: int = Field(default=1024, ge=32, le=4096)
-    embedding_base_url: str | None = None
-    embedding_api_key: SecretStr | None = None
     embedding_batch_size: int = Field(default=12, ge=1, le=1024)
     embedding_max_length: int = Field(default=8192, ge=1, le=8192)
     embedding_use_fp16: bool = False

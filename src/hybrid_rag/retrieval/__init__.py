@@ -19,7 +19,6 @@ from hybrid_rag.retrieval.embedding import (
     EmbeddingConfigurationError,
     EmbeddingProvider,
     HashEmbeddingProvider,
-    OpenAICompatibleEmbeddingProvider,
     cosine_similarity,
 )
 from hybrid_rag.retrieval.fusion import (
@@ -114,7 +113,6 @@ __all__ = [
     "IndexSemanticConfig",
     "KeywordExtraction",
     "KeywordExtractor",
-    "OpenAICompatibleEmbeddingProvider",
     "OpenAICompatibleQueryClient",
     "QueryClient",
     "QueryConfigurationError",

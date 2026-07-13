@@ -13,7 +13,6 @@ from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sql
 from hybrid_rag.retrieval.embedding import (
     BGEM3EmbeddingProvider,
     HashEmbeddingProvider,
-    OpenAICompatibleEmbeddingProvider,
 )
 from hybrid_rag.retrieval.models import (
     RerankComponentTrace,
@@ -169,27 +168,11 @@ def test_demo_embedding_provider_selection_is_explicit() -> None:
     assert provider.model == "demo-hash"
     assert provider.dimensions == 96
 
-    with pytest.raises(ValueError, match="EMBEDDING_BASE_URL"):
+    with pytest.raises(ValueError, match="embedding provider"):
         demo.create_embedding_provider(
             _runtime(embedding_provider="openai-compatible"),
             RetrievalSettings(),
         )
-
-    external = demo.create_embedding_provider(
-        _runtime(
-            embedding_provider="openai-compatible",
-            embedding_model="embedding-test",
-            dimensions=64,
-        ),
-        RetrievalSettings(
-            embedding_base_url="https://embeddings.example.test/v1",
-            embedding_api_key="test-key",
-        ),
-    )
-    assert isinstance(external, OpenAICompatibleEmbeddingProvider)
-    assert external.base_url == "https://embeddings.example.test/v1"
-    assert external.model == "embedding-test"
-    assert external.dimensions == 64
 
     with pytest.raises(ValueError, match="embedding provider"):
         demo.create_embedding_provider(

@@ -46,7 +46,6 @@ from hybrid_rag.retrieval.embedding import (
     BGEM3EmbeddingProvider,
     EmbeddingConfigurationError,
     HashEmbeddingProvider,
-    OpenAICompatibleEmbeddingProvider,
 )
 from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
 from hybrid_rag.retrieval.query import DeepSeekQueryClient, QueryClient
@@ -97,24 +96,8 @@ def _embedding_provider(
         )
     if selected_provider == "hash":
         return HashEmbeddingProvider(dimensions=selected_dimensions, model=selected_model)
-    if selected_provider == "openai-compatible":
-        if not settings.embedding_base_url:
-            raise typer.BadParameter(
-                "HYBRID_RAG_RETRIEVAL_EMBEDDING_BASE_URL is required for openai-compatible"
-            )
-        api_key = (
-            settings.embedding_api_key.get_secret_value().strip()
-            if settings.embedding_api_key
-            else ""
-        )
-        return OpenAICompatibleEmbeddingProvider(
-            api_key=api_key or None,
-            base_url=settings.embedding_base_url,
-            model=selected_model,
-            dimensions=selected_dimensions,
-        )
     raise typer.BadParameter(
-        "--provider must be 'flagembedding', 'openai-compatible', or 'hash'",
+        "--provider must be 'flagembedding' or 'hash'",
         param_hint="--provider",
     )
 
@@ -757,7 +740,7 @@ def build_index(
         str | None,
         typer.Option(
             "--provider",
-            help="flagembedding (default), openai-compatible, or hash (compatibility)",
+            help="flagembedding (default) or hash (compatibility)",
         ),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="Embedding model identity")] = None,
