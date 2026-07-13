@@ -406,14 +406,15 @@ def _cross_encoder_hit(candidate: RerankCandidate, raw_score: float) -> RerankHi
     )
 
 
-def _coerce_flag_embedding_scores(response: object, *, expected_count: int) -> tuple[float, ...]:
-    """Convert FlagEmbedding's scalar-or-sequence response into finite logits."""
+def _coerce_flag_embedding_scores(response: Any, *, expected_count: int) -> tuple[float, ...]:
+    """Convert FlagEmbedding's dynamic scalar-or-sequence response into finite logits."""
 
+    raw_values: tuple[Any, ...]
     if isinstance(response, (str, bytes)):
         raw_values = (response,)
     else:
         try:
-            raw_values = tuple(iter(response))  # type: ignore[arg-type]
+            raw_values = tuple(response)
         except TypeError:
             raw_values = (response,)
     try:

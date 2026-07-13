@@ -49,12 +49,16 @@ uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge
 
 ### 使用 FlagEmbedding cross-encoder 精排
 
-默认 lexical reranker 不依赖模型，适合离线学习和演示。若想使用真正的 query-passage
-cross-encoder 精排，安装可选依赖并在 `.env` 中切换 provider：
+默认 lexical reranker 不依赖模型，适合离线学习和演示。启用真正的 query-passage
+cross-encoder 精排需要完成以下三步。
+
+1. 安装可选依赖：
 
 ```bash
 uv sync --extra reranker
 ```
+
+2. 在项目根目录的 `.env` 中写入以下配置（若尚未创建 `.env`，可参考 `.env.example`）：
 
 ```dotenv
 HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding
@@ -62,9 +66,16 @@ HYBRID_RAG_RETRIEVAL_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=false
 ```
 
+3. 正常执行检索或问答命令即可：
+
+```bash
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json
+```
+
 首次检索会下载模型权重。实现会批量计算 `[query, passage]` 对的交叉编码器分数，并在 trace 中保留
-原始 logit 与 sigmoid 归一化后的 0--1 分数。GPU 环境可将 `RERANKER_USE_FP16` 改为 `true`；CPU
-环境保持 `false`。仍可将 provider 设为 `none`，跳过所有二阶段精排。
+原始 logit 与 sigmoid 归一化后的 0--1 分数。仅在兼容 CUDA 的 GPU 环境中将
+`HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=true`；CPU 环境保持 `false`。仍可将 provider 设为 `none`，
+跳过所有二阶段精排。
 
 ### 使用自己的文档
 

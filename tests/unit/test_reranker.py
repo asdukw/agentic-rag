@@ -108,6 +108,10 @@ def test_flag_embedding_reranker_accepts_one_scalar_score_and_rejects_wrong_coun
             (_candidate("chk-one", "first"), _candidate("chk-two", "second")),
         )
 
+    non_numeric = FlagEmbeddingReranker(client=RecordingFlagReranker(response=[object()]))
+    with pytest.raises(RuntimeError, match="non-numeric"):
+        non_numeric.rerank("query", (_candidate("chk-one", "passage"),))
+
 
 def test_reranker_factory_selects_the_configured_adapter() -> None:
     assert create_reranker("none", "unused") is None
