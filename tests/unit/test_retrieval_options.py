@@ -21,7 +21,7 @@ def test_naive_subroute_options_are_hashed_and_must_keep_one_scorer_enabled() ->
         RetrievalOptions(naive_dense_weight=0.0, naive_bm25_weight=0.0)
 
 
-def test_rerank_options_are_hashed_and_can_be_explicitly_disabled() -> None:
+def test_rerank_options_are_hashed_and_can_be_explicitly_enabled() -> None:
     baseline = RetrievalOptions()
     disabled = RetrievalOptions(reranker_provider="none", rerank_candidate_multiplier=2)
     cross_encoder = RetrievalOptions(
@@ -30,10 +30,11 @@ def test_rerank_options_are_hashed_and_can_be_explicitly_disabled() -> None:
         reranker_use_fp16=True,
     )
 
-    assert baseline.rerank_enabled
+    assert not baseline.rerank_enabled
     assert baseline.rerank_candidate_limit == baseline.top_k * baseline.rerank_candidate_multiplier
     assert not disabled.rerank_enabled
     assert disabled.config_hash != baseline.config_hash
+    assert cross_encoder.rerank_enabled
     assert cross_encoder.reranker_use_fp16 is True
     assert cross_encoder.config_hash != baseline.config_hash
 

@@ -6,8 +6,14 @@ import hashlib
 import math
 import re
 from collections import Counter
-from collections.abc import Sequence
-from typing import Any, Protocol
+from collections.abc import Iterable, Sequence
+from threading import Lock
+from typing import Any, ClassVar, Protocol, SupportsFloat, TypeGuard, cast
+
+BGE_M3_PROVIDER = "flagembedding"
+BGE_M3_MODEL = "BAAI/bge-m3"
+BGE_M3_DIMENSIONS = 1024
+BGE_M3_MAX_LENGTH = 8192
 
 
 class EmbeddingProvider(Protocol):
@@ -24,9 +30,8 @@ class HashEmbeddingProvider:
     """A deterministic sparse-feature embedding suitable for offline demos and tests.
 
     It is deliberately not presented as a substitute for a trained semantic model.
-    Its purpose is a reproducible default vector adapter until a benchmark selects
-    a hosted or local embedding model.  The vector shape and hashing version are
-    included in the persisted index configuration.
+    Its vector shape and hashing version are included in the persisted index
+    configuration, so it remains useful for compatibility checks and fast tests.
     """
 
     provider = "hash"
@@ -59,15 +64,115 @@ class HashEmbeddingProvider:
 
 
 class EmbeddingConfigurationError(RuntimeError):
-    """Raised when an external embedding adapter is selected without credentials."""
+    """Raised when a model-backed embedding adapter cannot be initialized."""
+
+
+class BGEM3EmbeddingProvider:
+    """Encode text with FlagEmbedding's local BGE-M3 dense-vector model.
+
+    Model construction is lazy so commands that only inspect existing data do not
+    download or initialize model weights. Loaded models are shared by model ID and
+    precision mode within a process, which keeps repeated Streamlit actions cheap.
+    """
+
+    provider = BGE_M3_PROVIDER
+    _shared_clients: ClassVar[dict[tuple[str, bool], Any]] = {}
+    _shared_client_lock: ClassVar[Lock] = Lock()
+
+    def __init__(
+        self,
+        *,
+        model: str = BGE_M3_MODEL,
+        dimensions: int = BGE_M3_DIMENSIONS,
+        batch_size: int = 12,
+        max_length: int = BGE_M3_MAX_LENGTH,
+        use_fp16: bool = False,
+        client: Any | None = None,
+    ) -> None:
+        normalized_model = model.strip()
+        if not normalized_model:
+            raise ValueError("model must not be blank")
+        if dimensions < 1:
+            raise ValueError("dimensions must be positive")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        if max_length < 1:
+            raise ValueError("max_length must be positive")
+        if not isinstance(use_fp16, bool):
+            raise TypeError("use_fp16 must be a boolean")
+        self.model = normalized_model
+        self.dimensions = dimensions
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.use_fp16 = use_fp16
+        self._model_client = client
+
+    @property
+    def semantic_options(self) -> dict[str, bool | int]:
+        """Encoding options that can change persisted vector values."""
+
+        return {
+            "max_length": self.max_length,
+            "normalize_embeddings": True,
+            "use_fp16": self.use_fp16,
+        }
+
+    def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        if not texts:
+            return ()
+        response = self._client().encode(
+            list(texts),
+            batch_size=self.batch_size,
+            max_length=self.max_length,
+            return_dense=True,
+            return_sparse=False,
+            return_colbert_vecs=False,
+        )
+        try:
+            dense_vectors = response["dense_vecs"]
+        except (KeyError, TypeError) as error:
+            raise RuntimeError("FlagEmbedding did not return dense_vecs") from error
+        return _dense_vectors(
+            dense_vectors,
+            expected_count=len(texts),
+            dimensions=self.dimensions,
+        )
+
+    def _client(self) -> Any:
+        if self._model_client is not None:
+            return self._model_client
+        cache_key = (self.model, self.use_fp16)
+        with self._shared_client_lock:
+            cached = self._shared_clients.get(cache_key)
+            if cached is None:
+                try:
+                    from FlagEmbedding import BGEM3FlagModel
+                except ImportError as error:
+                    raise EmbeddingConfigurationError(
+                        "FlagEmbedding is not installed. Run `uv sync` before building an index."
+                    ) from error
+                try:
+                    cached = BGEM3FlagModel(
+                        self.model,
+                        normalize_embeddings=True,
+                        use_fp16=self.use_fp16,
+                    )
+                except Exception as error:
+                    raise EmbeddingConfigurationError(
+                        f"Unable to load FlagEmbedding embedding model {self.model!r}: "
+                        f"{type(error).__name__}: {error}"
+                    ) from error
+                self._shared_clients[cache_key] = cached
+        self._model_client = cached
+        return cached
 
 
 class OpenAICompatibleEmbeddingProvider:
     """Thin synchronous adapter for a configured OpenAI-compatible embeddings API.
 
-    It is intentionally optional: the project ships with :class:`HashEmbeddingProvider`
-    for offline reproducibility, while deployments can choose a benchmarked provider
-    without changing any index or retrieval algorithms.
+    It is intentionally optional: the project ships with a local BGE-M3 adapter,
+    while deployments can choose a hosted provider without changing index or
+    retrieval algorithms.
     """
 
     provider = "openai-compatible"
@@ -136,6 +241,46 @@ class OpenAICompatibleEmbeddingProvider:
         return self._sdk_client
 
 
+def _dense_vectors(
+    dense_vectors: object,
+    *,
+    expected_count: int,
+    dimensions: int,
+) -> tuple[tuple[float, ...], ...]:
+    """Validate FlagEmbedding's NumPy-like dense-vector result without importing NumPy."""
+
+    if isinstance(dense_vectors, (str, bytes)) or not isinstance(dense_vectors, Iterable):
+        raise RuntimeError("FlagEmbedding returned invalid dense vectors")
+    try:
+        vectors: list[tuple[float, ...]] = []
+        for vector in dense_vectors:
+            if not _is_vector(vector):
+                raise TypeError("dense vector must be iterable")
+            vectors.append(tuple(_float_value(value) for value in vector))
+    except (TypeError, ValueError, OverflowError) as error:
+        raise RuntimeError("FlagEmbedding returned invalid dense vectors") from error
+    if len(vectors) != expected_count:
+        raise RuntimeError("FlagEmbedding returned a different number of vectors")
+    if any(len(vector) != dimensions for vector in vectors):
+        observed = sorted({len(vector) for vector in vectors})
+        raise RuntimeError(
+            f"FlagEmbedding dimensions differ from configured {dimensions}: {observed}"
+        )
+    if any(not math.isfinite(value) for vector in vectors for value in vector):
+        raise RuntimeError("FlagEmbedding returned a non-finite dense vector value")
+    return tuple(vectors)
+
+
+def _is_vector(value: object) -> TypeGuard[Iterable[object]]:
+    return not isinstance(value, (str, bytes)) and isinstance(value, Iterable)
+
+
+def _float_value(value: object) -> float:
+    if isinstance(value, (str, bytes, bytearray)):
+        return float(value)
+    return float(cast(SupportsFloat, value))
+
+
 _WORD_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
 
 
@@ -145,10 +290,10 @@ def _features(text: str) -> tuple[str, ...]:
     for token in _WORD_PATTERN.findall(normalized):
         values.append(f"word:{token}")
         if len(token) >= 3:
-            values.extend(f"gram:{token[index:index + 3]}" for index in range(len(token) - 2))
+            values.extend(f"gram:{token[index : index + 3]}" for index in range(len(token) - 2))
     cjk = [char for char in normalized if "\u3400" <= char <= "\u9fff"]
     values.extend(f"cjk:{char}" for char in cjk)
-    values.extend(f"cjk2:{''.join(cjk[index:index + 2])}" for index in range(len(cjk) - 1))
+    values.extend(f"cjk2:{''.join(cjk[index : index + 2])}" for index in range(len(cjk) - 1))
     return tuple(values)
 
 

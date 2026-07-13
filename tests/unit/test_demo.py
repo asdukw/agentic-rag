@@ -10,7 +10,11 @@ from streamlit.testing.v1 import AppTest
 
 import hybrid_rag.demo as demo
 from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
-from hybrid_rag.retrieval.embedding import HashEmbeddingProvider, OpenAICompatibleEmbeddingProvider
+from hybrid_rag.retrieval.embedding import (
+    BGEM3EmbeddingProvider,
+    HashEmbeddingProvider,
+    OpenAICompatibleEmbeddingProvider,
+)
 from hybrid_rag.retrieval.models import (
     RerankComponentTrace,
     RerankTrace,
@@ -102,9 +106,9 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
 
 def test_demo_rerank_rows_keep_pre_and_post_ranking_visible() -> None:
     rerank = RerankTrace(
-        provider="lexical",
-        model="lexical-coverage-v1",
-        version="lexical-reranker-v1",
+        provider="flagembedding",
+        model="BAAI/bge-reranker-v2-m3",
+        version="flagembedding-reranker-v1",
         candidate_limit=4,
         hits=(
             RerankTraceHit(
@@ -139,7 +143,24 @@ def test_demo_rerank_rows_keep_pre_and_post_ranking_visible() -> None:
     ]
 
 
-def test_demo_embedding_provider_selection_is_explicit_and_offline() -> None:
+def test_demo_embedding_provider_selection_is_explicit() -> None:
+    local = demo.create_embedding_provider(
+        _runtime(
+            embedding_provider="flagembedding", embedding_model="BAAI/bge-m3", dimensions=1024
+        ),
+        RetrievalSettings(
+            embedding_batch_size=16,
+            embedding_max_length=4096,
+            embedding_use_fp16=True,
+        ),
+    )
+    assert isinstance(local, BGEM3EmbeddingProvider)
+    assert local.model == "BAAI/bge-m3"
+    assert local.dimensions == 1024
+    assert local.batch_size == 16
+    assert local.max_length == 4096
+    assert local.use_fp16 is True
+
     runtime = _runtime(embedding_provider="hash", embedding_model="demo-hash", dimensions=96)
 
     provider = demo.create_embedding_provider(runtime, RetrievalSettings())
@@ -201,7 +222,7 @@ def test_demo_query_client_requires_credentials_only_for_explicit_deepseek_use()
 
 def test_create_service_upgrades_the_selected_sqlite_database(tmp_path: Path) -> None:
     database_url = sqlite_url(tmp_path / "demo.db")
-    runtime = _runtime(database_url=database_url, dimensions=64)
+    runtime = _runtime(database_url=database_url, embedding_provider="hash", dimensions=64)
 
     database, service = demo.create_service(
         runtime,
@@ -318,9 +339,9 @@ def test_run_async_returns_values_and_rejects_nested_event_loops() -> None:
 def _runtime(
     *,
     database_url: str = "sqlite:///demo.db",
-    embedding_provider: str = "hash",
-    embedding_model: str = "hash-token-v1",
-    dimensions: int = 384,
+    embedding_provider: str = "flagembedding",
+    embedding_model: str = "BAAI/bge-m3",
+    dimensions: int = 1024,
 ) -> demo.DemoRuntime:
     return demo.DemoRuntime(
         database_url=database_url,

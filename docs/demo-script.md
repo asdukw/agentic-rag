@@ -11,8 +11,8 @@
 ## 15--30 秒：从数据到索引
 
 选择已导入、已构图的 SQLite 数据库，点击 **Build / refresh index**。展示 index profile 的
-embedding provider、模型、维度、corpus-content hash 和 graph snapshot，说明 chunk、entity、relation
-是三套独立索引；默认 hash embedding 仅用于可重复的离线开发。
+embedding provider、模型、维度、编码参数、corpus-content hash 和 graph snapshot，说明 chunk、entity、relation
+是三套独立索引；默认使用本地 BGE-M3，hash embedding 仅用于可重复的离线开发和测试。
 
 ## 30--50 秒：四种检索模式
 
@@ -22,7 +22,7 @@ embedding provider、模型、维度、corpus-content hash 和 graph snapshot，
 - `local` 从实体命中扩展图邻居；
 - `global` 从关系命中汇聚证据；
 - `hybrid` 并行执行前三条路径，按路归一化、融合、去重；融合后的 Top-M 再经过 `.env` 配置的
-  reranker（默认本地 lexical，也可为 FlagEmbedding cross-encoder），最后才在 token budget 内裁剪上下文。
+  本地 FlagEmbedding cross-encoder 精排，最后才在 token budget 内裁剪上下文。关闭精排时保留首阶段排序。
 
 ## 50--70 秒：证据而不是黑盒答案
 

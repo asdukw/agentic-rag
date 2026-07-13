@@ -24,6 +24,7 @@ from typing import Any, Literal, TypeAlias, TypeVar
 from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
 from hybrid_rag.retrieval.embedding import (
+    BGEM3EmbeddingProvider,
     HashEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
 )
@@ -78,8 +79,9 @@ _TEXT: dict[Language, dict[str, str]] = {
         "embedding_model": "Embedding model",
         "embedding_dimensions": "Embedding dimensions",
         "embedding_help": (
-            "`hash` is deterministic and offline. `openai-compatible` reads its base URL and key "
-            "from HYBRID_RAG_RETRIEVAL_EMBEDDING_* settings."
+            "`flagembedding` uses local BGE-M3 by default. `openai-compatible` reads its base "
+            "URL and key from HYBRID_RAG_RETRIEVAL_EMBEDDING_* settings; `hash` is retained "
+            "only for compatibility and tests."
         ),
         "retrieval_budget": "Retrieval budget",
         "top_k": "Top K",
@@ -88,8 +90,8 @@ _TEXT: dict[Language, dict[str, str]] = {
         "reranking": "Reranking",
         "enable_reranker": "Enable configured reranker",
         "reranker_help": (
-            "Uses the reranker selected in .env. lexical is deterministic; flagembedding "
-            "uses a local cross-encoder after installing the reranker extra."
+            "Uses the configured local FlagEmbedding cross-encoder. Turn this off to keep "
+            "first-stage order; model weights load only when reranking runs."
         ),
         "rerank_candidate_multiplier": "Rerank candidate multiplier",
         "rerank_candidate_help": "Rerank Top K × this many first-stage candidates.",
@@ -189,8 +191,9 @@ _TEXT: dict[Language, dict[str, str]] = {
         "embedding_model": "Embedding 模型",
         "embedding_dimensions": "Embedding 维度",
         "embedding_help": (
-            "`hash` 是确定性的离线实现。`openai-compatible` 会从 "
-            "HYBRID_RAG_RETRIEVAL_EMBEDDING_* 配置读取 base URL 和密钥。"
+            "默认 `flagembedding` 使用本地 BGE-M3。`openai-compatible` 会从 "
+            "HYBRID_RAG_RETRIEVAL_EMBEDDING_* 配置读取 base URL 和密钥；`hash` 仅保留用于"
+            "兼容和测试。"
         ),
         "retrieval_budget": "检索预算",
         "top_k": "Top K",
@@ -199,8 +202,8 @@ _TEXT: dict[Language, dict[str, str]] = {
         "reranking": "重排序",
         "enable_reranker": "启用已配置的重排序器",
         "reranker_help": (
-            "使用 .env 中选择的重排序器：lexical 为确定性本地规则，"
-            "flagembedding 在安装可选依赖后使用本地 cross-encoder。"
+            "使用已配置的本地 FlagEmbedding cross-encoder；关闭后保留首阶段排序，"
+            "仅在实际精排时下载并加载模型权重。"
         ),
         "rerank_candidate_multiplier": "重排序候选倍率",
         "rerank_candidate_help": "对 Top K × 此倍率的首阶段候选进行重排序。",
@@ -316,6 +319,14 @@ def database_url_from_input(value: str, settings: Settings) -> str:
 def create_embedding_provider(runtime: DemoRuntime, settings: RetrievalSettings):
     """Construct the configured adapter without importing CLI-only helpers."""
 
+    if runtime.embedding_provider == "flagembedding":
+        return BGEM3EmbeddingProvider(
+            model=runtime.embedding_model,
+            dimensions=runtime.embedding_dimensions,
+            batch_size=settings.embedding_batch_size,
+            max_length=settings.embedding_max_length,
+            use_fp16=settings.embedding_use_fp16,
+        )
     if runtime.embedding_provider == "hash":
         return HashEmbeddingProvider(
             dimensions=runtime.embedding_dimensions,
@@ -338,7 +349,7 @@ def create_embedding_provider(runtime: DemoRuntime, settings: RetrievalSettings)
             model=runtime.embedding_model,
             dimensions=runtime.embedding_dimensions,
         )
-    raise ValueError("embedding provider must be 'hash' or 'openai-compatible'")
+    raise ValueError("embedding provider must be 'flagembedding', 'openai-compatible', or 'hash'")
 
 
 def create_query_client(use_deepseek: bool, settings: DeepSeekSettings) -> QueryClient:
@@ -487,9 +498,7 @@ def hit_rows(
                 round(hit.rerank_score, 4) if hit.rerank_score is not None else "—"
             ),
             ui_text(language, "route_scores"): _format_scores(hit.route_scores),
-            ui_text(language, "score_components"): _format_score_components(
-                hit.score_components
-            ),
+            ui_text(language, "score_components"): _format_score_components(hit.score_components),
             ui_text(language, "source_chunks"): ", ".join(hit.source_chunk_ids),
         }
         for hit in hits
@@ -586,9 +595,7 @@ def _render_retrieval(st: Any, result: RetrievalResult, *, language: Language) -
         st.info(ui_text(language, "no_context"))
     for item in result.context_items:
         section = (
-            " / ".join(item.section_path)
-            if item.section_path
-            else ui_text(language, "unsectioned")
+            " / ".join(item.section_path) if item.section_path else ui_text(language, "unsectioned")
         )
         pages = _page_label(item.page_start, item.page_end, language=language)
         with st.expander(f"[{item.citation_id}] {item.document_title} — {section}"):
@@ -674,11 +681,11 @@ def _runtime_from_sidebar(
         help=ui_text(language, "database_help"),
         key="hybrid_rag_database_input",
     )
-    available_providers = ("hash", "openai-compatible")
+    available_providers = ("flagembedding", "openai-compatible", "hash")
     default_provider = (
         retrieval.embedding_provider
         if retrieval.embedding_provider in available_providers
-        else "hash"
+        else "flagembedding"
     )
     provider = st.sidebar.selectbox(
         ui_text(language, "embedding_provider"),
@@ -867,8 +874,10 @@ def main() -> None:
                     runtime,
                     settings,
                     retrieval_settings,
-                    lambda service: service.replay_answer(replay_trace_id.strip())
-                    or service.replay(replay_trace_id.strip()),
+                    lambda service: (
+                        service.replay_answer(replay_trace_id.strip())
+                        or service.replay(replay_trace_id.strip())
+                    ),
                 )
                 st.session_state["hybrid_rag_replay"] = replayed
             except Exception as error:  # UI boundary: preserve detailed domain error text.

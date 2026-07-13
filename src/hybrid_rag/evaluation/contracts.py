@@ -168,8 +168,8 @@ class EvaluationOptions(_StrictEvaluationModel):
     naive_bm25_weight: float = Field(default=1.0, ge=0.0)
     bm25_k1: float = Field(default=1.2, gt=0.0)
     bm25_b: float = Field(default=0.75, ge=0.0, le=1.0)
-    reranker_provider: str = Field(default="lexical", pattern=r"^(none|lexical|flagembedding)$")
-    reranker_model: str = Field(default="lexical-coverage-v1", min_length=1)
+    reranker_provider: str = Field(default="none", pattern=r"^(none|flagembedding)$")
+    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
     reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = Field(default=4, ge=1, le=32)
     case_ids: tuple[CaseId, ...] = ()
@@ -390,7 +390,7 @@ class CostDisclosure(_StrictEvaluationModel):
 
     Callers that configure every external model price can pass a verified or
     estimated price assumption into :meth:`EvaluationRunner.run`.  A zero
-    dollar value is reserved for fully local hash/deterministic execution.
+    dollar value is reserved for fully local embedding/deterministic execution.
     """
 
     status: CostStatus
@@ -416,7 +416,7 @@ class CostDisclosure(_StrictEvaluationModel):
 
     @classmethod
     def offline(cls) -> CostDisclosure:
-        """Return the standard disclosure for local hash/deterministic evaluation."""
+        """Return the standard disclosure for fully local deterministic evaluation."""
 
         return cls(
             status=CostStatus.NOT_APPLICABLE,

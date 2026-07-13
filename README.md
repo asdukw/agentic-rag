@@ -14,8 +14,9 @@
 ## Quick Start
 
 需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。默认流程会下载
-`data/corpus.json` 中定义、版本固定且经过 SHA-256 校验的 RAG 论文到 `data/raw`；下载需要网络，
-其余步骤不需要模型或 API key。默认数据库为 `storage/app.db`。
+`data/corpus.json` 中定义、版本固定且经过 SHA-256 校验的 RAG 论文到 `data/raw`；首次建立索引时还会
+下载本地 BGE-M3 模型权重。这两步需要网络，但不需要 embedding API key。默认数据库为
+`storage/app.db`。
 
 ```bash
 uv sync --dev
@@ -26,7 +27,7 @@ uv run hybrid-rag corpus download
 # 导入论文并切成可追溯的 chunks。
 uv run hybrid-rag ingest data/raw
 
-# 为 chunk 建立默认的本地确定性索引。
+# 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
 uv run hybrid-rag build-index
 
 # 检索并生成基于论文证据的离线回答。
@@ -38,27 +39,24 @@ uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge
 语料的演示效果。
 
 - `ingest`、`build-index` 等命令会自动升级 SQLite schema。
-- 默认的 `hash-token-v1` 是确定性本地特征哈希 embedding，适合开发、测试和演示；它不是语义模型。
+- 默认 embedding 是 FlagEmbedding 的 `BAAI/bge-m3` dense vector（1024 维、最长 8192 tokens）；
+  它在本机运行，首次使用会下载模型。CPU 环境保持 `EMBEDDING_USE_FP16=false`，有兼容 CUDA GPU 时可
+  设为 `true` 加速。修改 embedding 的模型、维度、最大长度或精度后，必须重新运行 `build-index`。
+- `hash-token-v1` 仅保留给已有 profile 兼容和快速离线测试，不再作为 CLI 或演示默认值。
 - `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
   直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
-- 融合后的候选默认还会经过本地确定性的 lexical reranker：它比较候选集内 BM25、查询词覆盖率、
-  有序词邻近度和少量首阶段分数，再决定最终 Top-K。可在 `.env` 中将
-  `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 关闭。
+- 融合后的候选默认使用本地 FlagEmbedding cross-encoder
+  `BAAI/bge-reranker-v2-m3` 精排：它批量计算 `[query, passage]` 对的相关性，再决定最终 Top-K。
+  首次检索会下载精排模型；将 `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 可跳过二阶段精排。
 
 ## 可选功能
 
-### 使用 FlagEmbedding cross-encoder 精排
+### FlagEmbedding cross-encoder 精排
 
-默认 lexical reranker 不依赖模型，适合离线学习和演示。启用真正的 query-passage
-cross-encoder 精排需要完成以下三步。
+默认已启用 `BAAI/bge-reranker-v2-m3`。`uv sync` 会安装 FlagEmbedding，首次检索会下载相应权重。
+项目不再提供 lexical reranker；已有 `.env` 若配置了 `lexical`，请替换为以下配置。
 
-1. 安装可选依赖：
-
-```bash
-uv sync --extra reranker
-```
-
-2. 在项目根目录的 `.env` 中写入以下配置（若尚未创建 `.env`，可参考 `.env.example`）：
+1. 在项目根目录的 `.env` 中写入以下配置（若尚未创建 `.env`，可参考 `.env.example`）：
 
 ```dotenv
 HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding
@@ -66,7 +64,7 @@ HYBRID_RAG_RETRIEVAL_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=false
 ```
 
-3. 正常执行检索或问答命令即可：
+2. 正常执行检索或问答命令即可：
 
 ```bash
 uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json

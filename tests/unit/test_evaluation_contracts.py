@@ -47,12 +47,7 @@ def test_evaluation_options_require_naive_and_hybrid() -> None:
 
     assert options.modes == (RetrievalMode.NAIVE, RetrievalMode.HYBRID)
     assert len(options.config_hash) == 64
-
-    disabled_rerank = EvaluationOptions(
-        case_ids=("fact-naive-isolated-chunks",),
-        reranker_provider="none",
-    )
-    assert disabled_rerank.config_hash != options.config_hash
+    assert options.reranker_provider == "none"
 
     cross_encoder = EvaluationOptions(
         case_ids=("fact-naive-isolated-chunks",),

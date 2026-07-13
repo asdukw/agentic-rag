@@ -40,7 +40,7 @@ flowchart LR
         Corpus --> Snapshot["Source snapshot"]
         GraphStore --> Snapshot
         Snapshot --> Texts["Chunk / entity / relation\nembedding text"]
-        Texts --> Embed["Embedding adapter\ndefault: deterministic hash-token-v1"]
+        Texts --> Embed["Embedding adapter\ndefault: local BGE-M3 (FlagEmbedding)"]
         Embed --> Vectors[("SQLite: embedding profiles\nand vector rows")]
     end
 
@@ -71,11 +71,9 @@ flowchart LR
 chunk candidates with dense vector and deterministic local BM25 lexical scores,
 normalizes each subscore independently, and records its raw/normalized/weighted
 components in the trace. After a selected mode's route fusion, the default
-`lexical-coverage-v1` reranker scores only its Top-M chunks by candidate-set
-BM25, query coverage, ordered-term proximity, and a small first-stage prior.
-It is an offline baseline and can be disabled. The optional `flagembedding`
-provider instead runs a local FlagEmbedding cross-encoder over each
-`[query, passage]` pair and records its raw logit plus sigmoid-normalized score.
+`BAAI/bge-reranker-v2-m3` reranker runs a local FlagEmbedding cross-encoder over
+each `[query, passage]` pair and records its raw logit plus sigmoid-normalized
+score. Set its provider to `none` to retain first-stage order.
 `hybrid` is not a fourth opaque vector store: it runs the three route
 calculations in parallel, then applies the same owned fusion, rerank, and
 context-selection rules.
@@ -155,9 +153,9 @@ sequenceDiagram
 
 The answer client is never given a free tool list or authority to retrieve more
 material.  DeepSeek is optional in this layer and is limited to structured query
-keywords and an answer grounded in the already selected evidence.  The default
-deterministic clients and hash embedding make the fixture workflow repeatable,
-but they are not a substitute for a production-quality embedding benchmark.
+keywords and an answer grounded in the already selected evidence.  Fixture tests
+explicitly use the deterministic hash adapter for speed and repeatability; the
+default local BGE-M3 model still needs a quality benchmark for any production use.
 
 ## Evaluation execution contract
 
@@ -178,7 +176,7 @@ be reused after a graph rebuild.  The report still names the graph-bound index
 snapshot and graph run, so results from different graph builds are never silently
 combined.  An external embedding provider or a failed external judge produces an
 `unknown` cost disclosure unless complete verified usage and price evidence is
-available; the offline hash baseline is the only zero-cost case.
+available; locally executed BGE-M3 and hash profiles have no embedding API cost.
 
 ## Operational checkpoints
 

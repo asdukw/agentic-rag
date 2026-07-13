@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from hybrid_rag.retrieval.embedding import (
+    BGEM3EmbeddingProvider,
     EmbeddingConfigurationError,
     HashEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
@@ -96,6 +97,60 @@ def test_openai_compatible_embedding_provider_requires_credentials_without_fake_
         provider.embed(("only",))
 
 
+def test_bge_m3_embedding_provider_encodes_dense_vectors_with_explicit_options() -> None:
+    client = FakeBGEM3Client({"dense_vecs": [[0.1, 0.2], [0.3, 0.4]]})
+    provider = BGEM3EmbeddingProvider(
+        model="BAAI/bge-m3",
+        dimensions=2,
+        batch_size=12,
+        max_length=8192,
+        use_fp16=False,
+        client=client,
+    )
+
+    vectors = provider.embed(("first", "second"))
+
+    assert vectors == ((0.1, 0.2), (0.3, 0.4))
+    assert client.requests == [
+        (
+            ["first", "second"],
+            {
+                "batch_size": 12,
+                "max_length": 8192,
+                "return_dense": True,
+                "return_sparse": False,
+                "return_colbert_vecs": False,
+            },
+        )
+    ]
+    assert provider.semantic_options == {
+        "max_length": 8192,
+        "normalize_embeddings": True,
+        "use_fp16": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        ({"dense_vecs": [[0.1, 0.2, 0.3]]}, "dimensions differ from configured 2"),
+        ({"dense_vecs": [[float("nan"), 0.2]]}, "non-finite dense vector"),
+        ({}, "did not return dense_vecs"),
+    ],
+)
+def test_bge_m3_embedding_provider_rejects_invalid_dense_responses(
+    response: object,
+    message: str,
+) -> None:
+    provider = BGEM3EmbeddingProvider(
+        dimensions=2,
+        client=FakeBGEM3Client(response),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        provider.embed(("only",))
+
+
 def test_score_normalization_fusion_ranking_and_budget_are_deterministic() -> None:
     assert min_max_normalize({"only": 0.4}) == {"only": 1.0}
     fused, components = weighted_fusion(
@@ -157,3 +212,13 @@ class FakeEmbeddings:
     def create(self, **kwargs: object) -> object:
         self.requests.append(kwargs)
         return SimpleNamespace(data=self.data)
+
+
+class FakeBGEM3Client:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.requests: list[tuple[list[str], dict[str, object]]] = []
+
+    def encode(self, texts: list[str], **kwargs: object) -> object:
+        self.requests.append((texts, kwargs))
+        return self.response

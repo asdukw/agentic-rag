@@ -89,9 +89,7 @@ class FakeRetrievalService:
             query=question,
             expanded_query=question,
             mode=mode,
-            routes={
-                mode.value: RouteTrace(route=mode, candidate_count=len(context_items))
-            },
+            routes={mode.value: RouteTrace(route=mode, candidate_count=len(context_items))},
             context_items=context_items,
             context_token_budget=64,
             context_tokens=sum(item.token_count for item in context_items),
@@ -208,6 +206,17 @@ def test_runner_marks_external_embedding_cost_unknown_without_full_disclosure() 
     assert report.cost_disclosure.status is CostStatus.UNKNOWN
     assert report.cost_disclosure.cost_usd is None
     assert report.cost_disclosure.retrieval_model_calls == 2
+
+
+def test_runner_treats_local_bge_embedding_as_no_embedding_api_cost() -> None:
+    report = EvaluationRunner(FakeRetrievalService(provider="flagembedding")).run(  # type: ignore[arg-type]
+        _benchmark(),
+        options=EvaluationOptions(case_ids=("case-01",)),
+    )
+
+    assert report.cost_disclosure.status is CostStatus.NOT_APPLICABLE
+    assert report.cost_disclosure.retrieval_model_calls == 0
+    assert report.cost_disclosure.cost_usd == 0.0
 
 
 def test_runner_accepts_only_a_verified_external_embedding_cost_disclosure() -> None:

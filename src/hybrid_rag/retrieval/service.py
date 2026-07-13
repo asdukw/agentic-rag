@@ -55,8 +55,7 @@ from hybrid_rag.retrieval.query import (
     QueryClient,
 )
 from hybrid_rag.retrieval.reranker import (
-    LEXICAL_RERANKER_MODEL,
-    LexicalReranker,
+    FLAG_EMBEDDING_RERANKER_MODEL,
     RerankCandidate,
     Reranker,
     RerankHit,
@@ -94,8 +93,8 @@ class RetrievalOptions:
     naive_bm25_weight: float = 1.0
     bm25_k1: float = DEFAULT_BM25_K1
     bm25_b: float = DEFAULT_BM25_B
-    reranker_provider: str = "lexical"
-    reranker_model: str = LEXICAL_RERANKER_MODEL
+    reranker_provider: str = "none"
+    reranker_model: str = FLAG_EMBEDDING_RERANKER_MODEL
     reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = 4
 
@@ -204,7 +203,7 @@ class RetrievalService:
         self.embedding_provider = embedding_provider
         self.token_counter = token_counter
         self.repository = repository or RetrievalRepository()
-        self.reranker = reranker or LexicalReranker()
+        self.reranker = reranker
 
     def build_index(
         self,
@@ -214,14 +213,16 @@ class RetrievalService:
     ) -> IndexBuildReport:
         """Embed chunk/entity/relation texts and atomically activate one profile."""
 
-        semantic = IndexSemanticConfig(
-            provider=self.embedding_provider.provider,
-            model=self.embedding_provider.model,
-            dimensions=self.embedding_provider.dimensions,
-            text_schema_version=INDEX_TEXT_SCHEMA_VERSION,
-        )
+        semantic = self._index_semantic_config()
         with self.database.session_factory() as session:
             snapshot = self.repository.load_source_snapshot(session, build_run_id=build_run_id)
+            metadata: dict[str, Any] = {
+                "corpus_content_hash": snapshot.corpus_content_hash,
+                "graph_corpus_hash": snapshot.graph_corpus_hash,
+                "tokenizer": self.token_counter.name,
+            }
+            if semantic.provider_options:
+                metadata["embedding_options"] = semantic.provider_options
             profile = IndexProfile(
                 config_hash=semantic.config_hash,
                 provider=semantic.provider,
@@ -230,11 +231,7 @@ class RetrievalService:
                 schema_version=semantic.text_schema_version,
                 source_corpus_hash=snapshot.source_corpus_hash,
                 source_graph_run_id=snapshot.build_run_id,
-                metadata={
-                    "corpus_content_hash": snapshot.corpus_content_hash,
-                    "graph_corpus_hash": snapshot.graph_corpus_hash,
-                    "tokenizer": self.token_counter.name,
-                },
+                metadata=metadata,
                 id=make_profile_id(
                     semantic.config_hash,
                     snapshot.source_corpus_hash,
@@ -514,6 +511,15 @@ class RetrievalService:
             reused=reused,
         )
 
+    def _index_semantic_config(self) -> IndexSemanticConfig:
+        return IndexSemanticConfig(
+            provider=self.embedding_provider.provider,
+            model=self.embedding_provider.model,
+            dimensions=self.embedding_provider.dimensions,
+            text_schema_version=INDEX_TEXT_SCHEMA_VERSION,
+            provider_options=_embedding_semantic_options(self.embedding_provider),
+        )
+
     def _validate_query_provider(self, profile: StoredIndexProfile) -> None:
         if self.embedding_provider.dimensions != profile.dimensions:
             raise ValueError(
@@ -529,6 +535,11 @@ class RetrievalService:
             raise ValueError(
                 "embedding model differs from the selected index "
                 f"({self.embedding_provider.model!r} != {profile.model!r})"
+            )
+        if self._index_semantic_config().config_hash != profile.config_hash:
+            raise ValueError(
+                "embedding encoding options differ from the selected index; rebuild the index "
+                "with the current embedding configuration"
             )
 
     def _execute(
@@ -595,6 +606,11 @@ class RetrievalService:
         chunks = {item.object_id: item for item in index.chunks}
         rerank_trace: RerankTrace | None = None
         if options.rerank_enabled:
+            if self.reranker is None:
+                raise ValueError(
+                    "reranking was requested but no reranker is configured; "
+                    "set reranker_provider=none or provide a FlagEmbedding reranker"
+                )
             rerank_candidate_ids = rank_ids(
                 fused_scores,
                 limit=options.rerank_candidate_limit,
@@ -634,8 +650,7 @@ class RetrievalService:
                     for route, score in sorted(components.get(chunk_id, {}).items())
                 },
                 score_components=(
-                    routes[RetrievalMode.NAIVE]
-                    .chunk_score_components.get(chunk_id, {})
+                    routes[RetrievalMode.NAIVE].chunk_score_components.get(chunk_id, {})
                     if mode is RetrievalMode.NAIVE
                     else {}
                 ),
@@ -670,7 +685,11 @@ class RetrievalService:
                 "reranker_provider": options.reranker_provider,
                 "reranker_model": options.reranker_model,
                 "reranker_use_fp16": options.reranker_use_fp16,
-                "reranker_version": self.reranker.version if options.rerank_enabled else "none",
+                "reranker_version": (
+                    self.reranker.version
+                    if options.rerank_enabled and self.reranker is not None
+                    else "none"
+                ),
             },
         )
         return RetrievalResult(
@@ -697,15 +716,18 @@ class RetrievalService:
     ) -> tuple[tuple[str, ...], dict[str, float], RerankTrace]:
         """Rerank first-stage candidates without changing their recall provenance."""
 
-        if options.reranker_provider != self.reranker.provider:
+        reranker = self.reranker
+        if reranker is None:
+            raise ValueError("reranking was requested but no reranker is configured")
+        if options.reranker_provider != reranker.provider:
             raise ValueError(
                 "reranker provider differs from the requested retrieval configuration "
-                f"({self.reranker.provider!r} != {options.reranker_provider!r})"
+                f"({reranker.provider!r} != {options.reranker_provider!r})"
             )
-        if options.reranker_model != self.reranker.model:
+        if options.reranker_model != reranker.model:
             raise ValueError(
                 "reranker model differs from the requested retrieval configuration "
-                f"({self.reranker.model!r} != {options.reranker_model!r})"
+                f"({reranker.model!r} != {options.reranker_model!r})"
             )
         candidates = tuple(
             RerankCandidate(
@@ -715,7 +737,7 @@ class RetrievalService:
             )
             for chunk_id in candidate_ids
         )
-        returned = self.reranker.rerank(query, candidates)
+        returned = reranker.rerank(query, candidates)
         if any(not isinstance(hit, RerankHit) for hit in returned):
             raise TypeError("reranker must return RerankHit values")
         expected_ids = {candidate.object_id for candidate in candidates}
@@ -758,9 +780,9 @@ class RetrievalService:
             tuple(hit.candidate.object_id for hit in ordered),
             {hit.candidate.object_id: float(hit.score) for hit in ordered},
             RerankTrace(
-                provider=self.reranker.provider,
-                model=self.reranker.model,
-                version=self.reranker.version,
+                provider=reranker.provider,
+                model=reranker.model,
+                version=reranker.version,
                 candidate_limit=options.rerank_candidate_limit,
                 hits=trace_hits,
             ),
@@ -1039,6 +1061,24 @@ class RetrievalService:
                 ),
             )
         return result.model_copy(update={"trace_id": stored.id})
+
+
+def _embedding_semantic_options(provider: EmbeddingProvider) -> dict[str, str | int | bool]:
+    """Read optional provider settings that can change a persisted embedding."""
+
+    raw = getattr(provider, "semantic_options", {})
+    if not isinstance(raw, Mapping):
+        raise TypeError("embedding semantic_options must be a mapping")
+    options: dict[str, str | int | bool] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            raise TypeError("embedding semantic option names must be non-empty strings")
+        if not isinstance(value, (str, int, bool)):
+            raise TypeError(
+                "embedding semantic option values must be strings, integers, or booleans"
+            )
+        options[key] = value
+    return options
 
 
 def _score(

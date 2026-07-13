@@ -73,12 +73,14 @@ class RetrievalSettings(BaseSettings):
         extra="ignore",
     )
 
-    embedding_provider: str = Field(default="hash", min_length=1)
-    embedding_model: str = Field(default="hash-token-v1", min_length=1)
-    embedding_dimensions: int = Field(default=384, ge=32, le=4096)
+    embedding_provider: str = Field(default="flagembedding", min_length=1)
+    embedding_model: str = Field(default="BAAI/bge-m3", min_length=1)
+    embedding_dimensions: int = Field(default=1024, ge=32, le=4096)
     embedding_base_url: str | None = None
     embedding_api_key: SecretStr | None = None
-    embedding_batch_size: int = Field(default=64, ge=1, le=1024)
+    embedding_batch_size: int = Field(default=12, ge=1, le=1024)
+    embedding_max_length: int = Field(default=8192, ge=1, le=8192)
+    embedding_use_fp16: bool = False
     top_k: int = Field(default=8, ge=1)
     candidate_multiplier: int = Field(default=4, ge=1, le=32)
     context_token_budget: int = Field(default=2400, ge=128)
@@ -90,8 +92,8 @@ class RetrievalSettings(BaseSettings):
     naive_bm25_weight: float = Field(default=1.0, ge=0)
     bm25_k1: float = Field(default=1.2, gt=0)
     bm25_b: float = Field(default=0.75, ge=0, le=1)
-    reranker_provider: str = Field(default="lexical", pattern=r"^(none|lexical|flagembedding)$")
-    reranker_model: str = Field(default="lexical-coverage-v1", min_length=1)
+    reranker_provider: str = Field(default="flagembedding", pattern=r"^(none|flagembedding)$")
+    reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
     reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = Field(default=4, ge=1, le=32)
 

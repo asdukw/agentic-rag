@@ -2,37 +2,36 @@
 
 ## Status
 
-Accepted — 2026-07-12.
+Accepted — 2026-07-12; amended — 2026-07-13.
 
 ## Context
 
 Stage three needs vector recall for chunks, entities, and relations without making a
 vector database, an agent framework, or a provider SDK responsible for retrieval
-semantics. The project also needs an offline-testable default while the production
-embedding model remains a benchmark decision.
+semantics. The project also needs a locally runnable semantic default and a fast,
+offline-testable adapter for CI.
 
 ## Decision
 
 - Persist an `embedding_profiles` record and one JSON vector row per `chunk`,
   `entity`, or `relation` in SQLite. The profile identity includes the embedding
-  provider/model/dimensions/text-schema, graph-independent corpus-content hash, and
-  graph build run/snapshot. An atomic replacement activates only a complete index;
+  provider/model/dimensions, vector-affecting encoding options, and text-schema,
+  graph-independent corpus-content hash, and graph build run/snapshot. An atomic replacement activates only a complete index;
   a distinct graph run has a distinct profile identity rather than overwriting vectors.
 - Build distinct embedding texts: contextualized source text for chunks, normalized
   name/type/aliases/description for entities, and named endpoint/predicate/
   description for relations.
-- Use a project-owned `EmbeddingProvider` protocol. The default
-  `hash-token-v1` adapter is deterministic and local, intended for CI and demo
-  reproducibility; an OpenAI-compatible embedding adapter can be configured after
-  a benchmark selects a real model.
+- Use a project-owned `EmbeddingProvider` protocol. The default is the local
+  FlagEmbedding `BAAI/bge-m3` adapter. `hash-token-v1` remains an explicit
+  deterministic adapter for CI and historical profile compatibility; an
+  OpenAI-compatible adapter remains configurable for external models.
 - Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
   graph expansion, per-route min-max normalization, weighted fusion,
-  de-duplication, NetworkX path expansion, a post-fusion deterministic lexical
-  rerank, and token-budget context clipping in project code. The naive trace
+  de-duplication, NetworkX path expansion, a post-fusion local FlagEmbedding
+  cross-encoder rerank, and token-budget context clipping in project code. The naive trace
   retains raw, normalized, and weighted dense/BM25 contributions; the rerank
-  trace retains its candidate pool, component scores, and final rank. The
-  lexical reranker is an offline baseline behind a project-owned adapter
-  boundary, not a disguised cross-encoder.
+  trace retains its candidate pool, component scores, and final rank. Setting
+  the reranker provider to `none` leaves the first-stage order unchanged.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.
@@ -44,8 +43,8 @@ embedding model remains a benchmark decision.
 
 ## Consequences
 
-- A real embedding provider can replace the default adapter without changing the
-  index schema or retrieval algorithms.
+- An external embedding provider can replace the default adapter without changing
+  the index schema or retrieval algorithms.
 - JSON vector storage is deliberately simple and explainable, not a large-corpus
   ANN solution. A future vector-store adapter can retain the same profile/vector
   contract after benchmark evidence justifies it.

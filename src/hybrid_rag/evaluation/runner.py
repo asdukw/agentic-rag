@@ -187,12 +187,8 @@ class EvaluationRunner:
         allowed_citations = {item.citation_id for item in result.context_items}
         citation_allowlist_valid = set(answer.citations).issubset(allowed_citations)
         answer_supported = _answer_is_supported(answer.answer, citation_context)
-        faithfulness = (
-            citation_allowlist_valid
-            and (
-                answer.insufficient_evidence
-                or (not answer.insufficient_evidence and answer_supported)
-            )
+        faithfulness = citation_allowlist_valid and (
+            answer.insufficient_evidence or (not answer.insufficient_evidence and answer_supported)
         )
         expected_ids = tuple(anchor.id for anchor in case.expected_evidence)
         return RetrievalEvaluation(
@@ -284,9 +280,7 @@ class EvaluationRunner:
                     if supplied is not None
                     else _retrieval_model_calls(index_provenance, evaluations)
                 ),
-                judge_model_calls=(
-                    supplied.judge_model_calls if supplied is not None else None
-                ),
+                judge_model_calls=(supplied.judge_model_calls if supplied is not None else None),
             )
         if _uses_external_embedding(index_provenance):
             if supplied is not None and supplied.status is CostStatus.VERIFIED:
@@ -412,9 +406,9 @@ def _index_provenance(profile: StoredIndexProfile) -> IndexProvenance:
 
 
 def _uses_external_embedding(index_provenance: IndexProvenance) -> bool:
-    """The current adapter boundary has one explicitly local provider: ``hash``."""
+    """Identify adapters that may incur an external embedding API charge."""
 
-    return index_provenance.embedding_provider.casefold() != "hash"
+    return index_provenance.embedding_provider.casefold() not in {"hash", "flagembedding"}
 
 
 def _retrieval_model_calls(
@@ -436,9 +430,7 @@ def _summaries(
                 mode=mode,
                 cases=len(values),
                 mean_evidence_hit_rate=_mean(item.evidence_hit_rate for item in values),
-                mean_cited_evidence_hit_rate=_mean(
-                    item.cited_evidence_hit_rate for item in values
-                ),
+                mean_cited_evidence_hit_rate=_mean(item.cited_evidence_hit_rate for item in values),
                 citation_grounded_faithfulness_rate=_mean(
                     float(item.citation_grounded_faithfulness) for item in values
                 ),

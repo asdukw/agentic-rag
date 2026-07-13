@@ -19,6 +19,7 @@ from hybrid_rag.extraction.service import GraphBuildService
 from hybrid_rag.extraction.workflow import WorkflowOptions
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
+from hybrid_rag.retrieval.embedding import BGEM3EmbeddingProvider
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
 from hybrid_rag.storage.retrieval_repository import RetrievalRepository
@@ -64,6 +65,28 @@ def test_cli_constructs_the_flag_embedding_reranker_from_settings(
     assert calls == [("flagembedding", "BAAI/bge-reranker-v2-m3", True)]
 
 
+def test_cli_constructs_bge_m3_embedding_from_settings() -> None:
+    settings = SimpleNamespace(
+        embedding_provider="flagembedding",
+        embedding_model="BAAI/bge-m3",
+        embedding_dimensions=1024,
+        embedding_batch_size=12,
+        embedding_max_length=8192,
+        embedding_use_fp16=False,
+        embedding_base_url=None,
+        embedding_api_key=None,
+    )
+
+    provider = cli_module._embedding_provider(settings)
+
+    assert isinstance(provider, BGEM3EmbeddingProvider)
+    assert provider.model == "BAAI/bge-m3"
+    assert provider.dimensions == 1024
+    assert provider.batch_size == 12
+    assert provider.max_length == 8192
+    assert not provider.use_fp16
+
+
 def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -102,11 +125,11 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert retrieved["trace"]["settings"]["naive_bm25_weight"] == 1.5
     assert retrieved["trace"]["settings"]["bm25_k1"] == 1.7
     assert retrieved["trace"]["settings"]["bm25_b"] == 0.3
-    assert retrieved["trace"]["settings"]["rerank_enabled"] is True
-    assert retrieved["trace"]["settings"]["reranker_provider"] == "lexical"
+    assert retrieved["trace"]["settings"]["rerank_enabled"] is False
+    assert retrieved["trace"]["settings"]["reranker_provider"] == "none"
     assert retrieved["trace"]["settings"]["reranker_use_fp16"] is False
     assert retrieved["trace"]["settings"]["rerank_candidate_multiplier"] == 4
-    assert retrieved["trace"]["rerank"]["provider"] == "lexical"
+    assert retrieved["trace"]["rerank"] is None
     citation_id = retrieved["context_items"][0]["citation_id"]
     assert citation_id == retrieved["context_items"][0]["chunk_id"]
 
@@ -195,15 +218,13 @@ def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
     assert report["run"]["options"]["naive_bm25_weight"] == 1.5
     assert report["run"]["options"]["bm25_k1"] == 1.7
     assert report["run"]["options"]["bm25_b"] == 0.3
-    assert report["run"]["options"]["reranker_provider"] == "lexical"
+    assert report["run"]["options"]["reranker_provider"] == "none"
     assert report["run"]["options"]["reranker_use_fp16"] is False
     assert report["run"]["options"]["rerank_candidate_multiplier"] == 4
     assert len(report["run"]["case_ids"]) == 2
     assert report["run"]["index_provenance"]["profile_id"] == index["profile_id"]
     assert report["run"]["index_provenance"]["corpus_content_hash"] == corpus_content_hash
-    assert report["run"]["index_provenance"]["source_corpus_hash"] == index[
-        "source_corpus_hash"
-    ]
+    assert report["run"]["index_provenance"]["source_corpus_hash"] == index["source_corpus_hash"]
     assert report["cost_disclosure"] == {
         "status": "not_applicable",
         "retrieval_model_calls": 0,
@@ -258,8 +279,8 @@ def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         naive_bm25_weight=1.5,
         bm25_k1=1.7,
         bm25_b=0.3,
-        reranker_provider="lexical",
-        reranker_model="lexical-coverage-v1",
+        reranker_provider="none",
+        reranker_model="BAAI/bge-reranker-v2-m3",
         reranker_use_fp16=False,
         rerank_candidate_multiplier=4,
     )

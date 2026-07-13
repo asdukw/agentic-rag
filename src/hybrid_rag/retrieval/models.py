@@ -34,10 +34,15 @@ class IndexSemanticConfig(_StrictRetrievalModel):
     model: str = Field(min_length=1)
     dimensions: int = Field(ge=1)
     text_schema_version: str = INDEX_TEXT_SCHEMA_VERSION
+    provider_options: dict[str, str | int | bool] = Field(default_factory=dict)
 
     @property
     def config_hash(self) -> str:
-        return canonical_json_hash(self.model_dump(mode="json"))
+        payload = self.model_dump(mode="json")
+        # Preserve profile IDs created before provider-specific options existed.
+        if not self.provider_options:
+            payload.pop("provider_options")
+        return canonical_json_hash(payload)
 
 
 class ScoreComponent(_StrictRetrievalModel):

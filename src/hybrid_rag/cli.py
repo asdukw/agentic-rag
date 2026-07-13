@@ -43,6 +43,7 @@ from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
 from hybrid_rag.retrieval.embedding import (
+    BGEM3EmbeddingProvider,
     EmbeddingConfigurationError,
     HashEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
@@ -86,6 +87,14 @@ def _embedding_provider(
     selected_provider = provider or settings.embedding_provider
     selected_model = model or settings.embedding_model
     selected_dimensions = dimensions or settings.embedding_dimensions
+    if selected_provider == "flagembedding":
+        return BGEM3EmbeddingProvider(
+            model=selected_model,
+            dimensions=selected_dimensions,
+            batch_size=settings.embedding_batch_size,
+            max_length=settings.embedding_max_length,
+            use_fp16=settings.embedding_use_fp16,
+        )
     if selected_provider == "hash":
         return HashEmbeddingProvider(dimensions=selected_dimensions, model=selected_model)
     if selected_provider == "openai-compatible":
@@ -105,7 +114,7 @@ def _embedding_provider(
             dimensions=selected_dimensions,
         )
     raise typer.BadParameter(
-        "--provider must be 'hash' or 'openai-compatible'",
+        "--provider must be 'flagembedding', 'openai-compatible', or 'hash'",
         param_hint="--provider",
     )
 
@@ -227,7 +236,7 @@ def _judge_cost_disclosure(
             retrieval_model_calls=report.cost_disclosure.retrieval_model_calls,
             judge_model_calls=usage.calls,
         )
-    if report.run.index_provenance.embedding_provider.casefold() != "hash":
+    if report.run.index_provenance.embedding_provider.casefold() not in {"hash", "flagembedding"}:
         return CostDisclosure.unknown_external_embedding(
             provider=report.run.index_provenance.embedding_provider,
             retrieval_model_calls=report.cost_disclosure.retrieval_model_calls or 0,
@@ -343,8 +352,7 @@ def _render_evaluation_report(
         return
     table = Table(
         title=(
-            f"Evaluation {report.run.id} / {report.run.execution_id} "
-            f"({report.run.benchmark_id})"
+            f"Evaluation {report.run.id} / {report.run.execution_id} ({report.run.benchmark_id})"
         )
     )
     table.add_column("Mode")
@@ -747,7 +755,10 @@ def build_index(
     ] = None,
     provider: Annotated[
         str | None,
-        typer.Option("--provider", help="hash (default) or openai-compatible"),
+        typer.Option(
+            "--provider",
+            help="flagembedding (default), openai-compatible, or hash (compatibility)",
+        ),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="Embedding model identity")] = None,
     dimensions: Annotated[int | None, typer.Option("--dimensions", min=1)] = None,

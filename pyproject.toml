@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "alembic>=1.16,<2",
+    "FlagEmbedding>=1.4,<2",
     "langgraph>=1.2,<2",
     "langgraph-checkpoint-sqlite>=3.1,<4",
     "networkx>=3.6,<4",
@@ -18,11 +19,6 @@ dependencies = [
     "streamlit>=1.58,<2",
     "tiktoken>=0.11,<1",
     "typer>=0.16,<1",
-]
-
-[project.optional-dependencies]
-reranker = [
-    "FlagEmbedding>=1.4,<2",
 ]
 
 [project.scripts]
