@@ -38,7 +38,13 @@ from hybrid_rag.evaluation import (
 from hybrid_rag.evaluation.deepseek_judge import DeepSeekBlindJudge
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
-from hybrid_rag.extraction.schemas import ExtractionConfig, GraphConfig
+from hybrid_rag.extraction.schemas import (
+    EXTRACTION_PROMPT_VERSION,
+    EXTRACTION_SCHEMA_VERSION,
+    REPAIR_PROMPT_VERSION,
+    ExtractionConfig,
+    GraphConfig,
+)
 from hybrid_rag.extraction.service import GraphBuildService
 from hybrid_rag.extraction.workflow import WorkflowOptions
 from hybrid_rag.ingest.chunker import SectionTokenChunker
@@ -408,6 +414,22 @@ def _build_extraction_config(
             raise typer.BadParameter(f"graph build run not found: {resume_run_id}")
         persisted = run.report.get("extraction_config")
         if isinstance(persisted, dict):
+            expected_versions = {
+                "schema_version": EXTRACTION_SCHEMA_VERSION,
+                "prompt_version": EXTRACTION_PROMPT_VERSION,
+                "repair_prompt_version": REPAIR_PROMPT_VERSION,
+            }
+            mismatches = [
+                f"{field}={persisted.get(field)!r} (current={expected!r})"
+                for field, expected in expected_versions.items()
+                if persisted.get(field) != expected
+            ]
+            if mismatches:
+                raise typer.BadParameter(
+                    "cannot resume a graph build created with a different extraction contract "
+                    f"({', '.join(mismatches)}); start a new build-graph run",
+                    param_hint="--resume",
+                )
             return ExtractionConfig.model_validate(persisted)
     return ExtractionConfig(
         base_url=base_url.rstrip("/"),

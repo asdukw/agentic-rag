@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from hybrid_rag.extraction.schemas import ExtractionConfig, GraphConfig
+from hybrid_rag.extraction.schemas import EntityType, ExtractionConfig, GraphConfig
 from hybrid_rag.extraction.validation import (
     ExtractionValidationError,
     ValidationFailureKind,
@@ -74,6 +74,21 @@ def test_empty_extraction_is_valid() -> None:
 
     assert result.entities == ()
     assert result.relations == ()
+
+
+def test_system_entity_type_is_accepted() -> None:
+    payload = _payload()
+    payload["entities"][0]["entity_type"] = "SYSTEM"
+
+    result = validate_completion(
+        extraction_id="xtr_system",
+        source_chunk_id="chk_system",
+        chunk_text="LightRAG uses a knowledge graph for retrieval.",
+        content=json.dumps(payload),
+        finish_reason="stop",
+    )
+
+    assert result.entities[0].entity_type is EntityType.SYSTEM
 
 
 def test_empty_extraction_still_requires_both_contract_fields() -> None:

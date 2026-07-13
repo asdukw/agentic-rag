@@ -6,9 +6,6 @@ from typing import Literal, TypedDict
 
 from hybrid_rag.extraction.schemas import ChunkExtraction
 
-EXTRACTION_PROMPT_VERSION = "1"
-REPAIR_PROMPT_VERSION = "1"
-
 _MAX_INVALID_RESPONSE_CHARS = 16_000
 _MAX_ISSUES = 30
 _MAX_ISSUE_CHARS = 600
@@ -64,7 +61,10 @@ def build_repair_messages(
             "content": (
                 "Repair the previous extraction. Return a complete replacement JSON object, "
                 "not a patch or explanation. Correct every validation issue. Evidence quotes "
-                "must be copied character-for-character from SOURCE_CHUNK_JSON.text.\n\n"
+                "must be copied character-for-character from SOURCE_CHUNK_JSON.text. For every "
+                "entity_type error, use only a JSON_SCHEMA enum value: use SYSTEM for an "
+                "integrated software, RAG, agent, or information system, and use OTHER when no "
+                "listed category fits.\n\n"
                 f"SOURCE_CHUNK_JSON:\n{envelope}\n\n"
                 "FAILED_OUTPUT_JSON:\n"
                 f"{json.dumps(failure_payload, ensure_ascii=False, sort_keys=True)}"
@@ -113,6 +113,10 @@ def _system_prompt() -> str:
         "You extract a small evidence-grounded knowledge graph from one research-paper chunk. "
         "Return exactly one JSON object and no markdown. The object must satisfy JSON_SCHEMA. "
         "Entity refs are response-local e1, e2, ...; relations may reference only emitted refs. "
+        "Every entity_type must be exactly one of PERSON, ORGANIZATION, PUBLICATION, METHOD, "
+        "MODEL, DATASET, TASK, METRIC, TOOL, CONCEPT, SYSTEM, or OTHER. Use SYSTEM for an "
+        "integrated software, RAG, agent, or information system. Use OTHER when no listed "
+        "category fits; never invent another entity_type label. "
         "Predicates are concise UPPER_SNAKE_CASE directed verbs. Do not invent global IDs, chunk "
         "IDs, confidence scores, keywords, or unsupported facts. An irrelevant chunk must return "
         '{"entities":[],"relations":[]}. Every non-empty entity and relation needs at least one '

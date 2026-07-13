@@ -14,11 +14,13 @@ from pydantic import (
 
 from hybrid_rag.ids import canonical_json_hash
 
-EXTRACTION_SCHEMA_VERSION = "1"
+EXTRACTION_SCHEMA_VERSION = "2"
 EXTRACTION_CONFIG_VERSION = "1"
 GRAPH_SCHEMA_VERSION = "1"
 ENTITY_NORMALIZER_VERSION = "1"
 RELATION_MERGER_VERSION = "1"
+EXTRACTION_PROMPT_VERSION = "2"
+REPAIR_PROMPT_VERSION = "2"
 
 LocalEntityRef = Annotated[
     str,
@@ -68,6 +70,7 @@ class EntityType(StrEnum):
     METRIC = "METRIC"
     TOOL = "TOOL"
     CONCEPT = "CONCEPT"
+    SYSTEM = "SYSTEM"
     OTHER = "OTHER"
 
 
@@ -237,8 +240,8 @@ class ExtractionConfig(_FrozenDomainModel):
     temperature: float = 0.0
     max_output_tokens: int = Field(default=4096, ge=1)
     schema_version: str = EXTRACTION_SCHEMA_VERSION
-    prompt_version: str = "1"
-    repair_prompt_version: str = "1"
+    prompt_version: str = EXTRACTION_PROMPT_VERSION
+    repair_prompt_version: str = REPAIR_PROMPT_VERSION
     repair_max_attempts: int = Field(default=2, ge=0)
 
     @property

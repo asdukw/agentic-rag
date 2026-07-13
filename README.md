@@ -27,6 +27,10 @@ uv run hybrid-rag corpus download
 # 导入论文并切成可追溯的 chunks。
 uv run hybrid-rag ingest data/raw
 
+# 可选：抽取实体和关系，为 local、global 及 hybrid 提供图谱证据（需要 DEEPSEEK_API_KEY）。
+# 只使用 naive，或不需要图路径时可跳过这一步。
+uv run hybrid-rag build-graph --limit 10
+
 # 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
 uv run hybrid-rag build-index
 
@@ -84,14 +88,6 @@ DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响�
 `retrieve --deepseek`、`ask --deepseek` 与 `evaluate --deepseek-judge` 的 JSON/trace/报告都会保留
 对应的用量和估算结果。
 
-```dotenv
-DEEPSEEK_FLASH_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS=0.02
-DEEPSEEK_FLASH_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS=1.00
-DEEPSEEK_FLASH_OUTPUT_CNY_PER_MILLION_TOKENS=2.00
-DEEPSEEK_PRO_INPUT_CACHE_HIT_CNY_PER_MILLION_TOKENS=0.025
-DEEPSEEK_PRO_INPUT_CACHE_MISS_CNY_PER_MILLION_TOKENS=3.00
-DEEPSEEK_PRO_OUTPUT_CNY_PER_MILLION_TOKENS=6.00
-```
 
 模型仅按实际响应中的 `deepseek-v4-flash` 或 `deepseek-v4-pro` 精确匹配价格表。若上游没有返回两类
 缓存 token，或两者之和与输入 token 不一致，成本状态会显示为 `unknown`，而不会猜测为缓存未命中；
@@ -112,12 +108,20 @@ uv run hybrid-rag retrieval replay rtr_<id> --json
 ### 运行评测或演示界面
 
 ```bash
+# 默认使用可复现的离线指标和盲评，不调用 DeepSeek。
 uv run hybrid-rag evaluate
+
+# 可选：让 DeepSeek 对匿名的 naive / hybrid A/B 结果进行盲评。
+# 需要设置 DEEPSEEK_API_KEY，且会产生 API 调用费用。
+uv run hybrid-rag evaluate --deepseek-judge
+
 uv run streamlit run src/hybrid_rag/demo.py
 ```
 
 `evaluate` 使用固定题集对比 `naive` 与 `hybrid`，并写出带 profile、图谱快照、citation、trace、
-延迟和成本状态的 JSON/Markdown artifact。Streamlit 演示可查看四种模式、证据、图路径和对比结果。
+延迟和成本状态的 JSON/Markdown artifact。默认评测使用离线、确定性的盲评规则；传入
+`--deepseek-judge` 后，DeepSeek 仅根据匿名的答案、引用和评测指标进行 A/B 裁判，不能检索额外资料。
+Streamlit 演示可查看四种模式、证据、图路径和对比结果。
 
 ### 配置 DeepSeek 或自定义论文语料
 
