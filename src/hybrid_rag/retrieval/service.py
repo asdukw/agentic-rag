@@ -34,6 +34,7 @@ from hybrid_rag.retrieval.fusion import (
 )
 from hybrid_rag.retrieval.models import (
     INDEX_TEXT_SCHEMA_VERSION,
+    RETRIEVAL_MODE_SEMANTICS_VERSION,
     CandidateHit,
     ContextItem,
     GraphPath,
@@ -295,14 +296,14 @@ class RetrievalService:
         self,
         question: str,
         *,
-        mode: RetrievalMode | str = RetrievalMode.HYBRID,
+        mode: RetrievalMode | str = RetrievalMode.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
         keywords: Sequence[str] = (),
         persist: bool = True,
         model_info: Mapping[str, Any] | None = None,
     ) -> RetrievalResult:
-        """Run one of naive/local/global/hybrid retrieval and optionally save its trace."""
+        """Run one of naive/local/global/hybrid/mix retrieval and optionally save its trace."""
 
         normalized_question = _question(question)
         selected_mode = RetrievalMode(mode)
@@ -331,7 +332,7 @@ class RetrievalService:
         question: str,
         *,
         keyword_extractor: KeywordExtractor | None = None,
-        mode: RetrievalMode | str = RetrievalMode.HYBRID,
+        mode: RetrievalMode | str = RetrievalMode.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
         persist: bool = True,
@@ -359,7 +360,7 @@ class RetrievalService:
         question: str,
         *,
         query_client: QueryClient | None = None,
-        mode: RetrievalMode | str = RetrievalMode.HYBRID,
+        mode: RetrievalMode | str = RetrievalMode.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
     ) -> AnswerResult:
@@ -579,23 +580,40 @@ class RetrievalService:
         options: RetrievalOptions,
     ) -> RetrievalResult:
         candidate_limit = options.top_k * options.candidate_multiplier
-        if mode is RetrievalMode.HYBRID:
-            with ThreadPoolExecutor(max_workers=3, thread_name_prefix="hybrid-recall") as executor:
+        composite_routes = tuple(
+            route
+            for route in _composite_routes(mode)
+            if options.weights.get(route.value, 0.0) > 0.0
+        )
+        if mode in {RetrievalMode.HYBRID, RetrievalMode.MIX} and not composite_routes:
+            raise ValueError(f"{mode.value} requires at least one positive route weight")
+        if composite_routes:
+            with ThreadPoolExecutor(
+                max_workers=len(composite_routes),
+                thread_name_prefix=f"{mode.value}-recall",
+            ) as executor:
                 futures = {
-                    RetrievalMode.NAIVE: executor.submit(
-                        self._naive_route,
-                        index,
-                        query_vector,
-                        expanded_query,
-                        candidate_limit,
-                        options,
-                    ),
-                    RetrievalMode.LOCAL: executor.submit(
-                        self._local_route, index, query_vector, candidate_limit
-                    ),
-                    RetrievalMode.GLOBAL: executor.submit(
-                        self._global_route, index, query_vector, candidate_limit
-                    ),
+                    route: (
+                        executor.submit(
+                            self._naive_route,
+                            index,
+                            query_vector,
+                            expanded_query,
+                            candidate_limit,
+                            options,
+                        )
+                        if route is RetrievalMode.NAIVE
+                        else executor.submit(
+                            {
+                                RetrievalMode.LOCAL: self._local_route,
+                                RetrievalMode.GLOBAL: self._global_route,
+                            }[route],
+                            index,
+                            query_vector,
+                            candidate_limit,
+                        )
+                    )
+                    for route in composite_routes
                 }
                 routes = {route: future.result() for route, future in futures.items()}
             fused_scores, components = weighted_fusion(
@@ -603,10 +621,15 @@ class RetrievalService:
                 options.weights,
             )
             raw_scores = _max_scores(result.chunk_raw_scores for result in routes.values())
-            paths = self._expand_hybrid_paths(index, routes, options.graph_max_hops)
+            paths = self._expand_graph_paths(index, routes, options.graph_max_hops)
             route_traces = {
                 route.value: self._route_trace(result, index) for route, result in routes.items()
             }
+            merged_chunk_ids = _round_robin_chunk_ids(
+                routes,
+                route_order=composite_routes,
+                limit=(options.rerank_candidate_limit if options.rerank_enabled else options.top_k),
+            )
         else:
             if mode is RetrievalMode.NAIVE:
                 route = self._naive_route(
@@ -627,6 +650,10 @@ class RetrievalService:
             raw_scores = dict(route.chunk_raw_scores)
             paths = route.paths
             route_traces = {mode.value: self._route_trace(route, index)}
+            merged_chunk_ids = rank_ids(
+                fused_scores,
+                limit=(options.rerank_candidate_limit if options.rerank_enabled else options.top_k),
+            )
 
         chunks = {item.object_id: item for item in index.chunks}
         rerank_trace: RerankTrace | None = None
@@ -636,13 +663,9 @@ class RetrievalService:
                     "reranking was requested but no reranker is configured; "
                     "set reranker_provider=none or provide a FlagEmbedding reranker"
                 )
-            rerank_candidate_ids = rank_ids(
-                fused_scores,
-                limit=options.rerank_candidate_limit,
-            )
             ordered_reranked_ids, final_scores, rerank_trace = self._rerank(
                 query=query,
-                candidate_ids=rerank_candidate_ids,
+                candidate_ids=merged_chunk_ids,
                 chunks=chunks,
                 fused_scores=fused_scores,
                 options=options,
@@ -650,7 +673,7 @@ class RetrievalService:
             ordered_chunk_ids = ordered_reranked_ids[: options.top_k]
         else:
             final_scores = dict(fused_scores)
-            ordered_chunk_ids = rank_ids(final_scores, limit=options.top_k)
+            ordered_chunk_ids = merged_chunk_ids
         selected_context = self._context_items(
             ordered_chunk_ids,
             chunks,
@@ -676,7 +699,7 @@ class RetrievalService:
                 },
                 score_components=(
                     routes[RetrievalMode.NAIVE].chunk_score_components.get(chunk_id, {})
-                    if mode is RetrievalMode.NAIVE
+                    if RetrievalMode.NAIVE in routes
                     else {}
                 ),
                 source_chunk_ids=(chunk_id,),
@@ -706,6 +729,7 @@ class RetrievalService:
                 "tokenizer": self.token_counter.name,
                 "naive_lexical_scorer": BM25_SCORER_VERSION,
                 "naive_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
+                "mode_semantics_version": RETRIEVAL_MODE_SEMANTICS_VERSION,
                 "rerank_enabled": options.rerank_enabled,
                 "reranker_provider": options.reranker_provider,
                 "reranker_model": options.reranker_model,
@@ -947,7 +971,7 @@ class RetrievalService:
             ),
         )
 
-    def _expand_hybrid_paths(
+    def _expand_graph_paths(
         self,
         index: LoadedIndex,
         routes: Mapping[RetrievalMode, _RouteResult],
@@ -1205,6 +1229,47 @@ def _relation_content_hash(relation: SourceRelation) -> str:
     )
 
 
+def _composite_routes(mode: RetrievalMode) -> tuple[RetrievalMode, ...]:
+    """Return the LightRAG-aligned source order for composite modes."""
+
+    if mode is RetrievalMode.HYBRID:
+        return (RetrievalMode.LOCAL, RetrievalMode.GLOBAL)
+    if mode is RetrievalMode.MIX:
+        return (RetrievalMode.NAIVE, RetrievalMode.LOCAL, RetrievalMode.GLOBAL)
+    return ()
+
+
+def _round_robin_chunk_ids(
+    routes: Mapping[RetrievalMode, _RouteResult],
+    *,
+    route_order: Sequence[RetrievalMode],
+    limit: int,
+) -> tuple[str, ...]:
+    """Interleave route candidates in source order and deduplicate chunk IDs."""
+
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    candidates = [iter(rank_ids(routes[route].chunk_scores, limit=limit)) for route in route_order]
+    output: list[str] = []
+    seen: set[str] = set()
+    exhausted = [False] * len(candidates)
+    while len(output) < limit and not all(exhausted):
+        for index, values in enumerate(candidates):
+            if exhausted[index]:
+                continue
+            try:
+                chunk_id = next(values)
+            except StopIteration:
+                exhausted[index] = True
+                continue
+            if chunk_id not in seen:
+                seen.add(chunk_id)
+                output.append(chunk_id)
+                if len(output) == limit:
+                    break
+    return tuple(output)
+
+
 def _question(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -1319,6 +1384,7 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "bm25_b",
             "naive_lexical_scorer",
             "naive_lexical_tokenizer",
+            "mode_semantics_version",
             "rerank_enabled",
             "reranker_provider",
             "reranker_model",

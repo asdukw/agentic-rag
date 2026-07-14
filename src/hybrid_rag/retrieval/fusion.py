@@ -34,8 +34,8 @@ def weighted_average_fusion(
 ) -> tuple[dict[str, float], dict[str, dict[str, ScoreComponent]]]:
     """Fuse active score maps as a normalized weighted average.
 
-    This is intentionally separate from :func:`weighted_fusion`: outer hybrid
-    route weights remain additive, while sub-scorers inside one route should
+    This is intentionally separate from :func:`weighted_fusion`: outer multi-route
+    weights remain additive, while sub-scorers inside one route should
     retain a stable 0--1 scale.  Empty or zero-weight scorers are excluded from
     the denominator, so an out-of-vocabulary lexical query cannot dilute dense
     recall.  Each raw, normalized, and weighted contribution is returned for

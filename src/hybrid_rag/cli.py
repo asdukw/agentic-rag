@@ -199,7 +199,9 @@ def _evaluation_options(
             RetrievalMode(value.strip()) for value in modes.split(",") if value.strip()
         )
     except ValueError as error:
-        raise typer.BadParameter("--modes must use naive, local, global, and/or hybrid") from error
+        raise typer.BadParameter(
+            "--modes must use naive, local, global, hybrid, and/or mix"
+        ) from error
     if not selected_modes:
         raise typer.BadParameter("--modes must not be empty")
     case_ids = benchmark_case_ids[:limit] if limit is not None else benchmark_case_ids
@@ -852,7 +854,10 @@ def build_index(
 def retrieve(
     question: Annotated[str, typer.Argument(help="Question to retrieve evidence for")],
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
-    mode: Annotated[str, typer.Option("--mode", help="naive, local, global, or hybrid")] = "hybrid",
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="naive, local, global, hybrid, or mix"),
+    ] = "mix",
     profile: Annotated[
         str | None,
         typer.Option("--profile", help="idx_ profile ID or config hash"),
@@ -872,7 +877,7 @@ def retrieve(
     try:
         selected_mode = RetrievalMode(mode)
     except ValueError as error:
-        raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
+        raise typer.BadParameter("--mode must be naive, local, global, hybrid, or mix") from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
     deepseek_settings = DeepSeekSettings()
@@ -921,7 +926,10 @@ def retrieve(
 def ask(
     question: Annotated[str, typer.Argument(help="Question to answer from retrieved evidence")],
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
-    mode: Annotated[str, typer.Option("--mode", help="naive, local, global, or hybrid")] = "hybrid",
+    mode: Annotated[
+        str,
+        typer.Option("--mode", help="naive, local, global, hybrid, or mix"),
+    ] = "mix",
     profile: Annotated[
         str | None,
         typer.Option("--profile", help="idx_ profile ID or config hash"),
@@ -941,7 +949,7 @@ def ask(
     try:
         selected_mode = RetrievalMode(mode)
     except ValueError as error:
-        raise typer.BadParameter("--mode must be naive, local, global, or hybrid") from error
+        raise typer.BadParameter("--mode must be naive, local, global, hybrid, or mix") from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
     deepseek_settings = DeepSeekSettings()
@@ -1102,8 +1110,8 @@ def ragas_evaluate(
     ] = None,
     modes: Annotated[
         str,
-        typer.Option("--modes", help="Comma-separated modes: naive, local, global, or hybrid"),
-    ] = "hybrid",
+        typer.Option("--modes", help="Comma-separated modes: naive, local, global, hybrid, or mix"),
+    ] = "mix",
     top: Annotated[int | None, typer.Option("--top", min=1)] = None,
     context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
     graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
@@ -1116,7 +1124,9 @@ def ragas_evaluate(
             RetrievalMode(value.strip()) for value in modes.split(",") if value.strip()
         )
     except ValueError as error:
-        raise typer.BadParameter("--modes must use naive, local, global, and/or hybrid") from error
+        raise typer.BadParameter(
+            "--modes must use naive, local, global, hybrid, and/or mix"
+        ) from error
     if not selected_modes or len(selected_modes) != len(set(selected_modes)):
         raise typer.BadParameter("--modes must contain one or more distinct modes")
 

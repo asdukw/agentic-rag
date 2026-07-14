@@ -29,6 +29,7 @@ from hybrid_rag.retrieval.fusion import (
 )
 from hybrid_rag.retrieval.models import (
     INDEX_TEXT_SCHEMA_VERSION,
+    RETRIEVAL_MODE_SEMANTICS_VERSION,
     RETRIEVAL_SCHEMA_VERSION,
     CandidateHit,
     ContextItem,
@@ -91,6 +92,7 @@ __all__ = [
     "FLAG_EMBEDDING_RERANKER_VERSION",
     "INDEX_TEXT_SCHEMA_VERSION",
     "LEXICAL_TOKENIZER_VERSION",
+    "RETRIEVAL_MODE_SEMANTICS_VERSION",
     "RETRIEVAL_SCHEMA_VERSION",
     "AnswerResult",
     "BGEM3EmbeddingProvider",

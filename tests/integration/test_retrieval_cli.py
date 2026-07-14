@@ -121,12 +121,10 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
             question,
             "--db",
             str(db_path),
-            "--mode",
-            "hybrid",
             "--json",
         ],
     )
-    assert retrieved["mode"] == "hybrid"
+    assert retrieved["mode"] == "mix"
     assert retrieved["trace_id"].startswith("rtr_")
     assert retrieved["context_items"]
     assert set(retrieved["trace"]["routes"]) == {"naive", "local", "global"}
@@ -142,10 +140,10 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     citation_id = retrieved["context_items"][0]["citation_id"]
     assert citation_id == retrieved["context_items"][0]["chunk_id"]
 
-    answered = _invoke_json(
+    hybrid = _invoke_json(
         runner,
         [
-            "ask",
+            "retrieve",
             question,
             "--db",
             str(db_path),
@@ -154,9 +152,22 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
             "--json",
         ],
     )
+    assert hybrid["mode"] == "hybrid"
+    assert set(hybrid["trace"]["routes"]) == {"local", "global"}
+
+    answered = _invoke_json(
+        runner,
+        [
+            "ask",
+            question,
+            "--db",
+            str(db_path),
+            "--json",
+        ],
+    )
     answer_trace_id = answered["retrieval"]["trace_id"]
     assert answer_trace_id.startswith("rtr_")
-    assert answered["retrieval"]["mode"] == "hybrid"
+    assert answered["retrieval"]["mode"] == "mix"
     assert answered["answer"]["citations"] == [
         answered["retrieval"]["context_items"][0]["citation_id"]
     ]
@@ -167,7 +178,7 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
         ["retrieval", "replay", answer_trace_id, "--db", str(db_path), "--json"],
     )
     assert replay["retrieval"]["trace_id"] == answer_trace_id
-    assert replay["retrieval"]["mode"] == "hybrid"
+    assert replay["retrieval"]["mode"] == "mix"
     assert replay["answer"]["citations"] == answered["answer"]["citations"]
 
 

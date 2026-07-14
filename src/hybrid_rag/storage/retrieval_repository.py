@@ -34,7 +34,7 @@ from hybrid_rag.storage.models import (
 )
 
 INDEX_KINDS = frozenset({"chunk", "entity", "relation"})
-RETRIEVAL_MODES = frozenset({"naive", "local", "global", "hybrid"})
+RETRIEVAL_MODES = frozenset({"naive", "local", "global", "hybrid", "mix"})
 
 
 class RetrievalRepositoryError(RuntimeError):

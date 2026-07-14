@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-07-12; amended — 2026-07-13.
+Accepted — 2026-07-12; amended — 2026-07-13, 2026-07-14.
 
 ## Context
 
@@ -25,12 +25,15 @@ offline-testable adapter for CI.
   FlagEmbedding `BAAI/bge-m3` adapter. `hash-token-v1` remains an explicit
   deterministic adapter for CI and historical profile compatibility.
 - Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
-  graph expansion, per-route min-max normalization, weighted fusion,
-  de-duplication, NetworkX path expansion, a post-fusion local FlagEmbedding
-  cross-encoder rerank, and token-budget context clipping in project code. The naive trace
-  retains raw, normalized, and weighted dense/BM25 contributions; the rerank
-  trace retains its candidate pool, component scores, and final rank. Setting
-  the reranker provider to `none` leaves the first-stage order unchanged.
+  graph expansion, per-route min-max normalization, weighted route scores,
+  NetworkX path expansion, a post-fusion local FlagEmbedding cross-encoder
+  rerank, and token-budget context clipping in project code. `hybrid` combines
+  only `local + global`; default `mix` adds `naive`. Composite modes interleave
+  route candidates in source order and de-duplicate chunk IDs before optional
+  reranking and clipping. The naive trace retains raw, normalized, and weighted
+  dense/BM25 contributions; the rerank trace retains its candidate pool,
+  component scores, and final rank. Setting the reranker provider to `none`
+  leaves the first-stage order unchanged.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.

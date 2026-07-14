@@ -149,32 +149,45 @@ def test_three_indexes_support_all_retrieval_modes_replay_and_grounded_answer(
 
         for mode, result in results.items():
             _assert_shared_result_contract(result, mode, options.context_token_budget)
-            expected_routes = (
-                {"naive", "local", "global"} if mode is RetrievalMode.HYBRID else {mode.value}
-            )
+            expected_routes = {
+                RetrievalMode.NAIVE: {"naive"},
+                RetrievalMode.LOCAL: {"local"},
+                RetrievalMode.GLOBAL: {"global"},
+                RetrievalMode.HYBRID: {"local", "global"},
+                RetrievalMode.MIX: {"naive", "local", "global"},
+            }[mode]
             assert set(result.trace.routes) == expected_routes
 
         naive = results[RetrievalMode.NAIVE]
         local = results[RetrievalMode.LOCAL]
         global_result = results[RetrievalMode.GLOBAL]
         hybrid = results[RetrievalMode.HYBRID]
+        mix = results[RetrievalMode.MIX]
 
         assert naive.graph_paths == ()
-        assert local.graph_paths and global_result.graph_paths and hybrid.graph_paths
+        assert (
+            local.graph_paths
+            and global_result.graph_paths
+            and hybrid.graph_paths
+            and mix.graph_paths
+        )
         assert all(path.relation_ids for path in hybrid.graph_paths)
         assert all(path.source_chunk_ids for path in hybrid.graph_paths)
-        assert set(hybrid.hits[0].route_scores) == {"naive", "local", "global"}
-        assert all(item.citation_id == item.chunk_id for item in hybrid.context_items)
-        assert all(item.chunk_id in hybrid.context for item in hybrid.context_items)
-        assert hybrid.trace.context_tokens <= hybrid.trace.context_token_budget
+        assert set(hybrid.hits[0].route_scores) == {"local", "global"}
+        assert set(mix.hits[0].route_scores) == {"naive", "local", "global"}
+        for composite in (hybrid, mix):
+            assert all(item.citation_id == item.chunk_id for item in composite.context_items)
+            assert all(item.chunk_id in composite.context for item in composite.context_items)
+            assert composite.trace.context_tokens <= composite.trace.context_token_budget
         assert json.loads(hybrid.trace.model_dump_json())["mode"] == "hybrid"
+        assert json.loads(mix.trace.model_dump_json())["mode"] == "mix"
 
-        assert hybrid.trace_id is not None
-        assert retrieval.replay(hybrid.trace_id) == hybrid
+        for composite in (hybrid, mix):
+            assert composite.trace_id is not None
+            assert retrieval.replay(composite.trace_id) == composite
 
-        answer_result = asyncio.run(
-            retrieval.ask(question, mode=RetrievalMode.HYBRID, options=options)
-        )
+        answer_result = asyncio.run(retrieval.ask(question, options=options))
+        assert answer_result.retrieval.mode is RetrievalMode.MIX
         assert answer_result.retrieval.trace_id is not None
         assert answer_result.answer.citations == (
             answer_result.retrieval.context_items[0].citation_id,
@@ -199,7 +212,8 @@ def test_changed_source_document_invalidates_its_active_retrieval_index(
 
     try:
         profile = retrieval.build_index()
-        original = retrieval.retrieve(question, mode=RetrievalMode.HYBRID, options=options)
+        original = retrieval.retrieve(question, options=options)
+        assert original.mode is RetrievalMode.MIX
         assert original.trace_id is not None
 
         corpus = tmp_path / "corpus"

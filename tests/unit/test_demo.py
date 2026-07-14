@@ -61,11 +61,14 @@ def test_database_url_from_input_preserves_url_and_normalizes_paths(tmp_path: Pa
 
 def test_demo_translation_catalog_is_complete_and_formats_chinese_values() -> None:
     assert set(demo._TEXT["en"]) == set(demo._TEXT["zh"])
+    assert set(demo._MODE_LABELS["en"]) == set(RetrievalMode)
+    assert set(demo._MODE_LABELS["zh"]) == set(RetrievalMode)
     assert demo.ui_text("zh", "title") == "Hybrid RAG · 证据优先检索演示"
     assert demo.ui_text("zh", "index_ready", chunks=3, entities=2, relations=1).startswith(
         "索引就绪"
     )
-    assert demo._MODE_LABELS["zh"][RetrievalMode.HYBRID] == "Hybrid — 三路固定融合"
+    assert demo._MODE_LABELS["zh"][RetrievalMode.HYBRID] == "Hybrid — local + global 图谱融合"
+    assert demo._MODE_LABELS["zh"][RetrievalMode.MIX] == "Mix — chunk、local 与 global 融合"
     assert demo._page_label(None, None, language="zh") == "页码未知"
     assert demo._page_label(2, 4, language="zh") == "第 2-4 页"
 
@@ -83,6 +86,7 @@ def test_demo_defaults_to_chinese_and_preserves_widget_state_on_language_switch(
         "重放",
     ]
     assert [item.label for item in app.toggle] == ["启用已配置的重排序器"]
+    assert app.radio[0].value == RetrievalMode.MIX
 
     app.text_area[0].set_value("保留的问题")
     app.run(timeout=15)

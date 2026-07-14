@@ -10,7 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from hybrid_rag.deepseek_costs import DeepSeekCostSummary
 from hybrid_rag.ids import canonical_json_hash
 
-RETRIEVAL_SCHEMA_VERSION = "2"
+RETRIEVAL_SCHEMA_VERSION = "3"
+RETRIEVAL_MODE_SEMANTICS_VERSION = "lightrag-v1"
 INDEX_TEXT_SCHEMA_VERSION = "1"
 
 
@@ -19,6 +20,7 @@ class RetrievalMode(StrEnum):
     LOCAL = "local"
     GLOBAL = "global"
     HYBRID = "hybrid"
+    MIX = "mix"
 
 
 IndexKind = Literal["chunk", "entity", "relation"]
@@ -199,7 +201,7 @@ class RetrievalTrace(_StrictRetrievalModel):
 
 
 class RetrievalResult(_StrictRetrievalModel):
-    """The shared result schema returned by all four retriever modes."""
+    """The shared result schema returned by all five retriever modes."""
 
     trace_id: str | None = None
     profile_id: str = Field(min_length=1)

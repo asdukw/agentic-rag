@@ -53,11 +53,13 @@ flowchart LR
         Routes --> Naive["naive: chunk dense + BM25"]
         Routes --> Local["local: entity vectors + graph"]
         Routes --> Global["global: relation vectors + graph"]
-        Routes --> Hybrid["hybrid: run all three\nin parallel"]
+        Routes --> Hybrid["hybrid: local + global\nround-robin fusion"]
+        Routes --> Mix["mix: naive + local + global\nround-robin fusion (default)"]
         Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication and graph expansion"]
         Local --> Fusion
         Global --> Fusion
         Hybrid --> Fusion
+        Mix --> Fusion
         Fusion --> Rerank["Optional post-fusion reranker\nTop-M → final Top-K"]
         Rerank --> Context["Token-budget context selection"]
         Context --> Evidence["Cited context + graph paths"]
@@ -74,9 +76,13 @@ components in the trace. After a selected mode's route fusion, the default
 `BAAI/bge-reranker-v2-m3` reranker runs a local FlagEmbedding cross-encoder over
 each `[query, passage]` pair and records its raw logit plus sigmoid-normalized
 score. Set its provider to `none` to retain first-stage order.
-`hybrid` is not a fourth opaque vector store: it runs the three route
-calculations in parallel, then applies the same owned fusion, rerank, and
-context-selection rules.
+`hybrid` is not a fourth opaque vector store: it runs only the `local` and
+`global` graph routes in parallel, then interleaves their chunk candidates and
+deduplicates by chunk ID. `mix` is the default LightRAG-aligned composite mode:
+it adds the project's `naive` chunk route and interleaves naive/local/global
+candidates before the same rerank and context-selection rules. The project's
+`naive` route retains local BM25 as an explicit extension beyond LightRAG's
+vector-only naive mode.
 
 ## Persistent ownership and invalidation
 

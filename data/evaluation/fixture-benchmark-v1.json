@@ -3,7 +3,7 @@
   "id": "fixture-rag-v1",
   "title": "Hybrid RAG fixture benchmark v1",
   "corpus_id": "tests-fixtures-corpus-v1",
-  "expected_source_corpus_hash": "8ef142f6076296e1c93a5de0883d3e800fa34cb0831a1a685c6d0e3ece328761",
+  "expected_source_corpus_hash": "ccb43bcb87a13cf40ddc39c759c2c96770a389a2d28f39d86ad00143e4b88e0f",
   "description": "A fixed offline benchmark over the repository fixture corpus. It pins a graph-independent corpus content hash, balances fact, comparison, relation, and cross-document questions, and anchors every score in verbatim source text.",
   "cases": [
     {
@@ -64,16 +64,16 @@
     },
     {
       "id": "fact-hybrid-components",
-      "question": "Which candidate types does hybrid retrieval combine?",
+      "question": "Which graph routes does hybrid retrieval combine?",
       "category": "fact",
       "expected_evidence": [
         {
           "id": "hybrid-components",
-          "text": "Hybrid retrieval combines entity, relation, and chunk candidates."
+          "text": "Hybrid retrieval combines the local entity-led and global relation-led graph routes."
         }
       ],
-      "reference_answer": "Hybrid retrieval combines entity, relation, and chunk candidates.",
-      "keywords": ["hybrid", "entity", "relation", "chunk"],
+      "reference_answer": "Hybrid retrieval combines the local entity-led and global relation-led graph routes.",
+      "keywords": ["hybrid", "local", "global", "graph"],
       "tags": ["hybrid", "fact"]
     },
     {
@@ -146,7 +146,7 @@
     },
     {
       "id": "comparison-hybrid-naive",
-      "question": "How does hybrid retrieval extend a naive chunk-only approach?",
+      "question": "How does hybrid retrieval differ from a naive chunk-only approach?",
       "category": "comparison",
       "expected_evidence": [
         {
@@ -155,11 +155,11 @@
         },
         {
           "id": "hybrid-all-candidates",
-          "text": "Hybrid retrieval combines entity, relation, and chunk candidates."
+          "text": "Hybrid retrieval combines the local entity-led and global relation-led graph routes."
         }
       ],
-      "reference_answer": "Naive retrieval uses isolated chunks, whereas hybrid combines entity, relation, and chunk candidates.",
-      "keywords": ["hybrid", "naive", "chunk", "entity", "relation"],
+      "reference_answer": "Naive retrieval uses isolated chunks, whereas hybrid combines the local entity-led and global relation-led graph routes.",
+      "keywords": ["hybrid", "naive", "chunk", "local", "global"],
       "tags": ["hybrid", "naive", "comparison"]
     },
     {
@@ -252,7 +252,7 @@
     },
     {
       "id": "relation-context-citations",
-      "question": "Why must hybrid context retain source identifiers?",
+      "question": "Why must retrieved context retain source identifiers?",
       "category": "relation",
       "expected_evidence": [
         {
@@ -365,11 +365,11 @@
         },
         {
           "id": "cross-hybrid-components",
-          "text": "Hybrid retrieval combines entity, relation, and chunk candidates."
+          "text": "Hybrid retrieval combines the local entity-led and global relation-led graph routes."
         }
       ],
-      "reference_answer": "Local retrieval contributes entity and relation expansion, and hybrid combines those candidates with chunks.",
-      "keywords": ["local", "hybrid", "entities", "relations", "chunks"],
+      "reference_answer": "Local retrieval contributes entity-led graph evidence, and hybrid combines it with the global relation-led route.",
+      "keywords": ["local", "hybrid", "entities", "relations", "global"],
       "tags": ["cross-document", "hybrid"]
     },
     {

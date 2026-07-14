@@ -14,15 +14,16 @@
 embedding provider、模型、维度、编码参数、corpus-content hash 和 graph snapshot，说明 chunk、entity、relation
 是三套独立索引；默认使用本地 BGE-M3，hash embedding 仅用于可重复的离线开发和测试。
 
-## 30--50 秒：四种检索模式
+## 30--50 秒：五种检索模式
 
-输入一个论文问题，选择 `hybrid` 并提交。依次指出：
+输入一个论文问题，保持默认的 `mix` 并提交。依次指出：
 
 - `naive` 将 chunk 的 dense 向量与本地 BM25 词法分数分别归一化后融合；
 - `local` 从实体命中扩展图邻居；
 - `global` 从关系命中汇聚证据；
-- `hybrid` 并行执行前三条路径，按路归一化、融合、去重；融合后的 Top-M 再经过 `.env` 配置的
-  本地 FlagEmbedding cross-encoder 精排，最后才在 token budget 内裁剪上下文。关闭精排时保留首阶段排序。
+- `hybrid` 并行组合 `local + global` 两条图谱路径；
+- `mix` 是默认模式，在 `hybrid` 的基础上加入 `naive` chunk 路径。复合模式先按来源轮询候选、
+  按 chunk ID 去重，再统一精排和 token budget 裁剪。关闭精排时保留该首阶段顺序。
 
 ## 50--70 秒：证据而不是黑盒答案
 

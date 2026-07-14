@@ -80,7 +80,7 @@ def test_runner_uses_the_real_sqlite_graph_and_retrieval_pipeline(tmp_path: Path
         hybrid = [item for item in report.evaluations if item.mode is RetrievalMode.HYBRID]
         assert all(item.evidence_hit_rate == 1.0 for item in hybrid)
         assert all(item.citation_grounded_faithfulness for item in hybrid)
-        assert all(set(item.retrieval.routes) == {"naive", "local", "global"} for item in hybrid)
+        assert all(set(item.retrieval.routes) == {"local", "global"} for item in hybrid)
         assert all(item.retrieval.graph_paths for item in hybrid)
         assert all(item.retrieval_trace_id.startswith("rtr_") for item in report.evaluations)
         for measurement in report.evaluations:

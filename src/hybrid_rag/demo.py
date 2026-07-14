@@ -46,21 +46,23 @@ _MODE_LABELS: dict[Language, dict[RetrievalMode, str]] = {
         RetrievalMode.NAIVE: "Naive — chunk dense + BM25 recall",
         RetrievalMode.LOCAL: "Local — entity-led graph recall",
         RetrievalMode.GLOBAL: "Global — relation-led graph recall",
-        RetrievalMode.HYBRID: "Hybrid — fixed three-route fusion",
+        RetrievalMode.HYBRID: "Hybrid — local + global graph fusion",
+        RetrievalMode.MIX: "Mix — chunk, local, and global fusion",
     },
     "zh": {
         RetrievalMode.NAIVE: "Naive — Chunk 向量 + BM25 词法召回",
         RetrievalMode.LOCAL: "Local — 以实体为起点的图谱召回",
         RetrievalMode.GLOBAL: "Global — 以关系为起点的图谱召回",
-        RetrievalMode.HYBRID: "Hybrid — 三路固定融合",
+        RetrievalMode.HYBRID: "Hybrid — local + global 图谱融合",
+        RetrievalMode.MIX: "Mix — chunk、local 与 global 融合",
     },
 }
 _TEXT: dict[Language, dict[str, str]] = {
     "en": {
         "title": "Hybrid RAG · evidence-first retrieval demo",
         "subtitle": (
-            "Each request uses one explicitly selected retriever. Hybrid is a deterministic fusion "
-            "of naive, local, and global routes; no agent may select tools or hidden sources."
+            "Each request uses one explicitly selected retriever. Mix is the default fusion of "
+            "naive, local, and global routes; hybrid combines only local and global graph routes."
         ),
         "execution_settings": "Execution settings",
         "database_url": "SQLite database path or URL",
@@ -172,8 +174,8 @@ _TEXT: dict[Language, dict[str, str]] = {
     "zh": {
         "title": "Hybrid RAG · 证据优先检索演示",
         "subtitle": (
-            "每次请求只使用一个明确选择的检索器。Hybrid 是 naive、local 与 global 路径的"
-            "确定性融合；Agent 不能自行选择工具或隐藏信息源。"
+            "每次请求只使用一个明确选择的检索器。Mix 默认融合 naive、local 与 global 路径；"
+            "Hybrid 仅融合 local 与 global 图谱路径。"
         ),
         "execution_settings": "执行设置",
         "database_url": "SQLite 数据库路径或 URL",
@@ -874,7 +876,7 @@ def main() -> None:
         options=tuple(RetrievalMode),
         format_func=lambda value: _MODE_LABELS[language][value],
         horizontal=True,
-        index=tuple(RetrievalMode).index(RetrievalMode.HYBRID),
+        index=tuple(RetrievalMode).index(RetrievalMode.MIX),
         key="hybrid_rag_mode",
     )
     question = st.text_area(

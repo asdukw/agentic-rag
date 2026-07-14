@@ -28,7 +28,7 @@ def test_fixed_fixture_has_a_versioned_balanced_question_set() -> None:
     assert len({case.id for case in benchmark.cases}) == len(benchmark.cases)
     assert all(case.expected_evidence for case in benchmark.cases)
     assert benchmark.expected_source_corpus_hash == (
-        "8ef142f6076296e1c93a5de0883d3e800fa34cb0831a1a685c6d0e3ece328761"
+        "ccb43bcb87a13cf40ddc39c759c2c96770a389a2d28f39d86ad00143e4b88e0f"
     )
 
 

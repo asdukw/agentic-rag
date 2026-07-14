@@ -24,15 +24,15 @@ uv sync --dev
 # 导入内置 fixture 语料并切成可追溯的 chunks。
 uv run hybrid-rag ingest tests/fixtures/corpus
 
-# 可选：抽取实体和关系，为 local、global 及 hybrid 提供图谱证据（需要 DEEPSEEK_API_KEY）。
-# 只使用 naive，或不需要图路径时可跳过这一步。
+# 可选：抽取实体和关系，为 local、global、hybrid 及 mix 提供图谱证据（需要 DEEPSEEK_API_KEY）。
+# 只使用 naive，或只需 mix 的 chunk 路径时可跳过这一步。
 uv run hybrid-rag build-graph --limit 10
 
 # 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
 uv run hybrid-rag build-index
 
 # 检索并生成基于语料证据的离线回答。
-uv run hybrid-rag ask "How does hybrid retrieval combine evidence?"
+uv run hybrid-rag ask "How does mix retrieval combine evidence?"
 ```
 
 完成后可在输出中查看回答所依据的 citation，用于观察 RAG 的检索与证据归因效果。fixture 语料较小，
@@ -57,7 +57,7 @@ uv run hybrid-rag ask "How does hybrid retrieval combine evidence?"
 正常执行检索或问答命令即可：
 
 ```bash
-uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
 ```
 
 首次检索会下载模型权重。实现会批量计算 `[query, passage]` 对的交叉编码器分数，并在 trace 中保留
@@ -74,8 +74,9 @@ uv run hybrid-rag build-graph --limit 10
 uv run hybrid-rag build-index
 ```
 
-没有图谱时，`naive` 可正常使用，`hybrid` 会保留 chunk 路径；构图后 `local` 和 `global`
-也能提供实体、关系和 NetworkX 路径证据。
+没有图谱时，`naive` 可正常使用，默认的 `mix` 仍会保留 chunk 路径；`hybrid` 仅组合图谱的
+`local` 与 `global` 路径，因此可能没有结果。构图后，`local`、`global`、`hybrid` 与 `mix`
+都能提供实体、关系和 NetworkX 路径证据。
 
 ### DeepSeek 人民币成本估算
 
@@ -92,14 +93,16 @@ DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响�
 ### 选择检索模式与查看证据
 
 ```bash
-uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode hybrid --json
+uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
 uv run hybrid-rag retrieval replay rtr_<id> --json
 ```
 
-可选 `--mode naive|local|global|hybrid`：`naive` 是 chunk dense + BM25 召回，`local` 从实体
-命中扩展图邻居，`global` 从关系命中汇聚证据，`hybrid` 固定融合三条路径。每次检索都会产生
-可 replay 的 `rtr_` trace；其中保留 naive 的 dense/BM25 分项，以及融合后 reranker 的候选池、
-原始/归一化分数和最终名次。`--deepseek` 才会启用模型做关键词提取或受证据约束的回答。
+可选 `--mode naive|local|global|hybrid|mix`，默认 `mix`：`naive` 是项目扩展的 chunk dense +
+BM25 召回；`local` 从实体命中扩展图邻居；`global` 从关系命中汇聚证据；`hybrid` 只组合
+`local + global`；`mix` 以 LightRAG 的语义组合 `naive + local + global`。复合模式按来源轮询
+候选并按 chunk ID 去重，之后统一精排和裁剪。每次检索都会产生可 replay 的 `rtr_` trace；其中保留
+naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次。`--deepseek` 才会启用模型做关键词
+提取或受证据约束的回答。
 
 ### 运行评测或演示界面
 
@@ -121,10 +124,11 @@ uv run streamlit run src/hybrid_rag/demo.py
 `evaluate` 使用固定题集对比 `naive` 与 `hybrid`，并写出带 profile、图谱快照、citation、trace、
 延迟和成本状态的 JSON/Markdown artifact。默认评测使用离线、确定性的盲评规则；传入
 `--deepseek-judge` 后，DeepSeek 仅根据匿名的答案、引用和评测指标进行 A/B 裁判，不能检索额外资料。
-Streamlit 演示可查看四种模式、证据、图路径和对比结果。
+Streamlit 演示可查看五种模式、证据、图路径和对比结果。
+默认 `evaluate` 的结果仅供参考，适合作为快速 smoke 检查，不应视为回答或检索质量的正式结论。
 `ragas-evaluate` 会保留现有离线 benchmark 不变：它读取 Ragas 生成的 JSON，调用当前 RAG 的
 `ask` 流程取得实际 `response` 与 `retrieved_contexts`，再分别计算 faithfulness、factual correctness、
-context precision 和 context recall。默认评测 `hybrid`；可用 `--modes naive,hybrid` 比较多个模式，结果写入
+context precision 和 context recall。默认评测 `mix`；可用 `--modes naive,mix` 比较多个模式，结果写入
 `artifacts/evaluations/ragas-<测试集文件名>.json`。
 
 ### 下载论文语料（可选）

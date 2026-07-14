@@ -663,7 +663,7 @@ class RetrievalTraceRecord(Base):
     __tablename__ = "retrieval_traces"
     __table_args__ = (
         CheckConstraint(
-            "mode IN ('naive', 'local', 'global', 'hybrid')",
+            "mode IN ('naive', 'local', 'global', 'hybrid', 'mix')",
             name="ck_retrieval_traces_mode",
         ),
         Index("ix_retrieval_traces_profile_created", "profile_id", "created_at"),

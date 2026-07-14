@@ -12,6 +12,10 @@ the latency and cost trade-off.  `local` and `global` are diagnostic routes:
 they help explain where a hybrid result came from, but should not be tuned on
 the held-out scoring set after the comparison begins.
 
+This fixed `naive`-vs-`hybrid` A/B is a smoke-oriented evaluation contract, not
+the default retrieval configuration: `retrieve`, `ask`, and `ragas-evaluate`
+default to `mix`.
+
 This report separates two forms of evidence:
 
 | Evidence level | What it can establish | What it cannot establish |

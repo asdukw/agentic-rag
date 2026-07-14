@@ -16,5 +16,6 @@ for questions about a named method, dataset, metric, or author.
 Global retrieval starts from higher-level relation or topic signals. It is suitable for summary
 and comparison questions that require evidence from several parts of a corpus.
 
-Hybrid retrieval combines entity, relation, and chunk candidates. The final context must retain
-source identifiers so that an answer can cite its evidence.
+Hybrid retrieval combines the local entity-led and global relation-led graph routes. Mix retrieval
+adds the chunk route to those graph routes. The final context must retain source identifiers so
+that an answer can cite its evidence.
