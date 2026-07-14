@@ -19,7 +19,6 @@ from hybrid_rag.config import (
     Settings,
     sqlite_url,
 )
-from hybrid_rag.corpus import download_manifest
 from hybrid_rag.deepseek_costs import DeepSeekCostSummary, DeepSeekPricing
 from hybrid_rag.evaluation.ragas_runner import RagasEvaluationRunner
 from hybrid_rag.extraction.client import DeepSeekClient
@@ -53,14 +52,12 @@ from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
 app = typer.Typer(no_args_is_help=True, help="Hybrid RAG development CLI")
 db_app = typer.Typer(no_args_is_help=True, help="Database schema commands")
-corpus_app = typer.Typer(no_args_is_help=True, help="Versioned public corpus commands")
 graph_app = typer.Typer(no_args_is_help=True, help="Graph extraction and inspection commands")
 retrieval_app = typer.Typer(
     no_args_is_help=True,
     help="Retrieval index inspection and trace replay",
 )
 app.add_typer(db_app, name="db")
-app.add_typer(corpus_app, name="corpus")
 app.add_typer(graph_app, name="graph")
 app.add_typer(retrieval_app, name="retrieval")
 console = Console()
@@ -443,37 +440,6 @@ def db_upgrade(
     url = _database_url(db_path, settings)
     upgrade_database(url)
     console.print(f"Database schema is current: [cyan]{url}[/cyan]")
-
-
-@corpus_app.command("download")
-def corpus_download(
-    manifest: Annotated[Path, typer.Option("--manifest", exists=True, readable=True)] = Path(
-        "data/corpus.json"
-    ),
-    output: Annotated[Path, typer.Option("--output")] = Path("data/raw"),
-    delay: Annotated[
-        float,
-        typer.Option("--delay", min=0, help="Polite delay between arXiv requests"),
-    ] = 3.0,
-) -> None:
-    report = download_manifest(manifest, output, delay_seconds=delay)
-    table = Table(title="Corpus download")
-    table.add_column("arXiv")
-    table.add_column("Status")
-    table.add_column("MiB", justify="right")
-    table.add_column("Path")
-    for result in report.results:
-        style = {"downloaded": "green", "skipped": "cyan", "failed": "red"}[result.status]
-        table.add_row(
-            result.arxiv_id,
-            f"[{style}]{result.status}[/{style}]",
-            f"{result.size_bytes / 1024 / 1024:.2f}",
-            result.path if result.error is None else result.error,
-        )
-    console.print(table)
-    console.print(f"downloaded={report.downloaded} skipped={report.skipped} failed={report.failed}")
-    if report.failed:
-        raise typer.Exit(code=1)
 
 
 @app.command()
