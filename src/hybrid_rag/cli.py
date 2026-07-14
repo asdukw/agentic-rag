@@ -20,18 +20,7 @@ from hybrid_rag.config import (
     sqlite_url,
 )
 from hybrid_rag.corpus import download_manifest
-from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary, DeepSeekPricing
-from hybrid_rag.evaluation import (
-    CostDisclosure,
-    CostStatus,
-    EvaluationOptions,
-    EvaluationReport,
-    EvaluationRunner,
-    load_benchmark,
-)
-from hybrid_rag.evaluation import write_json as write_evaluation_json
-from hybrid_rag.evaluation import write_markdown as write_evaluation_markdown
-from hybrid_rag.evaluation.deepseek_judge import DeepSeekBlindJudge
+from hybrid_rag.deepseek_costs import DeepSeekCostSummary, DeepSeekPricing
 from hybrid_rag.evaluation.ragas_runner import RagasEvaluationRunner
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
@@ -143,31 +132,17 @@ def _retrieval_options(
     )
 
 
-def _deepseek_query_client() -> DeepSeekQueryClient:
+def _deepseek_query_client(*, required_by: str = "--deepseek") -> DeepSeekQueryClient:
     settings = DeepSeekSettings()
     api_key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
     if not api_key:
-        raise typer.BadParameter("--deepseek requires DEEPSEEK_API_KEY")
+        raise typer.BadParameter(f"{required_by} requires DEEPSEEK_API_KEY")
     return DeepSeekQueryClient(
         api_key=api_key,
         model=settings.query_model,
         answer_model=settings.answer_model,
         base_url=settings.base_url,
         max_output_tokens=max(512, settings.answer_max_output_tokens),
-        timeout_seconds=settings.timeout_seconds,
-    )
-
-
-def _deepseek_blind_judge() -> DeepSeekBlindJudge:
-    settings = DeepSeekSettings()
-    api_key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
-    if not api_key:
-        raise typer.BadParameter("--deepseek-judge requires DEEPSEEK_API_KEY")
-    return DeepSeekBlindJudge(
-        api_key=api_key,
-        model=settings.judge_model,
-        base_url=settings.base_url,
-        max_output_tokens=settings.judge_max_output_tokens,
         timeout_seconds=settings.timeout_seconds,
     )
 
@@ -181,96 +156,6 @@ def _configured_deepseek_pricing(settings: object) -> DeepSeekPricing | None:
 
     pricing = getattr(settings, "pricing", None)
     return pricing if isinstance(pricing, DeepSeekPricing) else None
-
-
-def _evaluation_options(
-    evaluation: EvaluationSettings,
-    retrieval: RetrievalSettings,
-    *,
-    modes: str,
-    top_k: int | None,
-    context_tokens: int | None,
-    graph_hops: int | None,
-    limit: int | None,
-    benchmark_case_ids: tuple[str, ...],
-) -> EvaluationOptions:
-    try:
-        selected_modes = tuple(
-            RetrievalMode(value.strip()) for value in modes.split(",") if value.strip()
-        )
-    except ValueError as error:
-        raise typer.BadParameter(
-            "--modes must use naive, local, global, hybrid, and/or mix"
-        ) from error
-    if not selected_modes:
-        raise typer.BadParameter("--modes must not be empty")
-    case_ids = benchmark_case_ids[:limit] if limit is not None else benchmark_case_ids
-    return EvaluationOptions(
-        modes=selected_modes,
-        top_k=top_k or evaluation.top_k,
-        candidate_multiplier=retrieval.candidate_multiplier,
-        context_token_budget=context_tokens or evaluation.context_token_budget,
-        graph_max_hops=graph_hops or evaluation.graph_max_hops,
-        naive_weight=retrieval.naive_weight,
-        local_weight=retrieval.local_weight,
-        global_weight=retrieval.global_weight,
-        naive_dense_weight=retrieval.naive_dense_weight,
-        naive_bm25_weight=retrieval.naive_bm25_weight,
-        bm25_k1=retrieval.bm25_k1,
-        bm25_b=retrieval.bm25_b,
-        reranker_provider=retrieval.reranker_provider,
-        reranker_model=retrieval.reranker_model,
-        reranker_use_fp16=retrieval.reranker_use_fp16,
-        rerank_candidate_multiplier=retrieval.rerank_candidate_multiplier,
-        case_ids=case_ids,
-    )
-
-
-def _judge_cost_disclosure(
-    judge: DeepSeekBlindJudge,
-    settings: DeepSeekSettings,
-    report: EvaluationReport,
-) -> CostDisclosure:
-    usage = judge.usage
-    if any(judgment.used_fallback for judgment in report.pairwise_judgments):
-        return CostDisclosure.unknown_judge_fallback(
-            retrieval_model_calls=report.cost_disclosure.retrieval_model_calls,
-            judge_model_calls=usage.calls,
-        ).model_copy(update={"deepseek_usage": usage.records})
-    if report.run.index_provenance.embedding_provider.casefold() not in {"hash", "flagembedding"}:
-        return CostDisclosure.unknown_external_embedding(
-            provider=report.run.index_provenance.embedding_provider,
-            retrieval_model_calls=report.cost_disclosure.retrieval_model_calls or 0,
-            judge_model_calls=usage.calls,
-        ).model_copy(update={"deepseek_usage": usage.records})
-    pricing = _configured_deepseek_pricing(settings)
-    if pricing is None:
-        return CostDisclosure(
-            status=CostStatus.UNKNOWN,
-            retrieval_model_calls=0,
-            judge_model_calls=usage.calls,
-            cost_cny=None,
-            deepseek_usage=usage.records,
-            price_assumption="DeepSeek CNY price configuration is unavailable",
-        )
-    estimate = pricing.estimate(usage.records)
-    if estimate.status is not DeepSeekCostStatus.ESTIMATED:
-        return CostDisclosure(
-            status=CostStatus.UNKNOWN,
-            retrieval_model_calls=0,
-            judge_model_calls=usage.calls,
-            cost_cny=None,
-            deepseek_usage=estimate.usage,
-            price_assumption=estimate.price_assumption,
-        )
-    return CostDisclosure(
-        status=CostStatus.ESTIMATED,
-        retrieval_model_calls=0,
-        judge_model_calls=usage.calls,
-        cost_cny=estimate.cost_cny,
-        deepseek_usage=estimate.usage,
-        price_assumption=estimate.price_assumption,
-    )
 
 
 async def _close_query_client(client: QueryClient | None) -> None:
@@ -305,6 +190,7 @@ def _render_index_build_report(report: IndexBuildReport, *, json_output: bool) -
         str(report.reused).lower(),
     )
     console.print(table)
+    console.print(f"Corpus content hash: [cyan]{report.corpus_content_hash}[/cyan]")
 
 
 def _render_retrieval_result(result: RetrievalResult, *, json_output: bool) -> None:
@@ -344,56 +230,6 @@ def _render_answer_result(result: AnswerResult, *, json_output: bool) -> None:
     console.print("\n[bold]Answer[/bold]")
     console.print(result.answer.answer)
     console.print(f"Citations: {', '.join(result.answer.citations) or '(insufficient evidence)'}")
-
-
-def _render_evaluation_report(
-    report: EvaluationReport,
-    *,
-    json_output: bool,
-    json_path: Path,
-    markdown_path: Path,
-) -> None:
-    if json_output:
-        console.print_json(report.to_json())
-        return
-    table = Table(
-        title=(
-            f"Evaluation {report.run.id} / {report.run.execution_id} ({report.run.benchmark_id})"
-        )
-    )
-    table.add_column("Mode")
-    table.add_column("Evidence hit", justify="right")
-    table.add_column("Cited hit", justify="right")
-    table.add_column("Citation-grounded", justify="right")
-    table.add_column("Mean retrieve ms", justify="right")
-    table.add_column("Median retrieve ms", justify="right")
-    for summary in report.summaries:
-        table.add_row(
-            summary.mode.value,
-            f"{summary.mean_evidence_hit_rate:.3f}",
-            f"{summary.mean_cited_evidence_hit_rate:.3f}",
-            f"{summary.citation_grounded_faithfulness_rate:.3f}",
-            f"{summary.mean_retrieval_latency_ms:.2f}",
-            f"{summary.median_retrieval_latency_ms:.2f}",
-        )
-    console.print(table)
-    comparison = report.comparison_summary
-    console.print(
-        "Blind comparison: "
-        f"naive={comparison.naive_wins}, hybrid={comparison.hybrid_wins}, ties={comparison.ties}"
-    )
-    cost = report.cost_disclosure
-    console.print(
-        f"Cost: status={cost.status.value}, cny={cost.cost_cny}, "
-        f"retrieval_calls={cost.retrieval_model_calls}, judge_calls={cost.judge_model_calls}"
-    )
-    console.print(
-        "Pinned profile: "
-        f"{report.run.index_provenance.profile_id} "
-        f"(content={report.run.index_provenance.corpus_content_hash}, "
-        f"snapshot={report.run.index_provenance.source_corpus_hash})"
-    )
-    console.print(f"Wrote: [cyan]{json_path}[/cyan] and [cyan]{markdown_path}[/cyan]")
 
 
 def _build_extraction_config(
@@ -996,108 +832,9 @@ def ask(
 
 @app.command("evaluate")
 def evaluate(
-    benchmark_path: Annotated[
-        Path | None,
-        typer.Option("--benchmark", exists=True, readable=True, help="Versioned benchmark JSON"),
-    ] = None,
-    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
-    profile: Annotated[
-        str | None,
-        typer.Option("--profile", help="idx_ profile ID or config hash; pin it for all cases"),
-    ] = None,
-    output_dir: Annotated[
-        Path | None,
-        typer.Option("--output-dir", help="Directory for JSON and Markdown reports"),
-    ] = None,
-    modes: Annotated[
-        str,
-        typer.Option("--modes", help="Comma-separated modes; must include naive and hybrid"),
-    ] = "naive,hybrid",
-    top: Annotated[int | None, typer.Option("--top", min=1)] = None,
-    context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
-    graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
-    limit: Annotated[
-        int | None,
-        typer.Option("--limit", min=1, help="Prefix of fixed cases"),
-    ] = None,
-    deepseek_judge: Annotated[
-        bool,
-        typer.Option(
-            "--deepseek-judge",
-            help="Use a blind DeepSeek Judge; fallback stays explicit",
-        ),
-    ] = False,
-    json_output: Annotated[bool, typer.Option("--json", help="Print the full JSON report")] = False,
-) -> None:
-    settings = Settings()
-    retrieval_settings = RetrievalSettings()
-    evaluation_settings = EvaluationSettings()
-    deepseek_settings = DeepSeekSettings()
-    selected_benchmark_path = benchmark_path or evaluation_settings.benchmark_path
-    try:
-        benchmark = load_benchmark(selected_benchmark_path)
-        options = _evaluation_options(
-            evaluation_settings,
-            retrieval_settings,
-            modes=modes,
-            top_k=top,
-            context_tokens=context_tokens,
-            graph_hops=graph_hops,
-            limit=limit or evaluation_settings.max_questions,
-            benchmark_case_ids=tuple(case.id for case in benchmark.cases),
-        )
-    except (ValueError, OSError) as error:
-        console.print(f"[red]{type(error).__name__}:[/red] {error}")
-        raise typer.Exit(code=1) from error
-
-    url = _database_url(db_path, settings)
-    upgrade_database(url)
-    database = Database(url)
-    try:
-        judge = _deepseek_blind_judge() if deepseek_judge else None
-        service = RetrievalService(
-            database,
-            _embedding_provider(retrieval_settings),
-            TiktokenCounter(settings.tokenizer_name),
-            reranker=_reranker(retrieval_settings),
-        )
-        report = EvaluationRunner(service, judge=judge).run(
-            benchmark,
-            options=options,
-            profile_ref=profile,
-        )
-        if judge is not None:
-            report = report.model_copy(
-                update={
-                    "cost_disclosure": _judge_cost_disclosure(
-                        judge,
-                        deepseek_settings,
-                        report,
-                    )
-                }
-            )
-        destination = output_dir or evaluation_settings.output_dir
-        artifact_stem = f"{report.run.id}-{report.run.execution_id}"
-        json_path = write_evaluation_json(report, destination / f"{artifact_stem}.json")
-        markdown_path = write_evaluation_markdown(report, destination / f"{artifact_stem}.md")
-    except (EmbeddingConfigurationError, OSError, RuntimeError, ValueError) as error:
-        console.print(f"[red]{type(error).__name__}:[/red] {error}")
-        raise typer.Exit(code=1) from error
-    finally:
-        database.dispose()
-    _render_evaluation_report(
-        report,
-        json_output=json_output,
-        json_path=json_path,
-        markdown_path=markdown_path,
-    )
-
-
-@app.command("ragas-evaluate")
-def ragas_evaluate(
     testset_path: Annotated[
         Path,
-        typer.Option("--testset", exists=True, readable=True, help="Ragas-generated JSON test set"),
+        typer.Option("--testset", exists=True, readable=True, help="Ragas test-set envelope JSON"),
     ],
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
     profile: Annotated[
@@ -1115,9 +852,9 @@ def ragas_evaluate(
     top: Annotated[int | None, typer.Option("--top", min=1)] = None,
     context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
     graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
-    json_output: Annotated[bool, typer.Option("--json", help="Print the full report JSON")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Print the full JSON report")] = False,
 ) -> None:
-    """Score Ragas-generated cases against answers and contexts from this RAG pipeline."""
+    """Score a provenance-bound Ragas test set against this RAG pipeline."""
 
     try:
         selected_modes = tuple(
@@ -1132,12 +869,13 @@ def ragas_evaluate(
 
     settings = Settings()
     retrieval_settings = RetrievalSettings()
+    evaluation_settings = EvaluationSettings()
     deepseek_settings = DeepSeekSettings()
     api_key = (
         deepseek_settings.api_key.get_secret_value().strip() if deepseek_settings.api_key else ""
     )
     if not api_key:
-        raise typer.BadParameter("ragas-evaluate requires DEEPSEEK_API_KEY")
+        raise typer.BadParameter("evaluate requires DEEPSEEK_API_KEY")
     url = _database_url(db_path, settings)
     upgrade_database(url)
     database = Database(url)
@@ -1155,11 +893,11 @@ def ragas_evaluate(
             context_tokens=context_tokens,
             graph_hops=graph_hops,
         )
-        client = _deepseek_query_client()
+        query_client = _deepseek_query_client(required_by="evaluate")
 
         async def run():
             try:
-                report = await RagasEvaluationRunner(service, client).run(
+                return await RagasEvaluationRunner(service, query_client).run(
                     testset_path,
                     modes=selected_modes,
                     retrieval_options=options,
@@ -1167,14 +905,22 @@ def ragas_evaluate(
                     judge_model=deepseek_settings.judge_model,
                     judge_api_key=api_key,
                     judge_base_url=deepseek_settings.base_url,
+                    judge_max_output_tokens=deepseek_settings.judge_max_output_tokens,
+                    judge_timeout_seconds=deepseek_settings.timeout_seconds,
+                    query_client_provenance={
+                        "keyword_model": deepseek_settings.query_model,
+                        "answer_model": deepseek_settings.answer_model,
+                        "base_url": deepseek_settings.base_url,
+                        "max_output_tokens": max(512, deepseek_settings.answer_max_output_tokens),
+                        "timeout_seconds": deepseek_settings.timeout_seconds,
+                    },
                 )
-                return report.as_dict()
             finally:
-                await _close_query_client(client)
+                await _close_query_client(query_client)
 
         report = asyncio.run(run())
         payload = report.as_dict()
-        destination = output or (Path("artifacts/evaluations") / f"ragas-{testset_path.stem}.json")
+        destination = output or (evaluation_settings.output_dir / f"ragas-{testset_path.stem}.json")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except (EmbeddingConfigurationError, ImportError, OSError, RuntimeError, ValueError) as error:

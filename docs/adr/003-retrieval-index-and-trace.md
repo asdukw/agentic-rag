@@ -49,6 +49,6 @@ offline-testable adapter for CI.
   embedding adapters; adding another provider requires an explicit adapter and ADR.
 - JSON vector storage is deliberately simple and explainable, not a large-corpus
   ANN solution. A future vector-store adapter can retain the same profile/vector
-  contract after benchmark evidence justifies it.
+  contract after corpus-bound Ragas evidence justifies it.
 - Retrieval remains reproducible at the trace level even when an external answer
   model is unavailable or changes over time.

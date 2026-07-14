@@ -142,7 +142,7 @@ class RetrievalSettings(BaseSettings):
 
 
 class EvaluationSettings(BaseSettings):
-    """Benchmark and reporting defaults; external judge use remains explicit."""
+    """Output defaults for provenance-bound Ragas evaluations."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -150,12 +150,7 @@ class EvaluationSettings(BaseSettings):
         extra="ignore",
     )
 
-    benchmark_path: Path = Path("data/evaluation/fixture-benchmark-v1.json")
     output_dir: Path = Path("artifacts/evaluations")
-    top_k: int = Field(default=5, ge=1)
-    context_token_budget: int = Field(default=2400, ge=128)
-    graph_max_hops: int = Field(default=2, ge=1, le=4)
-    max_questions: int | None = Field(default=None, ge=1)
 
 
 def sqlite_url(path: Path) -> str:

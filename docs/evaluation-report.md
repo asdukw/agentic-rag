@@ -1,225 +1,115 @@
-# Phase 4 evaluation report template
+# Ragas 评测报告模板
 
-> Status: **template; no benchmark results are asserted in this document.**
-> Fill a row only after saving the corpus manifest, question set, index profile,
-> retrieval traces, model metadata, and run logs needed to reproduce it.
+> 状态：模板。除非明确填入一次实际执行的 JSON 报告，本文件不声称任何质量结果。
 
-## 1. Evaluation objective
+项目唯一的评测入口是：
 
-The primary comparison is whether `hybrid` improves evidence retrieval and
-answer quality over `naive` on a fixed research-paper corpus, while disclosing
-the latency and cost trade-off.  `local` and `global` are diagnostic routes:
-they help explain where a hybrid result came from, but should not be tuned on
-the held-out scoring set after the comparison begins.
-
-This fixed `naive`-vs-`hybrid` A/B is a smoke-oriented evaluation contract, not
-the default retrieval configuration: `retrieve`, `ask`, and `ragas-evaluate`
-default to `mix`.
-
-This report separates two forms of evidence:
-
-| Evidence level | What it can establish | What it cannot establish |
-| --- | --- | --- |
-| Offline fixture run | Deterministic data flow, schema compatibility, trace/replay behavior, citation plumbing, and regressions in the test corpus. | Retrieval quality on real papers, real API latency/cost, generalization, or judge agreement. |
-| Fixed real-paper benchmark | Comparative quality and operational measurements for the stated corpus, model versions, configurations, and date. | A universal ranking across corpora, future model versions, or unmeasured production traffic. |
-
-The current project has offline fixture coverage.  It must not be reported as a
-quality benchmark, and an empty table below means “not run”, not zero or a
-negative result.
-
-## 2. Pre-run record
-
-Complete this section before looking at comparative scores.
-
-| Field | Value |
-| --- | --- |
-| Evaluation date and timezone | `NOT RUN` |
-| Git commit | `NOT RUN` |
-| Python / dependency lock identity | `NOT RUN` |
-| Corpus manifest path and SHA-256 | `NOT RUN` |
-| Graph-independent document/chunk corpus-content hash | `NOT RUN` |
-| Graph-bound index source snapshot hash | `NOT RUN` |
-| Documents, chunks, entities, relations | `NOT RUN` |
-| Chunker/tokenizer configuration hash | `NOT RUN` |
-| Graph build run ID and extraction model/settings | `NOT RUN` |
-| Embedding profile ID, provider, model, dimension, text-schema hash | `NOT RUN` |
-| Naive dense/BM25 weights, BM25 tokenizer version, k1 and b | `NOT RUN` |
-| Reranker provider, model/version, candidate multiplier, enabled/disabled state | `NOT RUN` |
-| Retrieval options per mode | `NOT RUN` |
-| Question-set version and SHA-256 | `NOT RUN` |
-| Evaluation random seed | `NOT RUN` |
-| Code/config changes allowed after freeze | `NOT RUN` |
-
-Keep raw manifests, CLI JSON output, and `rtr_` trace IDs outside the report
-table.  The report should reference their immutable paths or artifact hashes.
-
-## 3. Corpus and question protocol
-
-### Corpus
-
-Use a versioned manifest of allowed-to-distribute fixture documents or a
-separately downloadable real-paper set.  Record title, stable identifier/URL,
-download date, file SHA-256, parser version, and any exclusions (for example,
-scanned PDFs or unreadable tables).  Do not commit large PDFs, SQLite files,
-vector indexes, or model caches to the repository.
-
-The benchmark must declare the graph-independent corpus-content hash derived
-from the frozen documents/chunks.  Fail the run when it differs from the pinned
-profile.  Record the graph-bound source snapshot hash and graph build run beside
-it: a graph rebuild may be a legitimate comparison condition, but it must never
-silently change which vectors are evaluated.
-
-For the real benchmark, freeze the source documents before authoring the final
-questions.  Rebuilding a graph or index is allowed only when its new profile
-and configuration are recorded; do not mix results from different snapshots in
-one aggregate.
-
-### Question set
-
-Prepare 20--30 questions across these predefined strata:
-
-| Stratum | Target count | Required annotation |
-| --- | ---: | --- |
-| Fact | `NOT SET` | Short expected fact and at least one gold evidence span/chunk. |
-| Comparison | `NOT SET` | Entities or methods compared, expected distinction, and gold evidence. |
-| Relation | `NOT SET` | Expected source--predicate--target claim and evidence. |
-| Cross-document synthesis | `NOT SET` | Required documents, synthesis criterion, and evidence for each component. |
-
-Give each item a stable ID, a question, a type, gold source chunk IDs or
-passage anchors, and a concise answer rubric.  A second annotator should review
-the gold evidence for a stratified subset; record disagreements and resolution
-rules.  Keep development questions separate from held-out evaluation questions
-when tuning fusion weights, graph hops, context budget, prompts, or embedding
-provider.
-
-## 4. Run matrix
-
-Use the same frozen corpus, pinned profile ID, top-k, token budget, and question
-wording for all rows unless the row explicitly studies a parameter change. Do
-not resolve the active profile anew for each question.
-
-| Run ID | Mode | Keyword source | Answer source | Profile | Context budget | Cache condition | Status |
-| --- | --- | --- | --- | --- | ---: | --- | --- |
-| `NOT RUN` | naive | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | cold / warm | pending |
-| `NOT RUN` | local | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | cold / warm | pending |
-| `NOT RUN` | global | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | cold / warm | pending |
-| `NOT RUN` | hybrid | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | cold / warm | pending |
-
-Run every question in every selected mode.  Save the JSON result and replayable trace ID
-for each invocation.  Report failures, retries, missing indexes, and
-out-of-budget answers rather than dropping them from denominators.
-
-## 5. Metrics and calculation rules
-
-### Retrieval and citation metrics
-
-| Metric | Unit / formula | Reporting rule |
-| --- | --- | --- |
-| Evidence hit rate@k | Questions with at least one gold evidence chunk in the final cited context divided by eligible questions. | State `k`, whether the final post-budget context or pre-budget candidates were used, and the denominator. |
-| Evidence recall@k | Gold evidence chunks present in final context divided by annotated gold chunks. | Use when items can have multiple gold chunks. |
-| Citation precision | Returned citation IDs judged to support the answer divided by returned citation IDs. | Count unsupported or nonexistent citations as errors. |
-| Citation validity | Citations that are in the retrieval evidence whitelist divided by answer citations. | The constrained client should make this 100%; report any violation as a defect, not a quality win. |
-| Graph-path usefulness | Per-question reviewer label for whether a returned path materially supports the answer. | Report sample size and rubric; do not infer it merely from path existence. |
-
-### Answer metrics
-
-| Metric | Unit / formula | Reporting rule |
-| --- | --- | --- |
-| Faithfulness | Answers fully supported by cited context divided by answered questions. | Judge only supplied evidence, not outside knowledge.  Include abstentions in a separate rate. |
-| Task correctness | Answers satisfying the frozen question rubric divided by questions. | Report by question stratum as well as overall. |
-| Pairwise answer win rate | Wins / (wins + losses), with ties reported separately, for hybrid versus naive. | Do not fold ties into wins without stating the rule. |
-| Citation-complete answer rate | Answers that cover every required claim with appropriate evidence divided by eligible questions. | Particularly important for cross-document synthesis. |
-
-### Operational metrics
-
-| Metric | Unit / formula | Reporting rule |
-| --- | --- | --- |
-| Retrieval latency | Wall-clock milliseconds from request start through trace persistence. | Report p50, p95, min/max, number of samples, hardware, and cache condition. |
-| Answer latency | Wall-clock milliseconds after evidence selection through answer completion. | Separate from retrieval latency and identify provider calls. |
-| Index build time | Total and per partition (chunk/entity/relation). | State corpus size, vector count, and whether an index was rebuilt or reused. |
-| Provider cost | Actual input/output token counts and billed cost, by provider/model. | State currency, pricing-source date, retries, failures, and whether values are billed or estimates. |
-
-Do not calculate a single blended “quality score” unless the weighting is fixed
-before results are inspected.  Present confidence intervals or paired
-per-question differences where the sample size supports it; with 20--30 items,
-prefer transparent counts and uncertainty over strong significance claims.
-
-## 6. Blind comparison and judge protocol
-
-1. Produce paired answers for each question from the frozen `naive` and
-   `hybrid` configurations.
-2. Render them with identical formatting.  Hide route name, score, trace ID,
-   and ordering-dependent metadata; keep only the answer and the evidence
-   needed for the stated rubric.
-3. Randomly assign the two outputs to labels `A` and `B` independently for each
-   question.  Save the mapping and the random seed before judging; do not reveal
-   it to judges.
-4. Randomize question order independently of A/B assignment.  If the same
-   judge evaluates both orders, include a reverse-order subset to detect
-   position bias.
-5. Ask for `A win`, `B win`, `tie`, or `both unsupported`, plus a short rubric
-   reason.  Resolve only predeclared disagreement cases, and retain original
-   labels and annotations.
-6. Unblind only after annotations are frozen.  Report ties, abstentions,
-   disagreements, and excluded cases.
-
-`deepseek-v4-pro` is a proposed judge, not an established ground truth.  If it
-is used, record endpoint, exact model identifier, date, system prompt, sampling
-parameters, thinking setting, retry policy, and full judge rubric.  The model
-must evaluate only the supplied answer/evidence/rubric; it must not retrieve
-additional material.  Because the extraction or answer model may be from the
-same provider, disclose same-provider self-evaluation bias and do not use one
-model judge as the only decision source.  Include blinded human review of a
-predeclared stratified sample and, where feasible, an independent judge or
-adjudicator.
-
-## 7. Latency and cost disclosure
-
-For each mode, run and report cold-cache and warm-cache conditions separately.
-Use a monotonic clock around these stages:
-
-```text
-keyword extraction -> query embedding -> route retrieval/fusion -> rerank -> context crop
-                    -> optional answer generation -> trace persistence
+```bash
+uv run hybrid-rag evaluate --testset <testset.json>
 ```
 
-Record request count, retry count, errors, cache-hit input tokens, cache-miss
-input tokens, output tokens, and provider response metadata without storing
-secrets.  If an endpoint does not return a complete cache split or a rate is
-unavailable, write `unavailable`; never infer that all input was a cache miss or
-derive a cost from latency.  For DeepSeek estimates, store the actual response
-model, the six configured CNY-per-million-token prices, and the formula
-`hit × hit_price + miss × miss_price + output × output_price`; label the result
-`estimated` rather than a provider bill.
+该命令必须设置 `DEEPSEEK_API_KEY`。它会对每个测试样本运行当前 RAG 的真实 `ask` 流程，随后由
+Ragas 使用 DeepSeek 评审实际回答和召回上下文。
 
-Fixture-only tests use deterministic hash embeddings and deterministic/offline
-query behavior.  They may report local execution time for regression tracking,
-but they must not be presented as DeepSeek latency/cost or production performance.
+## 1. 执行范围
 
-## 8. Results table (leave unfilled until a run completes)
+| 项目 | 本次记录 |
+| --- | --- |
+| 日期与代码提交 | `NOT RUN` |
+| 测试集路径与文件 hash | `NOT RUN` |
+| 测试集 `schema_version` | `1` |
+| 测试集 `corpus_content_hash` | `NOT RUN` |
+| 数据库 / index profile | `NOT RUN` |
+| 检索模式 | `mix`（默认） |
+| DeepSeek answer / judge 模型与 endpoint | `NOT RUN` |
+| 检索参数（Top-K、token budget、graph hops、权重、reranker） | `NOT RUN` |
 
-| Mode | Questions | Evidence hit rate@k | Faithfulness | Correctness | Hybrid-vs-naive wins/losses/ties | Retrieval p50/p95 | Answer p50/p95 | Actual provider cost | Notes |
-| --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- | --- |
-| naive | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | n/a | `NOT RUN` | `NOT RUN` | `NOT RUN` |  |
-| local | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | n/a | `NOT RUN` | `NOT RUN` | `NOT RUN` |  |
-| global | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | n/a | `NOT RUN` | `NOT RUN` | `NOT RUN` |  |
-| hybrid | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` |  |
+推荐将命令及其输出 JSON 一同记录。例如：
 
-### Interpretation (complete after unblinding)
+```bash
+uv run hybrid-rag evaluate \
+  --testset data/processed/my-ragas-testset.json \
+  --modes naive,mix \
+  --output artifacts/evaluations/ragas-demo.json \
+  --json
+```
 
-- **Retrieval finding:** `NOT RUN`
-- **Answer-quality finding:** `NOT RUN`
-- **Latency/cost trade-off:** `NOT RUN`
-- **Known failures and exclusions:** `NOT RUN`
-- **Decision for the next iteration:** `NOT RUN`
+默认只评测 `mix`。只有在同一测试集、同一 profile 与同一参数下显式传入多个 `--modes` 时，模式间结果
+才适合比较。
 
-## 9. Publication checklist
+## 2. 测试集契约与语料绑定
 
-- [ ] Corpus and question manifests are versioned and hash-identified.
-- [ ] Pinned index profile, corpus-content hash, graph-bound snapshot, source graph run, tokenizer, and retrieval configuration are disclosed.
-- [ ] All modes use the same frozen question set and stated cache condition.
-- [ ] Raw JSON outputs and retrieval traces are archived with their run IDs.
-- [ ] Blind A/B mapping, seed, rubric, and unblinded annotations are retained.
-- [ ] Provider model/version/date/settings and cost source are disclosed.
-- [ ] Fixture verification is labeled separately from real-corpus results.
-- [ ] Same-provider judge bias, judge disagreements, and human audit limits are disclosed.
+测试集必须是 JSON envelope：
+
+```json
+{
+  "schema_version": "1",
+  "corpus_content_hash": "<64位小写十六进制hash>",
+  "cases": [
+    {
+      "user_input": "问题",
+      "reference": "参考答案",
+      "reference_contexts": ["参考上下文"]
+    }
+  ]
+}
+```
+
+`corpus_content_hash` 来自待评测 index profile 的 document/chunk 语料指纹，而非原始 PDF 的 SHA-256、
+图谱快照 hash 或任意字符串。先在该语料上运行：
+
+```bash
+uv run hybrid-rag ingest <corpus-dir>
+uv run hybrid-rag build-index --json
+```
+
+从第二条命令输出中复制 `corpus_content_hash`，再传给生成脚本：
+
+```bash
+uv run scripts/ragas_testset_demo.py \
+  --source-dir <corpus-dir> \
+  --corpus-content-hash <build-index输出的corpus_content_hash>
+```
+
+脚本不会自行从 PDF 计算该值，因为项目的语料指纹还依赖导入后的 document/chunk 身份与内容。语料、导入
+配置、分块配置或目标 profile 改变后，必须重新 `ingest`、`build-index`，并生成带新 hash 的测试集。
+评测入口会拒绝 hash 不匹配或裸数组格式的测试集。
+
+## 3. 指标解释
+
+| 指标 | Ragas 评估对象 | 解读边界 |
+| --- | --- | --- |
+| Faithfulness | 回答是否被本次实际召回的上下文支持 | 不代表回答覆盖了所有正确知识。 |
+| Factual correctness | 回答相对 `reference` 的事实正确性 | 受参考答案完整度与评审模型影响。 |
+| Context precision | 召回上下文的相关性与排序质量 | 不直接衡量最终回答措辞。 |
+| Context recall | 召回上下文对 `reference` 所需信息的覆盖 | 依赖 `reference_contexts` 和参考答案质量。 |
+
+每个模式的 JSON 包含逐 case 分数与均值。出现缺失、异常或低分时，应先检查原始 question、reference、
+reference contexts、实际 retrieved contexts、回答与 `rtr_` trace，而不是仅依据均值下结论。
+
+## 4. 结果摘要
+
+| 模式 | Cases | Faithfulness | Factual correctness | Context precision | Context recall | 输出 JSON |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| mix | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` | `NOT RUN` |
+
+如果同一执行传入多个模式，为每个模式增加一行；不要将不同语料 hash、profile、模型或 Ragas 测试集的
+均值混为一组比较。
+
+## 5. 成本与复现信息
+
+输出的 `provenance` 会记录测试集文件 SHA-256、锁定 profile、模式、完整检索参数，以及回答与评审模型的
+非敏感运行配置。记录实际 JSON 输出中的 `cost` 字段。`cost.retrieval` 为每条 `rtr_` trace 保留可观测的 DeepSeek
+成本快照，并仅在完整 usage 可用时给出估算；共享 query client 时采用最后一个累计快照，避免重复相加。
+当前 Ragas API 不暴露评审模型 usage，因此 `cost.judge` 与 `cost.total` 会明确显示为 `unknown`，不会
+猜测金额。任何估算取决于响应中的缓存命中输入、缓存未命中输入和输出 token，以及 `.env` 中的价格配置；
+它不是 DeepSeek 账单。还应保留：
+
+- 测试集文件及其 `corpus_content_hash`；
+- index profile ID、embedding 配置与图谱快照；
+- `evaluate` 的完整命令行、模式和检索参数；
+- 输出 JSON 与相关 `rtr_` trace；
+- 运行日期、代码提交和 DeepSeek 模型 / endpoint。
+
+Ragas 分数只适用于上述冻结条件。扩展语料、重分块、更新索引或更换回答/评审模型后，应重新生成测试集
+或至少重新验证语料 hash，再单独报告新的执行结果。

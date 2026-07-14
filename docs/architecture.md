@@ -97,7 +97,7 @@ vector-only naive mode.
 The active index is valid only for the corpus and graph snapshot named by its
 profile.  Its identity includes the graph build run as well as semantic index
 configuration and the graph-bound source snapshot; a separate corpus-content
-hash records document/chunk identity without making a benchmark depend on a
+hash records document/chunk identity without making a Ragas test set depend on a
 particular graph build.  A document change invalidates affected active profiles instead of
 silently searching stale vectors.  Historical traces retain the profile and
 snapshot references needed for inspection; replay is an audit operation, not a
@@ -126,8 +126,8 @@ flowchart TB
 ```
 
 The domain models do not inherit LangChain, LangGraph, Docling, or vector-store
-types.  In particular, the vector-store adapter boundary can change after a
-benchmark without changing the semantic rules for text construction, route
+types.  In particular, the vector-store adapter boundary can change after an
+evaluation without changing the semantic rules for text construction, route
 selection, score fusion, citation tracking, or trace format.
 
 ## Retrieval evidence contract
@@ -161,30 +161,32 @@ The answer client is never given a free tool list or authority to retrieve more
 material.  DeepSeek is optional in this layer and is limited to structured query
 keywords and an answer grounded in the already selected evidence.  Fixture tests
 explicitly use the deterministic hash adapter for speed and repeatability; the
-default local BGE-M3 model still needs a quality benchmark for any production use.
+default local BGE-M3 model still needs a corpus-bound Ragas evaluation before any
+production use.
 
 ## Evaluation execution contract
 
 ```mermaid
 flowchart LR
-    B["Versioned 20–30 case benchmark\nexpected corpus-content hash"] --> V["Validate selected profile\nand corpus-content hash"]
+    T["Ragas test-set envelope\nschema_version + corpus_content_hash + cases"] --> V["Validate envelope and selected profile\ncorpus-content hash"]
     P["Active or --profile\nindex profile"] --> V
     V --> Pin["Pin profile ID + graph snapshot\nfor the full execution"]
-    Pin --> N["naive retrieval\npersist rtr_ trace"]
-    Pin --> H["hybrid retrieval\npersist rtr_ trace"]
-    N --> J["Blind A/B labels\nexternal judge or deterministic fallback"]
-    H --> J
-    J --> R["JSON + Markdown report\nevr_ reproducibility ID\nevx_ execution ID"]
+    Pin --> Ask["For each selected mode and case:\nask → answer + retrieved contexts\npersist rtr_ trace"]
+    Ask --> Score["Ragas: faithfulness, factual correctness,\ncontext precision, context recall"]
+    Key["DEEPSEEK_API_KEY\nanswer and judge models"] --> Ask
+    Key --> Score
+    Score --> R["JSON report\nper-case scores and mode means"]
 ```
 
-The corpus-content hash only covers documents/chunks, so a fixed question set can
-be reused after a graph rebuild.  The report still names the graph-bound index
-snapshot and graph run, so results from different graph builds are never silently
-combined. A failed external judge produces an `unknown` cost disclosure unless
-complete response usage and a configured price table are available. DeepSeek
-estimates record the actual response model plus cache-hit input, cache-miss
-input, and output tokens against the configured CNY prices; locally executed
-BGE-M3 and hash profiles have no embedding API cost.
+The test-set envelope is the only accepted evaluation input: its
+`corpus_content_hash` must exactly equal the selected profile's graph-independent
+document/chunk hash. This permits a test set to remain valid after a graph rebuild
+only when the document/chunk corpus is unchanged; the persisted profile and trace
+still disclose the graph-bound snapshot. `evaluate` requires `DEEPSEEK_API_KEY`
+for the grounded answers and Ragas judges. DeepSeek estimates record the actual
+response model plus cache-hit input, cache-miss input, and output tokens against
+the configured CNY prices; locally executed BGE-M3 and hash profiles have no
+embedding API cost.
 
 ## Operational checkpoints
 
@@ -198,8 +200,8 @@ BGE-M3 and hash profiles have no embedding API cost.
 - `retrieval replay` loads a persisted trace for audit.  It should be paired
   with the profile ID, configuration hashes, corpus manifest, and code commit
   in any evaluation report.
-- `evaluate` validates the benchmark corpus against a pinned profile, persists
-  an `rtr_` trace for each case/mode, and writes unique execution artifacts.
+- `evaluate --testset` validates the Ragas envelope against a pinned profile,
+  persists an `rtr_` trace for each case/mode, and writes a JSON report.
 
-For the evaluation protocol and the distinction between fixture validation and
-claims about real-paper quality, see [evaluation-report.md](evaluation-report.md).
+For the Ragas evaluation protocol and result-reporting template, see
+[evaluation-report.md](evaluation-report.md).

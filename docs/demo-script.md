@@ -32,18 +32,19 @@ embedding provider、模型、维度、编码参数、corpus-content hash 和 gr
 必须是允许 chunk ID 的子集；点击 trace/replay 可查看本次分数、路径和最终上下文，无需重新调用
 embedding 或模型。
 
-## 70--85 秒：比较与评测
+## 70--85 秒：Ragas 评测
 
-切换到 **Compare naive vs hybrid**。展示相同问题在两个模式下的答案和证据，随后运行：
+先展示 `build-index --json` 输出中的 `corpus_content_hash`，再运行：
 
 ```bash
-uv run hybrid-rag evaluate --json
+uv run hybrid-rag evaluate --testset data/processed/my-ragas-testset.json --json
 ```
 
-说明固定 24 题 benchmark 会先锁定 profile、校验 corpus-content hash，再输出
-`evr_...-evx_...` JSON/Markdown artifact。它记录 evidence hit、citation grounding proxy、
-延迟、可 replay 的 `rtr_` trace、匿名 A/B 盲评和成本状态。默认离线 fallback 不伪造外部模型
-成本；本地 embedding 没有 API 成本，有凭据时才使用 `--deepseek-judge`。
+说明测试集是带 `schema_version`、`corpus_content_hash` 和 `cases` 的 Ragas envelope；评测开始时会
+校验它与选定 profile 的 document/chunk 语料是否一致。每个 case 都调用真实的 `ask` 流程取得回答和
+召回上下文，再计算 faithfulness、factual correctness、context precision 与 context recall。默认评测
+`mix`，可显式传 `--modes naive,mix` 比较模式。`DEEPSEEK_API_KEY` 为必需项，因为回答和 Ragas
+评审都会调用 DeepSeek，并在 JSON 报告中保留相应结果与成本信息。
 
 ## 85--90 秒：收束
 

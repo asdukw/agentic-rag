@@ -221,6 +221,7 @@ class IndexBuildReport(_StrictRetrievalModel):
 
     profile_id: str = Field(min_length=1)
     config_hash: str = Field(min_length=1)
+    corpus_content_hash: str = Field(min_length=1)
     source_corpus_hash: str = Field(min_length=1)
     graph_build_run_id: str | None = None
     provider: str = Field(min_length=1)

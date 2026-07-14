@@ -201,49 +201,34 @@ uv run ruff check .
 
 ## 6. 阶段四：评测与 Demo（已完成）
 
-完成日期：2026-07-12。
+语义更新日期：2026-07-14。评测统一为 Ragas；`hybrid-rag evaluate --testset <路径>` 是唯一入口，
+只接受带语料指纹的测试集 envelope。
 
-离线验收结果：97 项自动化测试与 Ruff 检查通过，总覆盖率 86%。仓库提交版本化 24 题 benchmark，四类
-题型（事实、比较、关系、跨文档综合）各 6 题；fixture 端到端覆盖相同图谱和索引快照上的
-naive/hybrid 成对评测、证据/citation 检查、延迟记录、持久化 `rtr_` trace、盲评映射、
-JSON/Markdown 报告和 DeepSeek judge adapter 的失败回退。`evaluate` 会在开始时锁定 profile，
-校验 benchmark 的图谱无关 corpus-content hash，并记录 graph snapshot；因此不会在运行过程中
-混用 active profile，也不会在错误语料库上静默给出分数。默认确定性 blind fallback 不发起外部
-模型调用，因而不把离线执行时间误报为模型延迟或成本。
+- Ragas 测试集使用 `schema_version`、`corpus_content_hash` 与 `cases` 的 JSON envelope；评测前会验证
+  该 hash 与选定 index profile 的 document/chunk 语料完全一致。
+- 每个 case 通过真实 `ask` 流程取得回答与召回上下文，再计算 faithfulness、factual correctness、
+  context precision 和 context recall；默认评测 `mix`，可显式传入多个模式比较。
+- `DEEPSEEK_API_KEY` 是测试集生成和评测的必需项：前者调用生成模型，后者调用回答模型与 Ragas judge。
+- `build-index --json` 输出 profile 的 `corpus_content_hash`；生成脚本要求将该值以
+  `--corpus-content-hash` 传入，避免把原始 PDF hash 或图谱 hash 误作评测语料指纹。
+- 交付物包括 Streamlit 演示（五模式结果、citation、entity/relation/chunk 命中、NetworkX 路径和
+  trace）、[架构图](architecture.md)、[Ragas 评测报告模板](evaluation-report.md) 与
+  [90 秒演示脚本](demo-script.md)。
 
-`--deepseek-judge` 为显式 opt-in：候选答案逐题映射为匿名 A/B 标签，judge 只能基于给定
-问题、候选答案、citation ID 和 rubric 返回结果；它不能检索额外资料。该调用复用自有
-DeepSeek API client，并保持 JSON Output、Thinking disabled、schema 校验和 usage 留档。
-报告同时记录 judge model、endpoint 与采样/输出设置。每次执行生成唯一 `evx_`，使同一
-`evr_` 可复现配置的 JSON/Markdown artifact 不会彼此覆写。任一外部 judge fallback 都会降级为
-`unknown`。当前环境没有 `DEEPSEEK_API_KEY`，因此没有把 fixture 分数、离线延迟或本地
-hash/BGE-M3 embedding 成本包装成真实论文或在线模型结论。
-
-从阶段三升级的数据库应先执行一次 `build-index`：现有可复用 profile 会被原地补充
-corpus-content provenance，不触发外部 embedding 请求；随后 `evaluate` 才会接受它。
-
-交付物包括 Streamlit 演示（五模式结果、citation、entity/relation/chunk 命中、NetworkX
-路径和 naive/hybrid 对比）、[架构图](architecture.md)、[评测报告模板](evaluation-report.md)
-与 [90 秒演示脚本](demo-script.md)。
-
-- 固定 20-30 个事实型、对比型、关系型和跨文档综合问题。
-- 比较 naive 与 hybrid 的 evidence hit rate、faithfulness、answer win rate、延迟和成本。
-- Judge 使用 `deepseek-v4-pro` 只是待验证假设；保留盲评、顺序随机化和人工抽查，
-  披露同厂模型自评偏差。
-- Streamlit 展示答案、引用、实体/关系/chunk 命中、图路径和两种模式对比。
-- README、架构图、评测报告和 1-2 分钟演示素材形成求职交付物。
-
-验收入口：
+验收入口（需要有效的 `DEEPSEEK_API_KEY`）：
 
 ```bash
 uv run alembic upgrade head
 uv run hybrid-rag build-index --db .tmp/demo.db --json
-uv run hybrid-rag evaluate --db .tmp/demo.db --json
-uv run hybrid-rag evaluate --db .tmp/demo.db --profile idx_<id> --json
-uv run hybrid-rag evaluate --db .tmp/demo.db --deepseek-judge --json  # 需要 DEEPSEEK_API_KEY
+uv run scripts/ragas_testset_demo.py \
+  --corpus-content-hash <build-index输出的corpus_content_hash> \
+  --output data/processed/my-ragas-testset.json
+uv run hybrid-rag evaluate \
+  --db .tmp/demo.db \
+  --testset data/processed/my-ragas-testset.json \
+  --modes naive,mix \
+  --json
 uv run streamlit run src/hybrid_rag/demo.py
-uv run pytest -q
-uv run ruff check .
 ```
 
 ## 7. 数据策略

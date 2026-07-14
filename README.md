@@ -82,8 +82,9 @@ uv run hybrid-rag build-index
 
 DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响应中的实际模型、缓存命中输入、
 缓存未命中输入和输出 token，结合 `.env` 中的六项单价估算人民币成本；`build-graph`、
-`retrieve --deepseek`、`ask --deepseek` 与 `evaluate --deepseek-judge` 的 JSON/trace/报告都会保留
-对应的用量和估算结果。
+`retrieve --deepseek`、`ask --deepseek` 与 `evaluate` 的 JSON/trace/报告都会保留可观测的
+用量和估算结果。Ragas 当前不暴露评审模型 usage，因此 `evaluate` 的 judge 与 total 成本会明确标为
+`unknown`，不会猜测为缓存未命中或零成本。
 
 
 模型仅按实际响应中的 `deepseek-v4-flash` 或 `deepseek-v4-pro` 精确匹配价格表。若上游没有返回两类
@@ -104,32 +105,60 @@ BM25 召回；`local` 从实体命中扩展图邻居；`global` 从关系命中�
 naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次。`--deepseek` 才会启用模型做关键词
 提取或受证据约束的回答。
 
-### 运行评测或演示界面
+### 使用 Ragas 评测
+
+`evaluate` 是唯一的评测入口。它读取 Ragas 测试集，对每个 case 调用当前 RAG 的 `ask` 流程取得实际
+回答和召回上下文，再计算 faithfulness、factual correctness、context precision 和 context recall。
+它需要 `DEEPSEEK_API_KEY`：回答与 Ragas 指标评审都会调用 DeepSeek，因而会产生 API 用量和估算成本。
+
+先对待评测语料完成 `ingest` 与 `build-index`。`build-index --json` 会输出当前 index profile 的
+`corpus_content_hash`；将该 64 位小写十六进制值原样传给生成脚本。该值由实际导入的 document/chunk
+身份和内容生成，不能用 PDF 文件哈希、图谱 hash 或自行编造的值替代。
 
 ```bash
-# 默认使用可复现的离线指标和盲评，不调用 DeepSeek。
-uv run hybrid-rag evaluate
+# 建立或刷新待评测的索引，并记录输出中的 corpus_content_hash。
+uv run hybrid-rag build-index --json
 
-# 可选：让 DeepSeek 对匿名的 naive / hybrid A/B 结果进行盲评。
-# 需要设置 DEEPSEEK_API_KEY，且会产生 API 调用费用。
-uv run hybrid-rag evaluate --deepseek-judge
+# Ragas 生成测试集。DEEPSEEK_API_KEY 是必需的。
+uv run scripts/ragas_testset_demo.py \
+  --corpus-content-hash <build-index输出的corpus_content_hash> \
+  --output data/processed/my-ragas-testset.json
 
-# 使用 Ragas 生成的测试集评测实际回答和召回上下文。
-# 同样需要 DEEPSEEK_API_KEY，且会调用回答模型与 Ragas 评审模型。
-uv run hybrid-rag ragas-evaluate --testset data/processed/ragas-testset-demo.json
+# 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
+uv run hybrid-rag evaluate --testset data/processed/my-ragas-testset.json
+
+# 可选：在同一测试集和同一索引上比较多个模式。
+uv run hybrid-rag evaluate \
+  --testset data/processed/my-ragas-testset.json \
+  --modes naive,mix
 
 uv run streamlit run src/hybrid_rag/demo.py
 ```
 
-`evaluate` 使用固定题集对比 `naive` 与 `hybrid`，并写出带 profile、图谱快照、citation、trace、
-延迟和成本状态的 JSON/Markdown artifact。默认评测使用离线、确定性的盲评规则；传入
-`--deepseek-judge` 后，DeepSeek 仅根据匿名的答案、引用和评测指标进行 A/B 裁判，不能检索额外资料。
-Streamlit 演示可查看五种模式、证据、图路径和对比结果。
-默认 `evaluate` 的结果仅供参考，适合作为快速 smoke 检查，不应视为回答或检索质量的正式结论。
-`ragas-evaluate` 会保留现有离线 benchmark 不变：它读取 Ragas 生成的 JSON，调用当前 RAG 的
-`ask` 流程取得实际 `response` 与 `retrieved_contexts`，再分别计算 faithfulness、factual correctness、
-context precision 和 context recall。默认评测 `mix`；可用 `--modes naive,mix` 比较多个模式，结果写入
-`artifacts/evaluations/ragas-<测试集文件名>.json`。
+测试集必须是以下 envelope；裸 JSON 数组会被拒绝：
+
+```json
+{
+  "schema_version": "1",
+  "corpus_content_hash": "<64位小写十六进制hash>",
+  "cases": [
+    {
+      "user_input": "问题",
+      "reference": "参考答案",
+      "reference_contexts": ["生成该题时使用的参考上下文"]
+    }
+  ]
+}
+```
+
+`--source-dir` 可以只挑选语料中的少量 PDF 来生成题目，但 `corpus_content_hash` 必须始终对应实际用于
+`evaluate` 的完整 index profile。语料内容、导入/分块配置或待评测 profile 改变后，重新执行
+`ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
+`artifacts/evaluations/ragas-<测试集文件名>.json`；默认模式为 `mix`，可用 `--modes naive,mix`
+做显式对比。`data/processed` 下的文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前
+profile 语料 hash 绑定的文件。Streamlit 演示可查看五种检索模式、证据、图路径与 trace，但不替代
+Ragas 评测。评测报告还会记录测试集文件 SHA-256、锁定的 profile、检索参数，以及回答和评审模型的
+非敏感运行配置，便于区分同一语料上的不同题集或执行条件。
 
 ### 下载论文语料（可选）
 
@@ -146,7 +175,7 @@ uv run hybrid-rag ingest data/raw
 ### 配置 DeepSeek
 
 本项目的 embedding 固定使用本地 FlagEmbedding 模型；查看 [.env.example](.env.example) 可配置
-DeepSeek 模型、API 地址和评测选项。
+DeepSeek 模型、API 地址和 Ragas 评审模型。
 
 ### 自定义论文语料
 
@@ -164,7 +193,7 @@ uv run hybrid-rag corpus download --manifest path/to/corpus.json --output data/r
 - SQLite 外键和事务保证文档更新不会留下孤儿 chunk。
 - 模型抽取需经过 Pydantic、局部引用和原文证据校验；每条实体/关系保留来源 chunk。
 - profile 绑定 embedding 配置、语料和图谱快照；历史 `rtr_` trace 可离线 replay。
-- 评测会锁定 profile 并校验语料指纹；fixture 结果只用于回归验证，不能代表真实论文质量。
+- Ragas 评测会锁定 profile 并校验测试集的语料指纹；结果只适用于声明的语料、索引和模型配置。
 
 当前限制：默认 PDF adapter 面向有文本层的论文，不做扫描件 OCR；复杂版面、表格和公式结构可在
 既有 loader 接口后接入 Docling。在线模型的质量、延迟和费用需要在冻结语料和明确配置下单独评测。

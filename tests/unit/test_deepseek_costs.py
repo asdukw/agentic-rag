@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from types import SimpleNamespace
 
 import pytest
 
-from hybrid_rag.cli import _judge_cost_disclosure
-from hybrid_rag.config import DeepSeekSettings
 from hybrid_rag.deepseek_costs import (
     DeepSeekCostStatus,
     DeepSeekModelPricing,
     DeepSeekPricing,
     deepseek_usage,
 )
-from hybrid_rag.evaluation import CostDisclosure
 
 
 def _pricing() -> DeepSeekPricing:
@@ -97,27 +93,3 @@ def test_cost_is_unknown_when_usage_cannot_be_priced_exactly(
 
     assert summary.status is DeepSeekCostStatus.UNKNOWN
     assert summary.cost_cny is None
-
-
-def test_judge_disclosure_uses_the_actual_pro_response_model_and_cache_split() -> None:
-    records = (
-        deepseek_usage(
-            operation="judge",
-            model="deepseek-v4-pro",
-            prompt_tokens=30,
-            cache_hit_tokens=10,
-            cache_miss_tokens=20,
-            completion_tokens=5,
-        ),
-    )
-    judge = SimpleNamespace(usage=SimpleNamespace(calls=1, records=records))
-    report = SimpleNamespace(
-        pairwise_judgments=(),
-        cost_disclosure=CostDisclosure.offline(),
-        run=SimpleNamespace(index_provenance=SimpleNamespace(embedding_provider="flagembedding")),
-    )
-
-    disclosure = _judge_cost_disclosure(judge, DeepSeekSettings(_env_file=None), report)
-
-    assert disclosure.cost_cny == pytest.approx((10 * 0.025 + 20 * 3 + 5 * 6) / 1_000_000)
-    assert disclosure.deepseek_usage == records

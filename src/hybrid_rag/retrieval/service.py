@@ -526,6 +526,7 @@ class RetrievalService:
         return IndexBuildReport(
             profile_id=profile.id,
             config_hash=profile.config_hash,
+            corpus_content_hash=snapshot.corpus_content_hash,
             source_corpus_hash=snapshot.source_corpus_hash,
             graph_build_run_id=snapshot.build_run_id,
             provider=profile.provider,

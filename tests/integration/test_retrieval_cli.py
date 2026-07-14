@@ -23,7 +23,6 @@ from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.embedding import BGEM3EmbeddingProvider
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
-from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
 EVIDENCE = "Atlas connects Beacon through the graph."
 
@@ -113,6 +112,7 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert index["entities"] == 2
     assert index["relations"] == 1
     assert index["provider"] == "hash"
+    assert isinstance(index["corpus_content_hash"], str)
 
     retrieved = _invoke_json(
         runner,
@@ -182,7 +182,7 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert replay["answer"]["citations"] == answered["answer"]["citations"]
 
 
-def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
+def test_evaluate_cli_runs_provenance_bound_ragas_testset(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,97 +190,103 @@ def test_evaluate_cli_writes_offline_artifacts_and_discloses_zero_model_cost(
     _patch_offline_retrieval(monkeypatch)
     runner = CliRunner()
     index = _invoke_json(runner, ["build-index", "--db", str(db_path), "--json"])
-
-    output_dir = tmp_path / "evaluation-reports"
-    fixture_path = Path(__file__).parents[2] / "data" / "evaluation" / "fixture-benchmark-v1.json"
-    mismatch = runner.invoke(
-        app,
-        [
-            "evaluate",
-            "--benchmark",
-            str(fixture_path),
-            "--db",
-            str(db_path),
-            "--limit",
-            "2",
-            "--json",
-        ],
+    testset_path = tmp_path / "ragas-testset.json"
+    testset_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "corpus_content_hash": index["corpus_content_hash"],
+                "cases": [
+                    {
+                        "user_input": "How does Atlas connect Beacon?",
+                        "reference": EVIDENCE,
+                        "reference_contexts": [EVIDENCE],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
-    assert mismatch.exit_code == 1
-    assert "expected_source_corpus_hash" in mismatch.output
-    corpus_content_hash = _profile_corpus_content_hash(db_path, index["profile_id"])
-    benchmark_payload = json.loads(fixture_path.read_text(encoding="utf-8"))
-    benchmark_payload["expected_source_corpus_hash"] = corpus_content_hash
-    benchmark_path = tmp_path / "pinned-benchmark.json"
-    benchmark_path.write_text(json.dumps(benchmark_payload), encoding="utf-8")
+    output_path = tmp_path / "evaluation-reports" / "ragas.json"
+    captured: dict[str, object] = {}
+
+    class FakeReport:
+        def __init__(self) -> None:
+            self.modes = {"mix": {"means": {"faithfulness": 1.0}}}
+
+        def as_dict(self) -> dict[str, object]:
+            return {
+                "testset_path": str(testset_path),
+                "provenance": {"profile_id": index["profile_id"]},
+                "modes": self.modes,
+            }
+
+    class FakeRagasRunner:
+        def __init__(self, service: object, query_client: object) -> None:
+            captured["service"] = service
+            captured["query_client"] = query_client
+
+        async def run(self, testset: Path, **kwargs: object) -> FakeReport:
+            captured["testset"] = testset
+            captured.update(kwargs)
+            return FakeReport()
+
+    api_key = SimpleNamespace(get_secret_value=lambda: "test-deepseek-key")
+    monkeypatch.setattr(
+        cli_module,
+        "DeepSeekSettings",
+        lambda: SimpleNamespace(
+            api_key=api_key,
+            query_model="deepseek-v4-flash",
+            answer_model="deepseek-v4-flash",
+            answer_max_output_tokens=2048,
+            judge_model="deepseek-v4-pro",
+            judge_max_output_tokens=1024,
+            base_url="https://api.example.test",
+            timeout_seconds=30.0,
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "EvaluationSettings",
+        lambda: SimpleNamespace(output_dir=tmp_path / "default-evaluations"),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_deepseek_query_client",
+        lambda *, required_by: object(),
+    )
+    monkeypatch.setattr(cli_module, "RagasEvaluationRunner", FakeRagasRunner)
     arguments = [
         "evaluate",
-        "--benchmark",
-        str(benchmark_path),
+        "--testset",
+        str(testset_path),
         "--db",
         str(db_path),
         "--profile",
         index["profile_id"],
-        "--output-dir",
-        str(output_dir),
-        "--limit",
-        "2",
+        "--output",
+        str(output_path),
         "--json",
     ]
-    report = _invoke_json(
-        runner,
-        arguments,
-    )
+    report = _invoke_json(runner, arguments)
 
-    assert report["run"]["benchmark_id"] == "fixture-rag-v1"
-    assert report["run"]["options"]["modes"] == ["naive", "hybrid"]
-    assert report["run"]["options"]["naive_dense_weight"] == 0.25
-    assert report["run"]["options"]["naive_bm25_weight"] == 1.5
-    assert report["run"]["options"]["bm25_k1"] == 1.7
-    assert report["run"]["options"]["bm25_b"] == 0.3
-    assert report["run"]["options"]["reranker_provider"] == "none"
-    assert report["run"]["options"]["reranker_use_fp16"] is False
-    assert report["run"]["options"]["rerank_candidate_multiplier"] == 4
-    assert len(report["run"]["case_ids"]) == 2
-    assert report["run"]["index_provenance"]["profile_id"] == index["profile_id"]
-    assert report["run"]["index_provenance"]["corpus_content_hash"] == corpus_content_hash
-    assert report["run"]["index_provenance"]["source_corpus_hash"] == index["source_corpus_hash"]
-    assert report["cost_disclosure"] == {
-        "status": "not_applicable",
-        "currency": "CNY",
-        "retrieval_model_calls": 0,
-        "judge_model_calls": 0,
-        "cost_cny": 0.0,
-        "deepseek_usage": [],
-        "price_assumption": "offline deterministic retrieval, answer, and judge",
+    assert report == json.loads(output_path.read_text(encoding="utf-8"))
+    assert captured["testset"] == testset_path
+    assert captured["profile_ref"] == index["profile_id"]
+    assert captured["modes"] == (cli_module.RetrievalMode.MIX,)
+    assert captured["judge_model"] == "deepseek-v4-pro"
+    assert captured["judge_api_key"] == "test-deepseek-key"
+    assert captured["judge_base_url"] == "https://api.example.test"
+    assert captured["judge_max_output_tokens"] == 1024
+    assert captured["judge_timeout_seconds"] == 30.0
+    assert captured["query_client_provenance"] == {
+        "keyword_model": "deepseek-v4-flash",
+        "answer_model": "deepseek-v4-flash",
+        "base_url": "https://api.example.test",
+        "max_output_tokens": 2048,
+        "timeout_seconds": 30.0,
     }
-
-    artifact_stem = f"{report['run']['id']}-{report['run']['execution_id']}"
-    json_path = output_dir / f"{artifact_stem}.json"
-    markdown_path = output_dir / f"{artifact_stem}.md"
-    assert json.loads(json_path.read_text(encoding="utf-8")) == report
-    assert markdown_path.is_file()
-    assert "# Retrieval evaluation: fixture-rag-v1" in markdown_path.read_text(encoding="utf-8")
-
-    replay = _invoke_json(
-        runner,
-        [
-            "retrieval",
-            "replay",
-            report["evaluations"][0]["retrieval_trace_id"],
-            "--db",
-            str(db_path),
-            "--json",
-        ],
-    )
-    assert replay["trace_id"] == report["evaluations"][0]["retrieval_trace_id"]
-
-    repeated = _invoke_json(runner, arguments)
-    assert repeated["run"]["id"] == report["run"]["id"]
-    assert repeated["run"]["execution_id"] != report["run"]["execution_id"]
-    repeated_stem = f"{repeated['run']['id']}-{repeated['run']['execution_id']}"
-    assert (output_dir / f"{repeated_stem}.json").is_file()
-    assert json_path.is_file()
 
 
 def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -351,19 +357,6 @@ def _seed_scripted_graph(tmp_path: Path) -> Path:
     finally:
         database.dispose()
     return db_path
-
-
-def _profile_corpus_content_hash(db_path: Path, profile_id: str) -> str:
-    database = Database(sqlite_url(db_path))
-    try:
-        with database.session_factory() as session:
-            profile = RetrievalRepository().get_profile(session, profile_id)
-    finally:
-        database.dispose()
-    assert profile is not None
-    value = profile.metadata["corpus_content_hash"]
-    assert isinstance(value, str)
-    return value
 
 
 def _invoke_json(runner: CliRunner, arguments: list[str]) -> dict[str, Any]:
