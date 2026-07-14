@@ -7,11 +7,17 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from hybrid_rag.retrieval.models import RetrievalMode
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
+
+
+class RagasCase(TypedDict):
+    user_input: str
+    reference: str
+    reference_contexts: list[str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,14 +79,14 @@ class RagasEvaluationRunner:
         return RagasEvaluationReport(testset_path=str(testset_path), modes=output)
 
 
-def _load_cases(path: Path) -> list[dict[str, object]]:
+def _load_cases(path: Path) -> list[RagasCase]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"unable to read Ragas test set {path}: {error}") from error
     if not isinstance(value, list) or not value:
         raise ValueError("Ragas test set must be a non-empty JSON array")
-    cases: list[dict[str, object]] = []
+    cases: list[RagasCase] = []
     for index, item in enumerate(value, start=1):
         if not isinstance(item, dict):
             raise ValueError(f"Ragas test set item {index} must be an object")
@@ -111,13 +117,13 @@ def _string_list(value: object, *, field: str, index: int) -> list[str]:
     return list(value)
 
 
-def _sample(case: dict[str, object], *, response: str, retrieved_contexts: list[str]) -> object:
+def _sample(case: RagasCase, *, response: str, retrieved_contexts: list[str]) -> object:
     from ragas import SingleTurnSample
 
     return SingleTurnSample(
-        user_input=str(case["user_input"]),
-        reference=str(case["reference"]),
-        reference_contexts=list(case["reference_contexts"]),
+        user_input=case["user_input"],
+        reference=case["reference"],
+        reference_contexts=case["reference_contexts"],
         response=response,
         retrieved_contexts=retrieved_contexts,
     )
@@ -128,7 +134,9 @@ def _evaluate(
 ) -> dict[str, object]:
     from openai import OpenAI
     from ragas import EvaluationDataset, evaluate
+    from ragas.dataset_schema import EvaluationResult
     from ragas.llms import llm_factory
+    from ragas.metrics.base import Metric
     from ragas.metrics.collections import (
         ContextPrecision,
         ContextRecall,
@@ -141,18 +149,26 @@ def _evaluate(
         provider="openai",
         client=OpenAI(api_key=judge_api_key, base_url=judge_base_url),
     )
-    result = evaluate(
-        dataset=EvaluationDataset(samples=samples),  # type: ignore[arg-type]
-        metrics=[
+    metrics = cast(
+        Sequence[Metric],
+        [
             Faithfulness(llm=judge_llm),
             FactualCorrectness(llm=judge_llm),
             ContextPrecision(llm=judge_llm),
             ContextRecall(llm=judge_llm),
         ],
-        show_progress=True,
-        raise_exceptions=True,
     )
-    scores = result.scores  # ``return_executor`` defaults to False.
+    result = cast(
+        EvaluationResult,
+        evaluate(
+            dataset=EvaluationDataset(samples=samples),  # type: ignore[arg-type]
+            metrics=metrics,
+            show_progress=True,
+            raise_exceptions=True,
+            return_executor=False,
+        ),
+    )
+    scores = result.scores
     return {"scores": scores, "means": _means(scores)}
 
 
