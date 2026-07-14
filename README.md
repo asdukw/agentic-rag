@@ -1,7 +1,8 @@
 # Hybrid RAG
 
-一个以学习和演示为主的 Hybrid/Graph RAG 项目。项目使用一组固定版本的 RAG 相关论文作为
-语料，展示从论文 PDF 导入、索引与可选知识图谱构建，到检索、回答和 citation 追溯的完整效果；
+一个以学习和演示为主的 Hybrid/Graph RAG 项目。默认使用仓库内的小型 fixture 语料，展示从文档导入、
+索引与可选知识图谱构建，到检索、回答和 citation 追溯的完整效果；也可选用一组固定版本的 RAG 相关论文
+作为更完整的演示语料。
 不以生产部署或通用知识库能力为主要目标。
 
 ```text
@@ -13,19 +14,15 @@
 
 ## Quick Start
 
-需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。默认流程会下载
-`data/corpus.json` 中定义、版本固定且经过 SHA-256 校验的 RAG 论文到 `data/raw`；首次建立索引时还会
-下载本地 BGE-M3 模型权重。这两步需要网络，但不需要 embedding API key。默认数据库为
-`storage/app.db`。
+需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。默认流程使用仓库内的
+`tests/fixtures/corpus`，不需要下载论文；首次建立索引时会下载本地 BGE-M3 模型权重，因此需要网络，
+但不需要 embedding API key。默认数据库为 `storage/app.db`。
 
 ```bash
 uv sync --dev
 
-# 下载内置论文语料（需要网络）。
-uv run hybrid-rag corpus download
-
-# 导入论文并切成可追溯的 chunks。
-uv run hybrid-rag ingest data/raw
+# 导入内置 fixture 语料并切成可追溯的 chunks。
+uv run hybrid-rag ingest tests/fixtures/corpus
 
 # 可选：抽取实体和关系，为 local、global 及 hybrid 提供图谱证据（需要 DEEPSEEK_API_KEY）。
 # 只使用 naive，或不需要图路径时可跳过这一步。
@@ -34,13 +31,12 @@ uv run hybrid-rag build-graph --limit 10
 # 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
 uv run hybrid-rag build-index
 
-# 检索并生成基于论文证据的离线回答。
-uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge-intensive NLP tasks?"
+# 检索并生成基于语料证据的离线回答。
+uv run hybrid-rag ask "How does hybrid retrieval combine evidence?"
 ```
 
-完成后可在输出中查看回答所依据的论文 citation，用于观察 RAG 的检索与证据归因效果。若只想
-离线验证命令流程，可将 `data/raw` 替换为 `tests/fixtures/corpus`；fixture 仅用于测试，不代表论文
-语料的演示效果。
+完成后可在输出中查看回答所依据的 citation，用于观察 RAG 的检索与证据归因效果。fixture 语料较小，
+适合快速验证命令流程，不代表论文语料上的演示效果。
 
 - `ingest`、`build-index` 等命令会自动升级 SQLite schema。
 - 默认 embedding 是 FlagEmbedding 的 `BAAI/bge-m3` dense vector（1024 维、最长 8192 tokens）；
@@ -53,7 +49,7 @@ uv run hybrid-rag ask "How does retrieval-augmented generation improve knowledge
   `BAAI/bge-reranker-v2-m3` 精排：它批量计算 `[query, passage]` 对的相关性，再决定最终 Top-K。
   首次检索会下载精排模型；将 `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 可跳过二阶段精排。
 
-## 可选功能
+## 项目功能
 
 ### FlagEmbedding cross-encoder 精排
 
@@ -115,6 +111,10 @@ uv run hybrid-rag evaluate
 # 需要设置 DEEPSEEK_API_KEY，且会产生 API 调用费用。
 uv run hybrid-rag evaluate --deepseek-judge
 
+# 使用 Ragas 生成的测试集评测实际回答和召回上下文。
+# 同样需要 DEEPSEEK_API_KEY，且会调用回答模型与 Ragas 评审模型。
+uv run hybrid-rag ragas-evaluate --testset data/processed/ragas-testset-demo.json
+
 uv run streamlit run src/hybrid_rag/demo.py
 ```
 
@@ -122,18 +122,37 @@ uv run streamlit run src/hybrid_rag/demo.py
 延迟和成本状态的 JSON/Markdown artifact。默认评测使用离线、确定性的盲评规则；传入
 `--deepseek-judge` 后，DeepSeek 仅根据匿名的答案、引用和评测指标进行 A/B 裁判，不能检索额外资料。
 Streamlit 演示可查看四种模式、证据、图路径和对比结果。
+`ragas-evaluate` 会保留现有离线 benchmark 不变：它读取 Ragas 生成的 JSON，调用当前 RAG 的
+`ask` 流程取得实际 `response` 与 `retrieved_contexts`，再分别计算 faithfulness、factual correctness、
+context precision 和 context recall。默认评测 `hybrid`；可用 `--modes naive,hybrid` 比较多个模式，结果写入
+`artifacts/evaluations/ragas-<测试集文件名>.json`。
 
-### 配置 DeepSeek 或自定义论文语料
+### 下载论文语料（可选）
+
+若需要使用更接近真实研究资料的演示语料，可下载 `data/corpus.json` 中定义、版本固定且经过
+SHA-256 校验的 RAG 论文到 `data/raw`。这一步需要网络：
+
+```bash
+uv run hybrid-rag corpus download
+uv run hybrid-rag ingest data/raw
+```
+
+也可以手动将允许使用的 PDF 放入 `data/raw` 后直接执行 `ingest data/raw`。
+
+### 配置 DeepSeek
 
 本项目的 embedding 固定使用本地 FlagEmbedding 模型；查看 [.env.example](.env.example) 可配置
-DeepSeek 模型和评测选项。内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
+DeepSeek 模型、API 地址和评测选项。
+
+### 自定义论文语料
+
+内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
 
 ```bash
 uv run hybrid-rag corpus download --manifest path/to/corpus.json --output data/raw
 ```
 
-下载受本机网络与证书配置影响；也可以手动将允许使用的 PDF 放入 `data/raw` 后直接执行
-`ingest data/raw`。
+下载受本机网络与证书配置影响。
 
 ## 工程保证与边界
 

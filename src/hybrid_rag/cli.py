@@ -32,6 +32,7 @@ from hybrid_rag.evaluation import (
 from hybrid_rag.evaluation import write_json as write_evaluation_json
 from hybrid_rag.evaluation import write_markdown as write_evaluation_markdown
 from hybrid_rag.evaluation.deepseek_judge import DeepSeekBlindJudge
+from hybrid_rag.evaluation.ragas_runner import RagasEvaluationRunner
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
 from hybrid_rag.extraction.schemas import (
@@ -1082,6 +1083,101 @@ def evaluate(
         json_path=json_path,
         markdown_path=markdown_path,
     )
+
+
+@app.command("ragas-evaluate")
+def ragas_evaluate(
+    testset_path: Annotated[
+        Path,
+        typer.Option("--testset", exists=True, readable=True, help="Ragas-generated JSON test set"),
+    ],
+    db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", help="Pinned index profile ID or config hash"),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="JSON file for Ragas scores and per-case details"),
+    ] = None,
+    modes: Annotated[
+        str,
+        typer.Option("--modes", help="Comma-separated modes: naive, local, global, or hybrid"),
+    ] = "hybrid",
+    top: Annotated[int | None, typer.Option("--top", min=1)] = None,
+    context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
+    graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Print the full report JSON")] = False,
+) -> None:
+    """Score Ragas-generated cases against answers and contexts from this RAG pipeline."""
+
+    try:
+        selected_modes = tuple(
+            RetrievalMode(value.strip()) for value in modes.split(",") if value.strip()
+        )
+    except ValueError as error:
+        raise typer.BadParameter("--modes must use naive, local, global, and/or hybrid") from error
+    if not selected_modes or len(selected_modes) != len(set(selected_modes)):
+        raise typer.BadParameter("--modes must contain one or more distinct modes")
+
+    settings = Settings()
+    retrieval_settings = RetrievalSettings()
+    deepseek_settings = DeepSeekSettings()
+    api_key = (
+        deepseek_settings.api_key.get_secret_value().strip() if deepseek_settings.api_key else ""
+    )
+    if not api_key:
+        raise typer.BadParameter("ragas-evaluate requires DEEPSEEK_API_KEY")
+    url = _database_url(db_path, settings)
+    upgrade_database(url)
+    database = Database(url)
+    try:
+        service = RetrievalService(
+            database,
+            _embedding_provider(retrieval_settings),
+            TiktokenCounter(settings.tokenizer_name),
+            reranker=_reranker(retrieval_settings),
+            deepseek_pricing=_configured_deepseek_pricing(deepseek_settings),
+        )
+        options = _retrieval_options(
+            retrieval_settings,
+            top_k=top,
+            context_tokens=context_tokens,
+            graph_hops=graph_hops,
+        )
+        client = _deepseek_query_client()
+
+        async def run():
+            try:
+                report = await RagasEvaluationRunner(service, client).run(
+                    testset_path,
+                    modes=selected_modes,
+                    retrieval_options=options,
+                    profile_ref=profile,
+                    judge_model=deepseek_settings.judge_model,
+                    judge_api_key=api_key,
+                    judge_base_url=deepseek_settings.base_url,
+                )
+                return report.as_dict()
+            finally:
+                await _close_query_client(client)
+
+        report = asyncio.run(run())
+        payload = report.as_dict()
+        destination = output or (Path("artifacts/evaluations") / f"ragas-{testset_path.stem}.json")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (EmbeddingConfigurationError, ImportError, OSError, RuntimeError, ValueError) as error:
+        console.print(f"[red]{type(error).__name__}:[/red] {error}")
+        raise typer.Exit(code=1) from error
+    finally:
+        database.dispose()
+    if json_output:
+        console.print_json(json.dumps(payload, ensure_ascii=False))
+    else:
+        console.print(f"Ragas evaluation written to [cyan]{destination}[/cyan]")
+        for mode, result in report.modes.items():
+            console.print(f"{mode}: {result['means']}")
 
 
 @retrieval_app.command("stats")
