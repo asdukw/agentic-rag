@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,7 +14,7 @@ from typer.testing import CliRunner
 
 import hybrid_rag.cli as cli_module
 from hybrid_rag.cli import app
-from hybrid_rag.config import sqlite_url
+from hybrid_rag.config import RetrievalSettings, sqlite_url
 from hybrid_rag.extraction.client import CompletionResult
 from hybrid_rag.extraction.schemas import ExtractionConfig
 from hybrid_rag.extraction.service import GraphBuildService
@@ -39,15 +40,27 @@ class ScriptedGraphClient:
         assert EVIDENCE in chunk_text
         return _completion()
 
-    async def repair(self, chunk_text: str, **_: object) -> CompletionResult:
+    async def repair(
+        self,
+        chunk_text: str,
+        invalid_response: str | None,
+        issues: Sequence[str],
+        *,
+        document_title: str | None = None,
+        section_path: Sequence[str] = (),
+    ) -> CompletionResult:
         assert EVIDENCE in chunk_text
+        assert invalid_response is None or isinstance(invalid_response, str)
+        assert all(isinstance(issue, str) for issue in issues)
+        assert document_title is None or isinstance(document_title, str)
+        assert all(isinstance(section, str) for section in section_path)
         return _completion()
 
 
 def test_cli_constructs_the_flag_embedding_reranker_from_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = SimpleNamespace(
+    settings = RetrievalSettings(
         reranker_provider="flagembedding",
         reranker_model="BAAI/bge-reranker-v2-m3",
         reranker_use_fp16=True,
@@ -66,7 +79,7 @@ def test_cli_constructs_the_flag_embedding_reranker_from_settings(
 
 
 def test_cli_constructs_bge_m3_embedding_from_settings() -> None:
-    settings = SimpleNamespace(
+    settings = RetrievalSettings(
         embedding_provider="flagembedding",
         embedding_model="BAAI/bge-m3",
         embedding_dimensions=1024,
@@ -88,7 +101,7 @@ def test_cli_constructs_bge_m3_embedding_from_settings() -> None:
 def test_cli_rejects_removed_external_embedding_provider() -> None:
     with pytest.raises(typer.BadParameter, match=r"flagembedding.*hash"):
         cli_module._embedding_provider(
-            SimpleNamespace(),
+            RetrievalSettings(),
             provider="openai-compatible",
             model="embedding-test",
             dimensions=1024,

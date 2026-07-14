@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from itertools import combinations, pairwise
@@ -1148,7 +1148,7 @@ def _accumulate(scores: dict[str, float], object_ids: Sequence[str], score: floa
         scores[object_id] = max(scores.get(object_id, float("-inf")), score)
 
 
-def _max_scores(score_maps: Sequence[Mapping[str, float]]) -> dict[str, float]:
+def _max_scores(score_maps: Iterable[Mapping[str, float]]) -> dict[str, float]:
     output: dict[str, float] = {}
     for scores in score_maps:
         for object_id, score in scores.items():
