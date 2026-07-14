@@ -13,9 +13,7 @@ from hybrid_rag.extraction.schemas import ExtractionConfig
 def _resume_dependencies(persisted: dict[str, object]) -> tuple[object, object]:
     database = SimpleNamespace(session_factory=lambda: nullcontext(object()))
     repository = SimpleNamespace(
-        get_run=lambda _session, _run_id: SimpleNamespace(
-            report={"extraction_config": persisted}
-        )
+        get_run=lambda _session, _run_id: SimpleNamespace(report={"extraction_config": persisted})
     )
     return database, repository
 

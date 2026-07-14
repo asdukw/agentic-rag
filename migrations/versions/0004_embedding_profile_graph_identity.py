@@ -194,11 +194,7 @@ def _validate_id_changes(changes: Sequence[tuple[str, str]], existing_ids: set[s
     if len(new_ids) != len(set(new_ids)):
         raise RuntimeError("embedding profile ID migration produced duplicate IDs")
     conflict = next(
-        (
-            new_id
-            for old_id, new_id in changes
-            if new_id != old_id and new_id in existing_ids
-        ),
+        (new_id for old_id, new_id in changes if new_id != old_id and new_id in existing_ids),
         None,
     )
     if conflict is not None:

@@ -1,48 +1,48 @@
 """Provider-independent extraction and knowledge-graph domain primitives."""
 
 from hybrid_rag.extraction.client import (
-                                          CompletionResult,
-                                          DeepSeekClient,
-                                          ExtractionClient,
-                                          ProviderError,
-                                          RetryableProviderError,
-                                          TerminalProviderError,
+    CompletionResult,
+    DeepSeekClient,
+    ExtractionClient,
+    ProviderError,
+    RetryableProviderError,
+    TerminalProviderError,
 )
 from hybrid_rag.extraction.graph import (
-                                          GraphStats,
-                                          TopEntity,
-                                          build_networkx_graph,
-                                          node_link_json,
-                                          node_link_payload,
-                                          summarize_graph,
+    GraphStats,
+    TopEntity,
+    build_networkx_graph,
+    node_link_json,
+    node_link_payload,
+    summarize_graph,
 )
 from hybrid_rag.extraction.normalization import (
-                                          merge_relations,
-                                          normalize_entities,
-                                          normalize_entity_alias,
-                                          normalize_predicate,
+    merge_relations,
+    normalize_entities,
+    normalize_entity_alias,
+    normalize_predicate,
 )
 from hybrid_rag.extraction.prompts import build_extraction_messages, build_repair_messages
 from hybrid_rag.extraction.schemas import (
-                                          CanonicalEntity,
-                                          CanonicalRelation,
-                                          EntityCandidate,
-                                          EntityMention,
-                                          EntityNormalizationResult,
-                                          EntityType,
-                                          EvidenceSpan,
-                                          ExtractionConfig,
-                                          GraphConfig,
-                                          RelationCandidate,
-                                          RelationMention,
-                                          RelationMergeResult,
-                                          ValidatedChunkExtraction,
+    CanonicalEntity,
+    CanonicalRelation,
+    EntityCandidate,
+    EntityMention,
+    EntityNormalizationResult,
+    EntityType,
+    EvidenceSpan,
+    ExtractionConfig,
+    GraphConfig,
+    RelationCandidate,
+    RelationMention,
+    RelationMergeResult,
+    ValidatedChunkExtraction,
 )
 from hybrid_rag.extraction.validation import (
-                                          ExtractionValidationError,
-                                          ValidationFailureKind,
-                                          ValidationIssue,
-                                          validate_completion,
+    ExtractionValidationError,
+    ValidationFailureKind,
+    ValidationIssue,
+    validate_completion,
 )
 
 __all__ = [

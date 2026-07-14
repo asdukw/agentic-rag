@@ -75,9 +75,7 @@ class BM25Scorer:
             else 0.0
         )
         self._document_frequencies = Counter(
-            term
-            for frequencies in self._term_frequencies
-            for term in frequencies
+            term for frequencies in self._term_frequencies for term in frequencies
         )
 
     @property
@@ -135,15 +133,10 @@ class BM25Scorer:
                 continue
             document_frequency = self._document_frequencies.get(term, 0)
             inverse_document_frequency = math.log(
-                1.0
-                + (
-                    self.document_count - document_frequency + 0.5
-                )
-                / (document_frequency + 0.5)
+                1.0 + (self.document_count - document_frequency + 0.5) / (document_frequency + 0.5)
             )
             score += inverse_document_frequency * (
-                term_frequency * (self.config.k1 + 1.0)
-                / (term_frequency + length_normalizer)
+                term_frequency * (self.config.k1 + 1.0) / (term_frequency + length_normalizer)
             )
         return score
 
@@ -164,7 +157,7 @@ def tokenize_lexical(text: str) -> tuple[str, ...]:
         value = match.group()
         if _is_cjk_run(value):
             tokens.extend(f"cjk:{character}" for character in value)
-            tokens.extend(f"cjk2:{value[index:index + 2]}" for index in range(len(value) - 1))
+            tokens.extend(f"cjk2:{value[index : index + 2]}" for index in range(len(value) - 1))
         else:
             tokens.append(f"word:{value}")
     return tuple(tokens)

@@ -114,9 +114,7 @@ def test_judge_disclosure_uses_the_actual_pro_response_model_and_cache_split() -
     report = SimpleNamespace(
         pairwise_judgments=(),
         cost_disclosure=CostDisclosure.offline(),
-        run=SimpleNamespace(
-            index_provenance=SimpleNamespace(embedding_provider="flagembedding")
-        ),
+        run=SimpleNamespace(index_provenance=SimpleNamespace(embedding_provider="flagembedding")),
     )
 
     disclosure = _judge_cost_disclosure(judge, DeepSeekSettings(_env_file=None), report)

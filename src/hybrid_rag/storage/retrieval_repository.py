@@ -268,9 +268,7 @@ class RetrievalRepository:
         """
 
         run = self._snapshot_run(session, build_run_id)
-        document_records = list(
-            session.scalars(select(DocumentRecord).order_by(DocumentRecord.id))
-        )
+        document_records = list(session.scalars(select(DocumentRecord).order_by(DocumentRecord.id)))
         chunk_records = list(
             session.scalars(
                 select(ChunkRecord).order_by(
@@ -396,9 +394,7 @@ class RetrievalRepository:
         """
 
         chunk_ids = set(
-            session.scalars(
-                select(ChunkRecord.id).where(ChunkRecord.document_id == document_id)
-            )
+            session.scalars(select(ChunkRecord.id).where(ChunkRecord.document_id == document_id))
         )
         if not chunk_ids:
             return 0
