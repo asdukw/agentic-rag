@@ -111,9 +111,7 @@ def _string_list(value: object, *, field: str, index: int) -> list[str]:
     return list(value)
 
 
-def _sample(
-    case: dict[str, object], *, response: str, retrieved_contexts: list[str]
-) -> object:
+def _sample(case: dict[str, object], *, response: str, retrieved_contexts: list[str]) -> object:
     from ragas import SingleTurnSample
 
     return SingleTurnSample(
