@@ -549,8 +549,11 @@ def build_graph(
     ] = None,
     retry_failed: Annotated[
         bool,
-        typer.Option("--retry-failed", help="Explicitly requeue terminal failed extractions"),
-    ] = False,
+        typer.Option(
+            "--retry-failed/--no-retry-failed",
+            help="Retry terminal failed extractions (enabled by default)",
+        ),
+    ] = True,
     review: Annotated[
         bool,
         typer.Option(
@@ -574,7 +577,7 @@ def build_graph(
     json_output: Annotated[bool, typer.Option("--json", help="Print a JSON report")] = False,
 ) -> None:
     if resume is not None and (
-        model is not None or max_attempts is not None or limit is not None or retry_failed or review
+        model is not None or max_attempts is not None or limit is not None or review
     ):
         raise typer.BadParameter(
             "--resume reuses the run's model, attempt budget, corpus, and review policy"

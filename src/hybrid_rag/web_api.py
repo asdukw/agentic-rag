@@ -9,22 +9,41 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from hybrid_rag.agentic import AgentRunner, AgentRunRequest
+from hybrid_rag.agentic.models import AgentEvent
 from hybrid_rag.agentic.planner import AgentPlanner, DeepSeekAgentPlanner, DeterministicAgentPlanner
-from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
+from hybrid_rag.config import (
+    DeepSeekSettings,
+    GraphSettings,
+    RetrievalSettings,
+    Settings,
+    sqlite_url,
+)
 from hybrid_rag.demo import DemoRuntime, create_query_client, create_service
 from hybrid_rag.extraction.client import DeepSeekClient
+from hybrid_rag.extraction.schemas import ExtractionConfig, GraphConfig
+from hybrid_rag.extraction.service import GraphBuildService
+from hybrid_rag.extraction.workflow import WorkflowOptions
+from hybrid_rag.ingest.chunker import SectionTokenChunker
+from hybrid_rag.ingest.service import IngestionService
+from hybrid_rag.ingest.tokenizer import TiktokenCounter
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions
+from hybrid_rag.storage.database import Database
+from hybrid_rag.storage.graph_repository import GraphRepository
+from hybrid_rag.storage.migrations import upgrade_database
+from hybrid_rag.storage.repository import IngestRepository
+from hybrid_rag.workspace import WorkspaceStore
 
 app = FastAPI(title="Hybrid RAG Agent API", version="0.1.0")
 app.add_middleware(
@@ -32,15 +51,20 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-File-Name"],
 )
 _ACTIVE_RUNS = asyncio.Semaphore(2)
+_WORKSPACES = WorkspaceStore()
+# ``uvicorn.error`` is configured by Uvicorn's default logging setup, unlike an
+# arbitrary application logger which may otherwise be discarded at INFO level.
+logger = logging.getLogger("uvicorn.error")
 
 
 class AgentWebRequest(AgentRunRequest):
     """Browser-safe execution settings; credentials remain server-side only."""
 
     database_url: str | None = Field(default=None, max_length=500)
+    workspace_id: str | None = Field(default=None, max_length=32)
     embedding_provider: Literal["flagembedding", "hash"] | None = None
     embedding_model: str | None = Field(default=None, max_length=200)
     embedding_dimensions: int | None = Field(default=None, ge=32, le=4096)
@@ -62,6 +86,12 @@ class BuildIndexRequest(BaseModel):
     embedding_model: str | None = Field(default=None, max_length=200)
     embedding_dimensions: int | None = Field(default=None, ge=32, le=4096)
     force: bool = False
+
+
+class CreateWorkspaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
 
 
 @app.get("/api/health")
@@ -86,6 +116,149 @@ async def runtime_defaults() -> dict[str, Any]:
         },
         "use_deepseek_default": False,
     }
+
+
+@app.get("/api/workspaces")
+async def list_workspaces() -> dict[str, Any]:
+    return {"workspaces": [item.model_dump(mode="json") for item in _WORKSPACES.list()]}
+
+
+@app.post("/api/workspaces")
+async def create_workspace(request: CreateWorkspaceRequest) -> dict[str, Any]:
+    try:
+        workspace = _WORKSPACES.create(request.name)
+        upgrade_database(_WORKSPACES.database_url(workspace.id))
+        return workspace.model_dump(mode="json")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/workspaces/{workspace_id}/uploads")
+async def upload_workspace_file(
+    workspace_id: str,
+    request: Request,
+    filename: str | None = Header(default=None, alias="X-File-Name"),
+) -> dict[str, Any]:
+    if not filename:
+        raise HTTPException(status_code=400, detail="X-File-Name header is required")
+    content_length = request.headers.get("content-length")
+    if content_length is not None and int(content_length) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="uploaded file exceeds the 100 MiB limit")
+    try:
+        workspace = _WORKSPACES.store_upload(workspace_id, filename, await request.body())
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return workspace.model_dump(mode="json")
+
+
+@app.post("/api/workspaces/{workspace_id}/ingest")
+async def ingest_workspace(workspace_id: str) -> dict[str, Any]:
+    database = None
+    try:
+        workspace = _WORKSPACES.get(workspace_id)
+        if not workspace.uploads:
+            raise ValueError("upload one or more documents before ingesting")
+        settings = Settings()
+        database_url = _WORKSPACES.database_url(workspace_id)
+        upgrade_database(database_url)
+        database = Database(database_url)
+        chunker = SectionTokenChunker(
+            TiktokenCounter(settings.tokenizer_name),
+            max_tokens=settings.chunk_size_tokens,
+            overlap_tokens=settings.chunk_overlap_tokens,
+        )
+        report = await asyncio.to_thread(
+            IngestionService(database, chunker, repository=IngestRepository()).ingest,
+            _WORKSPACES.uploads_path(workspace_id),
+        )
+        return report.model_dump(mode="json")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    finally:
+        if database is not None:
+            database.dispose()
+
+
+@app.post("/api/workspaces/{workspace_id}/graph/build")
+async def build_workspace_graph(workspace_id: str) -> dict[str, Any]:
+    database = None
+    client: DeepSeekClient | None = None
+    try:
+        _WORKSPACES.get(workspace_id)
+        graph = GraphSettings()
+        deepseek = DeepSeekSettings()
+        api_key = deepseek.api_key.get_secret_value().strip() if deepseek.api_key else ""
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY is required to build a knowledge graph")
+        database_url = _WORKSPACES.database_url(workspace_id)
+        upgrade_database(database_url)
+        database = Database(database_url)
+        extraction = ExtractionConfig(
+            base_url=deepseek.base_url.rstrip("/"),
+            model=deepseek.extraction_model,
+            max_output_tokens=deepseek.max_output_tokens,
+            repair_max_attempts=graph.max_attempts - 1,
+        )
+        client = DeepSeekClient(
+            api_key=api_key,
+            base_url=extraction.base_url,
+            model=extraction.model,
+            max_output_tokens=extraction.max_output_tokens,
+            timeout_seconds=deepseek.timeout_seconds,
+            temperature=extraction.temperature,
+        )
+        service = GraphBuildService(
+            database,
+            client,
+            extraction,
+            checkpoint_path=_WORKSPACES.checkpoint_path(workspace_id),
+            graph_config=GraphConfig(extraction_config_hash=extraction.config_hash),
+            repository=GraphRepository(),
+            deepseek_pricing=deepseek.pricing,
+        )
+        report = await service.build(
+            WorkflowOptions(
+                max_concurrency=graph.max_concurrency,
+                max_attempts=graph.max_attempts,
+                retry_failed=True,
+                top_k=graph.top_k,
+            )
+        )
+        return report.model_dump(mode="json")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    finally:
+        await _close(client)
+        if database is not None:
+            database.dispose()
+
+
+@app.post("/api/workspaces/{workspace_id}/index/build")
+async def build_workspace_index(workspace_id: str) -> dict[str, Any]:
+    try:
+        database_url = _WORKSPACES.database_url(workspace_id)
+        runtime, settings, retrieval, deepseek = _runtime(
+            database_url=database_url,
+            embedding_provider=None,
+            embedding_model=None,
+            embedding_dimensions=None,
+            top_k=None,
+            context_token_budget=None,
+            graph_hops=None,
+            reranker_enabled=False,
+            rerank_candidate_multiplier=None,
+            use_deepseek=False,
+        )
+        database, service = create_service(runtime, settings, retrieval, deepseek)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    try:
+        report = await asyncio.to_thread(service.build_index)
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    finally:
+        database.dispose()
+    return report.model_dump(mode="json")
 
 
 @app.post("/api/index/build")
@@ -124,7 +297,11 @@ async def stream_agent_run(request: AgentWebRequest) -> StreamingResponse:
         planner: AgentPlanner | None = None
         try:
             runtime, settings, retrieval, deepseek = _runtime(
-                database_url=request.database_url,
+                database_url=(
+                    _WORKSPACES.database_url(request.workspace_id)
+                    if request.workspace_id
+                    else request.database_url
+                ),
                 embedding_provider=request.embedding_provider,
                 embedding_model=request.embedding_model,
                 embedding_dimensions=request.embedding_dimensions,
@@ -153,10 +330,12 @@ async def stream_agent_run(request: AgentWebRequest) -> StreamingResponse:
                         budget=request.budget,
                     )
                 ):
+                    _log_agent_event(event)
                     yield _sse(event.event, event.model_dump(mode="json"))
         except (
             Exception
         ) as error:  # UI boundary: turn startup and run errors into a terminal SSE event.
+            logger.exception("agent stream failed: %s: %s", type(error).__name__, error)
             yield _sse("failed", {"error": f"{type(error).__name__}: {error}"})
         finally:
             await _close(answer_client)
@@ -169,6 +348,46 @@ async def stream_agent_run(request: AgentWebRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _log_agent_event(event: AgentEvent) -> None:
+    """Log agent control flow without logging tool payloads or answer text."""
+
+    if event.event == "run_started":
+        logger.info(
+            "agent run started run_id=%s profile_id=%s",
+            event.run_id,
+            event.data.get("profile_id"),
+        )
+        return
+    if event.event == "planner_action":
+        logger.info(
+            "agent planner decision run_id=%s step=%s action=%s rationale=%r args=%s",
+            event.run_id,
+            event.step,
+            event.data.get("action"),
+            event.data.get("rationale", ""),
+            json.dumps(event.data.get("args", {}), ensure_ascii=False, sort_keys=True),
+        )
+        return
+    if event.event == "tool_result":
+        logger.info(
+            "agent tool finished run_id=%s step=%s tool=%s ok=%s",
+            event.run_id,
+            event.step,
+            event.data.get("tool"),
+            event.data.get("ok"),
+        )
+        return
+    if event.event == "completed":
+        logger.info(
+            "agent run completed run_id=%s reason=%s",
+            event.run_id,
+            event.data.get("termination_reason"),
+        )
+        return
+    if event.event == "failed":
+        logger.warning("agent run failed run_id=%s", event.run_id)
 
 
 def _runtime(

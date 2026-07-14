@@ -1,4 +1,12 @@
-import type { AgentEvent, AgentRunRequest, IndexBuildReport, RuntimeDefaults } from "./types";
+import type {
+  AgentEvent,
+  AgentRunRequest,
+  GraphBuildReport,
+  IndexBuildReport,
+  IngestReport,
+  RuntimeDefaults,
+  Workspace,
+} from "./types";
 
 export class ApiError extends Error {}
 
@@ -38,6 +46,45 @@ export function buildIndex(
   payload: Record<string, unknown>,
 ): Promise<IndexBuildReport> {
   return jsonRequest(base, "/api/index/build", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function listWorkspaces(base: string): Promise<{ workspaces: Workspace[] }> {
+  return jsonRequest(base, "/api/workspaces");
+}
+
+export function createWorkspace(base: string, name: string): Promise<Workspace> {
+  return jsonRequest(base, "/api/workspaces", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function uploadWorkspaceFile(
+  base: string,
+  workspaceId: string,
+  file: File,
+): Promise<Workspace> {
+  const response = await fetch(url(base, `/api/workspaces/${workspaceId}/uploads`), {
+    method: "POST",
+    headers: { "X-File-Name": file.name },
+    body: file,
+  });
+  if (!response.ok) {
+    throw new ApiError((await response.text()) || `HTTP ${response.status}`);
+  }
+  return (await response.json()) as Workspace;
+}
+
+export function ingestWorkspace(base: string, workspaceId: string): Promise<IngestReport> {
+  return jsonRequest(base, `/api/workspaces/${workspaceId}/ingest`, { method: "POST" });
+}
+
+export function buildWorkspaceGraph(base: string, workspaceId: string): Promise<GraphBuildReport> {
+  return jsonRequest(base, `/api/workspaces/${workspaceId}/graph/build`, { method: "POST" });
+}
+
+export function buildWorkspaceIndex(base: string, workspaceId: string): Promise<IndexBuildReport> {
+  return jsonRequest(base, `/api/workspaces/${workspaceId}/index/build`, { method: "POST" });
 }
 
 export async function streamAgentRun(

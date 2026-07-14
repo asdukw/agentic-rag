@@ -18,6 +18,7 @@ export interface AgentBudget {
 
 export interface AgentRunRequest {
   question: string;
+  workspace_id?: string;
   profile_id?: string;
   budget: AgentBudget;
   database_url?: string;
@@ -30,6 +31,34 @@ export interface AgentRunRequest {
   graph_hops?: number;
   reranker_enabled?: boolean;
   rerank_candidate_multiplier?: number;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  created_at: string;
+  uploads: string[];
+}
+
+export interface IngestReport {
+  discovered: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  chunks_written: number;
+}
+
+export interface GraphBuildReport {
+  run_id: string;
+  status: string;
+  chunks: {
+    total: number;
+    cached: number;
+    scheduled: number;
+    succeeded: number;
+    failed: number;
+  };
+  graph: { nodes: number; edges: number };
 }
 
 export interface AgentEvent {

@@ -221,7 +221,7 @@ class GraphRepository:
         *,
         chunk_ids: Sequence[str] | None = None,
         limit: int | None = None,
-        retry_failed: bool = False,
+        retry_failed: bool = True,
     ) -> JobPreparation:
         run = self._require_run(session, run_id)
         if run.status == "failed":

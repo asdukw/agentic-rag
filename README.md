@@ -70,6 +70,11 @@ bun run dev
 图扩展、受 token 预算限制的证据读取，以及只基于已读 chunk 的回答。每次 run 会将完整事件记录写入
 `artifacts/agent-runs/`；每一步检索仍保留现有的 `rtr_` trace。
 
+Web UI 不再默认使用共享的 `storage/app.db` 或 `data/raw`。先在页面创建本地 workspace，再上传 PDF、
+Markdown 或 TXT；每个 workspace 都拥有自己的 `uploads/`、`workspace.db` 和 LangGraph checkpoint，位于
+`storage/workspaces/<workspace-id>/`。在页面按“导入文档 → 构建知识图谱 → 构建 / 复用索引”顺序操作；构图
+会调用 DeepSeek，因此始终由用户手动触发。不同 workspace 的语料、图谱和索引完全隔离。
+
 实体、关系与图路径只能作为检索线索，不能直接作为事实引用。最终回答的 citation 只能指向本次 Agent run
 实际读取的原始 chunk；没有足够证据时系统会返回 `insufficient_evidence`。
 
@@ -97,6 +102,8 @@ uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
 uv run hybrid-rag build-graph --limit 10
 uv run hybrid-rag build-index
 ```
+
+构图默认会重试历史上失败的抽取；仅在明确需要跳过它们时使用 `--no-retry-failed`。
 
 没有图谱时，`naive` 可正常使用，默认的 `mix` 仍会保留 chunk 路径；`hybrid` 仅组合图谱的
 `local` 与 `global` 路径，因此可能没有结果。构图后，`local`、`global`、`hybrid` 与 `mix`

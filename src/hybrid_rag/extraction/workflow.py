@@ -53,7 +53,7 @@ class WorkflowOptions:
     max_concurrency: int = 8
     max_attempts: int = 3
     limit: int | None = None
-    retry_failed: bool = False
+    retry_failed: bool = True
     review_required: bool = False
     top_k: int = 10
     retry_backoff_seconds: float = 1.0
@@ -203,7 +203,7 @@ class GraphBuildWorkflow:
                 session,
                 state["run_id"],
                 limit=state.get("limit"),
-                retry_failed=state.get("retry_failed", False),
+                retry_failed=state.get("retry_failed", True),
             )
             jobs = self.repository.list_pending_jobs(session, state["run_id"])
         return {"scheduled_ids": [str(job["id"]) for job in jobs]}

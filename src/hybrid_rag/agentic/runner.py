@@ -431,7 +431,10 @@ class AgentRunner:
             tool=action.action,
             ok=True,
             summary="Generated an answer from session-scoped source evidence.",
-            data={"answer": answer.model_dump(mode="json")},
+            # Keep the strict Python contract intact while the loop consumes the
+            # outcome. The SSE event and audit report serialize this tuple to a
+            # JSON array only at their external boundary.
+            data={"answer": answer.model_dump()},
         )
 
     def _register_context(self, session: _AgentSession, items: Sequence[ContextItem]) -> None:
