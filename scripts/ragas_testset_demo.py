@@ -1,4 +1,4 @@
-"""Generate a corpus-bound Ragas test set from supported files in ``data/raw``.
+"""Generate a corpus-bound Ragas test set from a user-selected source directory.
 
 The reusable helpers live in :mod:`hybrid_rag.evaluation.testset`. This CLI
 keeps a small default sample for cost-safe demos; pass ``--all-documents`` to
@@ -22,14 +22,18 @@ from hybrid_rag.evaluation.testset import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_DIR = ROOT / "data" / "raw"
-DEFAULT_OUTPUT_PATH = ROOT / "data" / "processed" / "ragas-testset-demo.json"
+DEFAULT_OUTPUT_PATH = ROOT / "artifacts" / "ragas" / "ragas-testset.json"
 load_dotenv(ROOT / ".env")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-dir", type=Path, default=DEFAULT_SOURCE_DIR)
+    parser.add_argument(
+        "--source-dir",
+        type=Path,
+        required=True,
+        help="Uploaded workspace directory, or another local document directory.",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument(
         "--corpus-content-hash",

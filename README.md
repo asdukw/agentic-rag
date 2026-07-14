@@ -1,8 +1,8 @@
 # Hybrid RAG
 
-一个以学习和演示为主的 Hybrid/Graph RAG 项目。默认使用仓库内的小型 fixture 语料，展示从文档导入、
-索引与可选知识图谱构建，到检索、回答和 citation 追溯的完整效果；也可选用一组固定版本的 RAG 相关论文
-作为更完整的演示语料。
+一个以学习和演示为主的 Hybrid/Graph RAG 项目。Web UI 由用户上传自己的文档；仓库内的小型 fixture
+语料仅用于 CLI 开发和演示。项目展示从文档导入、索引与可选知识图谱构建，到检索、回答和 citation
+追溯的完整效果。
 不以生产部署或通用知识库能力为主要目标。
 
 ```text
@@ -14,9 +14,9 @@
 
 ## Quick Start
 
-需要 Python 3.11--3.13、[uv](https://docs.astral.sh/uv/) 和 [Bun](https://bun.sh/)。默认流程使用仓库内的
-`tests/fixtures/corpus`，不需要下载论文；首次建立索引时会下载本地 BGE-M3 模型权重，因此需要网络，
-但不需要 embedding API key。默认数据库为 `storage/app.db`。
+需要 Python 3.11--3.13、[uv](https://docs.astral.sh/uv/) 和 [Bun](https://bun.sh/)。下面的 CLI 演示使用
+仓库内的 `tests/fixtures/corpus`；实际使用请通过 Web UI 上传自己的语料。首次建立索引时会下载本地 BGE-M3
+模型权重，因此需要网络，但不需要 embedding API key。CLI 默认数据库为 `storage/app.db`。
 
 ```bash
 uv sync --dev
@@ -70,7 +70,7 @@ bun run dev
 图扩展、受 token 预算限制的证据读取，以及只基于已读 chunk 的回答。每次 run 会将完整事件记录写入
 `artifacts/agent-runs/`；每一步检索仍保留现有的 `rtr_` trace。
 
-Web UI 不再默认使用共享的 `storage/app.db` 或 `data/raw`。先在页面创建本地 workspace，再上传 PDF、
+Web UI 不再使用共享的 `storage/app.db` 或项目级语料目录。先在页面创建本地 workspace，再上传 PDF、
 Markdown 或 TXT；每个 workspace 都拥有自己的 `uploads/`、`workspace.db` 和 LangGraph checkpoint，位于
 `storage/workspaces/<workspace-id>/`。在页面按“导入文档 → 构建知识图谱 → 构建 / 复用索引”顺序操作；构图
 会调用 DeepSeek，因此始终由用户手动触发。不同 workspace 的语料、图谱和索引完全隔离。
@@ -146,28 +146,35 @@ naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次�
 身份和内容生成，不能用 PDF 文件哈希、图谱 hash 或自行编造的值替代。
 
 ```bash
-# 建立或刷新待评测的索引，并记录输出中的 corpus_content_hash。
-uv run hybrid-rag build-index --json
+# 对指定 workspace 建立或刷新待评测的索引，并记录输出中的 corpus_content_hash。
+uv run hybrid-rag build-index \
+  --db storage/workspaces/<workspace-id>/workspace.db \
+  --json
 
-# Ragas 生成测试集。DEEPSEEK_API_KEY 是必需的。
+# Ragas 从该 workspace 已上传的文档生成测试集。DEEPSEEK_API_KEY 是必需的。
 uv run scripts/ragas_testset_demo.py \
+  --source-dir storage/workspaces/<workspace-id>/uploads \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
-  --output data/processed/my-ragas-testset.json
+  --output artifacts/ragas/my-ragas-testset.json
 
-# 完整覆盖 data/raw（递归读取所有受支持文件及其全部段落/页面）。
+# 完整覆盖该 workspace 的 uploads（递归读取所有受支持文件及其全部段落/页面）。
 # 先用 --dry-run 核对载入量；全量生成会增加模型调用成本。
 uv run scripts/ragas_testset_demo.py \
+  --source-dir storage/workspaces/<workspace-id>/uploads \
   --all-documents \
   --testset-size 20 \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
-  --output data/processed/full-ragas-testset.json
+  --output artifacts/ragas/full-ragas-testset.json
 
 # 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
-uv run hybrid-rag evaluate --testset data/processed/my-ragas-testset.json
+uv run hybrid-rag evaluate \
+  --db storage/workspaces/<workspace-id>/workspace.db \
+  --testset artifacts/ragas/my-ragas-testset.json
 
 # 可选：在同一测试集和同一索引上比较多个模式。
 uv run hybrid-rag evaluate \
-  --testset data/processed/my-ragas-testset.json \
+  --db storage/workspaces/<workspace-id>/workspace.db \
+  --testset artifacts/ragas/my-ragas-testset.json \
   --modes naive,mix
 
 ```
@@ -189,44 +196,37 @@ uv run hybrid-rag evaluate \
 ```
 
 生成脚本复用 ingest 的 loader 与清洗逻辑，递归支持 `.pdf`、`.md`、`.markdown` 与 `.txt`。默认只读取
-2 个文件、每个 6 个 loader segment，便于演示；传入 `--all-documents` 会覆盖整个 `data/raw`，也可用
+2 个文件、每个 6 个 loader segment，便于演示；传入 `--all-documents` 会覆盖指定 workspace 的 `uploads`，也可用
 `--max-documents 0 --max-segments-per-document 0` 单独解除限制。公共 helper 位于
 `hybrid_rag.evaluation.testset`：`load_ragas_documents`、`generate_ragas_cases`、
 `build_ragas_testset_envelope` 与 `write_ragas_testset` 可供自定义工作流复用。无论选取多少文件，
 `corpus_content_hash` 都必须对应实际用于 `evaluate` 的完整 index profile。语料内容、导入/分块配置或
 待评测 profile 改变后，重新执行 `ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
 `artifacts/evaluations/ragas-<测试集文件名>.json`；默认模式为 `mix`，可用 `--modes naive,mix`
-做显式对比。`data/processed` 下的文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前
+做显式对比。测试集文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前 workspace
 profile 语料 hash 绑定的文件。Agentic RAG Web 工作台可查看工具调用、证据、图路径与 trace，但不替代
 Ragas 评测。评测报告还会记录测试集文件 SHA-256、锁定的 profile、检索参数，以及回答和评审模型的
 非敏感运行配置，便于区分同一语料上的不同题集或执行条件。
 
-### 下载论文语料（可选）
+### 上传用户语料
 
-若需要使用更接近真实研究资料的演示语料，可下载 `data/corpus.json` 中定义、版本固定且经过
-SHA-256 校验的 RAG 论文到 `data/raw`。这一步需要网络：
+产品语料由用户在 Web UI 中上传，不提供内置论文下载命令。启动服务和页面后，创建 workspace，上传
+PDF、Markdown 或 TXT，再依次点击“导入文档 → 构建知识图谱 → 构建 / 复用索引”。每个 workspace 使用
+独立的数据库和上传目录，互不影响。
 
 ```bash
-uv run hybrid-rag corpus download
-uv run hybrid-rag ingest data/raw
+uv run hybrid-rag serve
+cd web
+bun install
+bun run dev
 ```
 
-也可以手动将允许使用的 PDF 放入 `data/raw` 后直接执行 `ingest data/raw`。
+命令行的 `ingest <目录或文件> --db <SQLite文件>` 仍保留，供开发、自动化或批处理使用；它不会下载任何语料。
 
 ### 配置 DeepSeek
 
 本项目的 embedding 固定使用本地 FlagEmbedding 模型；查看 [.env.example](.env.example) 可配置
 DeepSeek 模型、API 地址和 Ragas 评审模型。
-
-### 自定义论文语料
-
-内置论文语料由 `data/corpus.json` 定义；也可以指定自己的论文清单和输出目录：
-
-```bash
-uv run hybrid-rag corpus download --manifest path/to/corpus.json --output data/raw
-```
-
-下载受本机网络与证书配置影响。
 
 ## 工程保证与边界
 
