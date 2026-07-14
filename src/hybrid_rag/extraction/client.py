@@ -4,11 +4,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from hybrid_rag.extraction.prompts import (
-    ChatMessage,
-    build_extraction_messages,
-    build_repair_messages,
-)
+from hybrid_rag.extraction.prompts import (ChatMessage,
+                                           build_extraction_messages,
+                                           build_repair_messages)
 
 
 @dataclass(frozen=True, slots=True)

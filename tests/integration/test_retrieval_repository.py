@@ -4,23 +4,14 @@ from sqlalchemy.orm import Session
 
 from hybrid_rag.ids import sha256_text
 from hybrid_rag.storage.database import Database
-from hybrid_rag.storage.models import (
-    ChunkExtractionRecord,
-    ChunkRecord,
-    DocumentRecord,
-    EntityEvidenceRecord,
-    EntityRecord,
-    GraphBuildRunRecord,
-    RelationEvidenceRecord,
-    RelationRecord,
-)
-from hybrid_rag.storage.retrieval_repository import (
-    IndexItem,
-    IndexProfile,
-    RetrievalRepository,
-    RetrievalTrace,
-    make_profile_id,
-)
+from hybrid_rag.storage.models import (ChunkExtractionRecord, ChunkRecord,
+                                       DocumentRecord, EntityEvidenceRecord,
+                                       EntityRecord, GraphBuildRunRecord,
+                                       RelationEvidenceRecord, RelationRecord)
+from hybrid_rag.storage.retrieval_repository import (IndexItem, IndexProfile,
+                                                     RetrievalRepository,
+                                                     RetrievalTrace,
+                                                     make_profile_id)
 
 
 def test_rebuild_load_snapshot_and_replay_trace() -> None:

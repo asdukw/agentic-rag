@@ -5,16 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from hybrid_rag.retrieval import (
-    DeepSeekQueryClient,
-    DeterministicQueryClient,
-    EvidenceItem,
-    QueryConfigurationError,
-    QueryValidationError,
-    QueryValidationFailureKind,
-    validate_answer_completion,
-    validate_keyword_completion,
-)
+from hybrid_rag.retrieval import (DeepSeekQueryClient,
+                                  DeterministicQueryClient, EvidenceItem,
+                                  QueryConfigurationError,
+                                  QueryValidationError,
+                                  QueryValidationFailureKind,
+                                  validate_answer_completion,
+                                  validate_keyword_completion)
 
 
 class FakeCompletions:

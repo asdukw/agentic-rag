@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from hybrid_rag.ids import canonical_json_hash, file_source_uri, sha256_file, stable_id
+from hybrid_rag.ids import (canonical_json_hash, file_source_uri, sha256_file,
+                            stable_id)
 from hybrid_rag.ingest.chunker import SectionTokenChunker
-from hybrid_rag.ingest.cleaner import CLEANER_NAME, CLEANER_VERSION, clean_document
+from hybrid_rag.ingest.cleaner import (CLEANER_NAME, CLEANER_VERSION,
+                                       clean_document)
 from hybrid_rag.ingest.loaders import LoaderRegistry
 from hybrid_rag.schemas import FileFailure, IngestReport
 from hybrid_rag.storage.database import Database

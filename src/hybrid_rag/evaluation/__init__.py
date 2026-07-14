@@ -1,41 +1,29 @@
 """Reproducible offline evaluation primitives for Hybrid RAG."""
 
-from hybrid_rag.evaluation.benchmark import (
-    BenchmarkLoadError,
-    fixture_benchmark_path,
-    load_benchmark,
-)
-from hybrid_rag.evaluation.contracts import (
-    BENCHMARK_SCHEMA_VERSION,
-    EVALUATION_SCHEMA_VERSION,
-    BenchmarkCase,
-    BlindCandidate,
-    BlindComparison,
-    BlindJudgment,
-    BlindLabel,
-    BlindWinner,
-    ComparisonSummary,
-    CostDisclosure,
-    CostStatus,
-    EvaluationBenchmark,
-    EvaluationCategory,
-    EvaluationOptions,
-    EvaluationReport,
-    EvaluationRun,
-    ExpectedEvidence,
-    IndexProvenance,
-    JudgeProvenance,
-    ModeSummary,
-    PairwiseJudgment,
-    RetrievalEvaluation,
-)
-from hybrid_rag.evaluation.deepseek_judge import (
-    DeepSeekBlindJudge,
-    DeepSeekJudgeError,
-    JudgeUsage,
-)
-from hybrid_rag.evaluation.judge import BlindJudge, DeterministicBlindJudge, blind_comparison
-from hybrid_rag.evaluation.reports import render_markdown, write_json, write_markdown
+from hybrid_rag.evaluation.benchmark import (BenchmarkLoadError,
+                                             fixture_benchmark_path,
+                                             load_benchmark)
+from hybrid_rag.evaluation.contracts import (BENCHMARK_SCHEMA_VERSION,
+                                             EVALUATION_SCHEMA_VERSION,
+                                             BenchmarkCase, BlindCandidate,
+                                             BlindComparison, BlindJudgment,
+                                             BlindLabel, BlindWinner,
+                                             ComparisonSummary, CostDisclosure,
+                                             CostStatus, EvaluationBenchmark,
+                                             EvaluationCategory,
+                                             EvaluationOptions,
+                                             EvaluationReport, EvaluationRun,
+                                             ExpectedEvidence, IndexProvenance,
+                                             JudgeProvenance, ModeSummary,
+                                             PairwiseJudgment,
+                                             RetrievalEvaluation)
+from hybrid_rag.evaluation.deepseek_judge import (DeepSeekBlindJudge,
+                                                  DeepSeekJudgeError,
+                                                  JudgeUsage)
+from hybrid_rag.evaluation.judge import (BlindJudge, DeterministicBlindJudge,
+                                         blind_comparison)
+from hybrid_rag.evaluation.reports import (render_markdown, write_json,
+                                           write_markdown)
 from hybrid_rag.evaluation.runner import EvaluationRunner
 
 __all__ = [

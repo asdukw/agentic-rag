@@ -2,18 +2,12 @@ from __future__ import annotations
 
 import json
 
-from hybrid_rag.extraction.graph import (
-    build_networkx_graph,
-    node_link_json,
-    summarize_graph,
-)
-from hybrid_rag.extraction.normalization import merge_relations, normalize_entities
-from hybrid_rag.extraction.schemas import (
-    EntityMention,
-    EntityType,
-    EvidenceSpan,
-    RelationMention,
-)
+from hybrid_rag.extraction.graph import (build_networkx_graph, node_link_json,
+                                         summarize_graph)
+from hybrid_rag.extraction.normalization import (merge_relations,
+                                                 normalize_entities)
+from hybrid_rag.extraction.schemas import (EntityMention, EntityType,
+                                           EvidenceSpan, RelationMention)
 
 
 def _evidence(chunk_id: str, quote: str) -> tuple[EvidenceSpan, ...]:

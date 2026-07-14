@@ -7,26 +7,18 @@ from statistics import median
 from time import perf_counter_ns
 from uuid import uuid4
 
-from hybrid_rag.evaluation.contracts import (
-    BenchmarkCase,
-    BlindJudgment,
-    BlindLabel,
-    BlindWinner,
-    ComparisonSummary,
-    CostDisclosure,
-    CostStatus,
-    EvaluationBenchmark,
-    EvaluationOptions,
-    EvaluationReport,
-    EvaluationRun,
-    ExpectedEvidence,
-    IndexProvenance,
-    JudgeProvenance,
-    ModeSummary,
-    PairwiseJudgment,
-    RetrievalEvaluation,
-)
-from hybrid_rag.evaluation.judge import BlindJudge, DeterministicBlindJudge, blind_comparison
+from hybrid_rag.evaluation.contracts import (BenchmarkCase, BlindJudgment,
+                                             BlindLabel, BlindWinner,
+                                             ComparisonSummary, CostDisclosure,
+                                             CostStatus, EvaluationBenchmark,
+                                             EvaluationOptions,
+                                             EvaluationReport, EvaluationRun,
+                                             ExpectedEvidence, IndexProvenance,
+                                             JudgeProvenance, ModeSummary,
+                                             PairwiseJudgment,
+                                             RetrievalEvaluation)
+from hybrid_rag.evaluation.judge import (BlindJudge, DeterministicBlindJudge,
+                                         blind_comparison)
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.retrieval.models import ContextItem, RetrievalMode
 from hybrid_rag.retrieval.query import EvidenceItem, deterministic_answer

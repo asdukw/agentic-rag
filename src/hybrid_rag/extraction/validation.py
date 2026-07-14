@@ -7,13 +7,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from hybrid_rag.extraction.schemas import (
-    ChunkExtraction,
-    EntityMention,
-    EvidenceSpan,
-    RelationMention,
-    ValidatedChunkExtraction,
-)
+from hybrid_rag.extraction.schemas import (ChunkExtraction, EntityMention,
+                                           EvidenceSpan, RelationMention,
+                                           ValidatedChunkExtraction)
 from hybrid_rag.ids import stable_id
 
 

@@ -8,7 +8,8 @@ from hybrid_rag.config import sqlite_url
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.models import CandidateHit, RetrievalMode
-from hybrid_rag.retrieval.reranker import RerankCandidate, RerankHit, RerankScoreComponent
+from hybrid_rag.retrieval.reranker import (RerankCandidate, RerankHit,
+                                           RerankScoreComponent)
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database

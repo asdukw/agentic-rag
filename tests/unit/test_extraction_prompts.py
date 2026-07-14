@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from hybrid_rag.extraction.prompts import build_extraction_messages, build_repair_messages
-from hybrid_rag.extraction.schemas import (
-    EXTRACTION_PROMPT_VERSION,
-    EXTRACTION_SCHEMA_VERSION,
-    REPAIR_PROMPT_VERSION,
-    ExtractionConfig,
-)
+from hybrid_rag.extraction.prompts import (build_extraction_messages,
+                                           build_repair_messages)
+from hybrid_rag.extraction.schemas import (EXTRACTION_PROMPT_VERSION,
+                                           EXTRACTION_SCHEMA_VERSION,
+                                           REPAIR_PROMPT_VERSION,
+                                           ExtractionConfig)
 
 
 def _schema_from_system_prompt(system_prompt: str) -> dict[str, Any]:

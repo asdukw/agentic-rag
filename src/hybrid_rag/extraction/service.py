@@ -10,20 +10,16 @@ from langgraph.types import Command
 
 from hybrid_rag.deepseek_costs import DeepSeekPricing
 from hybrid_rag.extraction.client import ExtractionClient
-from hybrid_rag.extraction.reports import (
-    GraphBuildReport,
-    GraphStorageStats,
-)
+from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
 from hybrid_rag.extraction.schemas import ExtractionConfig, GraphConfig
-from hybrid_rag.extraction.workflow import (
-    WORKFLOW_VERSION,
-    GraphBuildWorkflow,
-    WorkflowOptions,
-    workflow_options_payload,
-    workflow_state,
-)
+from hybrid_rag.extraction.workflow import (WORKFLOW_VERSION,
+                                            GraphBuildWorkflow,
+                                            WorkflowOptions,
+                                            workflow_options_payload,
+                                            workflow_state)
 from hybrid_rag.storage.database import Database
-from hybrid_rag.storage.graph_repository import GraphRepository, GraphRepositoryError
+from hybrid_rag.storage.graph_repository import (GraphRepository,
+                                                 GraphRepositoryError)
 
 
 class GraphBuildService:

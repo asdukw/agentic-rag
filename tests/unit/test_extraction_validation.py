@@ -4,12 +4,11 @@ import json
 
 import pytest
 
-from hybrid_rag.extraction.schemas import EntityType, ExtractionConfig, GraphConfig
-from hybrid_rag.extraction.validation import (
-    ExtractionValidationError,
-    ValidationFailureKind,
-    validate_completion,
-)
+from hybrid_rag.extraction.schemas import (EntityType, ExtractionConfig,
+                                           GraphConfig)
+from hybrid_rag.extraction.validation import (ExtractionValidationError,
+                                              ValidationFailureKind,
+                                              validate_completion)
 
 
 def _payload() -> dict[str, object]:

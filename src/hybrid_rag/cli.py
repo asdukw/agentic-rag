@@ -10,55 +10,38 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from hybrid_rag.config import (
-    DeepSeekPricingSettings,
-    DeepSeekSettings,
-    EvaluationSettings,
-    GraphSettings,
-    RetrievalSettings,
-    Settings,
-    sqlite_url,
-)
+from hybrid_rag.config import (DeepSeekPricingSettings, DeepSeekSettings,
+                               EvaluationSettings, GraphSettings,
+                               RetrievalSettings, Settings, sqlite_url)
 from hybrid_rag.corpus import download_manifest
-from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary, DeepSeekPricing
-from hybrid_rag.evaluation import (
-    CostDisclosure,
-    CostStatus,
-    EvaluationOptions,
-    EvaluationReport,
-    EvaluationRunner,
-    load_benchmark,
-)
-from hybrid_rag.evaluation import (
-    write_json as write_evaluation_json,
-)
-from hybrid_rag.evaluation import (
-    write_markdown as write_evaluation_markdown,
-)
+from hybrid_rag.deepseek_costs import (DeepSeekCostStatus, DeepSeekCostSummary,
+                                       DeepSeekPricing)
+from hybrid_rag.evaluation import (CostDisclosure, CostStatus,
+                                   EvaluationOptions, EvaluationReport,
+                                   EvaluationRunner, load_benchmark)
+from hybrid_rag.evaluation import write_json as write_evaluation_json
+from hybrid_rag.evaluation import write_markdown as write_evaluation_markdown
 from hybrid_rag.evaluation.deepseek_judge import DeepSeekBlindJudge
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
-from hybrid_rag.extraction.schemas import (
-    EXTRACTION_PROMPT_VERSION,
-    EXTRACTION_SCHEMA_VERSION,
-    REPAIR_PROMPT_VERSION,
-    ExtractionConfig,
-    GraphConfig,
-)
+from hybrid_rag.extraction.schemas import (EXTRACTION_PROMPT_VERSION,
+                                           EXTRACTION_SCHEMA_VERSION,
+                                           REPAIR_PROMPT_VERSION,
+                                           ExtractionConfig, GraphConfig)
 from hybrid_rag.extraction.service import GraphBuildService
 from hybrid_rag.extraction.workflow import WorkflowOptions
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
-from hybrid_rag.retrieval.embedding import (
-    BGEM3EmbeddingProvider,
-    EmbeddingConfigurationError,
-    HashEmbeddingProvider,
-)
-from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.embedding import (BGEM3EmbeddingProvider,
+                                            EmbeddingConfigurationError,
+                                            HashEmbeddingProvider)
+from hybrid_rag.retrieval.models import (IndexBuildReport, RetrievalMode,
+                                         RetrievalResult)
 from hybrid_rag.retrieval.query import DeepSeekQueryClient, QueryClient
 from hybrid_rag.retrieval.reranker import create_reranker
-from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
+from hybrid_rag.retrieval.service import (AnswerResult, RetrievalOptions,
+                                          RetrievalService)
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import GraphRepository
 from hybrid_rag.storage.migrations import upgrade_database

@@ -7,15 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from hybrid_rag.config import DeepSeekSettings
-from hybrid_rag.evaluation import (
-    CostDisclosure,
-    CostStatus,
-    EvaluationBenchmark,
-    EvaluationCategory,
-    EvaluationOptions,
-    fixture_benchmark_path,
-    load_benchmark,
-)
+from hybrid_rag.evaluation import (CostDisclosure, CostStatus,
+                                   EvaluationBenchmark, EvaluationCategory,
+                                   EvaluationOptions, fixture_benchmark_path,
+                                   load_benchmark)
 from hybrid_rag.retrieval.models import RetrievalMode
 
 

@@ -3,14 +3,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-    field_validator,
-    model_validator,
-)
+from pydantic import (BaseModel, ConfigDict, Field, StringConstraints,
+                      field_validator, model_validator)
 
 from hybrid_rag.ids import canonical_json_hash
 

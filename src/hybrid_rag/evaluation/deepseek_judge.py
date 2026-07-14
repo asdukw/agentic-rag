@@ -15,8 +15,10 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from hybrid_rag.deepseek_costs import DeepSeekUsage, aggregate_deepseek_usage, deepseek_usage
-from hybrid_rag.evaluation.contracts import BlindComparison, BlindJudgment, JudgeProvenance
+from hybrid_rag.deepseek_costs import (DeepSeekUsage, aggregate_deepseek_usage,
+                                       deepseek_usage)
+from hybrid_rag.evaluation.contracts import (BlindComparison, BlindJudgment,
+                                             JudgeProvenance)
 from hybrid_rag.extraction.client import CompletionResult, DeepSeekClient
 from hybrid_rag.extraction.prompts import ChatMessage
 

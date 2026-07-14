@@ -20,18 +20,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from hybrid_rag.ids import canonical_json_hash, sha256_text, stable_id
-from hybrid_rag.storage.models import (
-    ChunkRecord,
-    DocumentRecord,
-    EmbeddingProfileRecord,
-    EmbeddingVectorRecord,
-    EntityEvidenceRecord,
-    EntityRecord,
-    GraphBuildRunRecord,
-    RelationEvidenceRecord,
-    RelationRecord,
-    RetrievalTraceRecord,
-)
+from hybrid_rag.storage.models import (ChunkRecord, DocumentRecord,
+                                       EmbeddingProfileRecord,
+                                       EmbeddingVectorRecord,
+                                       EntityEvidenceRecord, EntityRecord,
+                                       GraphBuildRunRecord,
+                                       RelationEvidenceRecord, RelationRecord,
+                                       RetrievalTraceRecord)
 
 INDEX_KINDS = frozenset({"chunk", "entity", "relation"})
 RETRIEVAL_MODES = frozenset({"naive", "local", "global", "hybrid"})

@@ -768,6 +768,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "flagembedding" },
+    { name = "isort" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-sqlite" },
     { name = "networkx" },
@@ -794,6 +795,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "flagembedding", specifier = ">=1.4,<2" },
+    { name = "isort", specifier = ">=8.0.1" },
     { name = "langgraph", specifier = ">=1.2,<2" },
     { name = "langgraph-checkpoint-sqlite", specifier = ">=3.1,<4" },
     { name = "networkx", specifier = ">=3.6,<4" },
@@ -850,6 +852,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3f/d6/f09b7437bff755638e47b4a967a193e5c2c41d8e8b111dfa971d19f10f10/ir_datasets-0.6.1.tar.gz", hash = "sha256:51c6cfc86cf9a8b27b140f2baf41841ef4342ba9fd0287a3a2091d9d9ff2b236", size = 837103, upload-time = "2026-06-19T09:36:34.783Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/c4/d50ceb287ae6c225d6322e099861bb90edcfa76590ee68ac92311aa46e9f/ir_datasets-0.6.1-py3-none-any.whl", hash = "sha256:fc9529f71cb285a56fefc8c8755c561af528dd1092a464ed64f993745e83c91c", size = 947474, upload-time = "2026-06-19T09:36:33.364Z" },
+]
+
+[[package]]
+name = "isort"
+version = "8.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/7c/ec4ab396d31b3b395e2e999c8f46dec78c5e29209fac49d1f4dace04041d/isort-8.0.1.tar.gz", hash = "sha256:171ac4ff559cdc060bcfff550bc8404a486fee0caab245679c2abe7cb253c78d", size = 769592, upload-time = "2026-02-28T10:08:20.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/95/c7c34aa53c16353c56d0b802fba48d5f5caa2cdee7958acbcb795c830416/isort-8.0.1-py3-none-any.whl", hash = "sha256:28b89bc70f751b559aeca209e6120393d43fbe2490de0559662be7a9787e3d75", size = 89733, upload-time = "2026-02-28T10:08:19.466Z" },
 ]
 
 [[package]]
