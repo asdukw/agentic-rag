@@ -1,0 +1,87 @@
+"""Serializable contracts for one bounded agentic retrieval run."""
+
+from __future__ import annotations
+
+from enum import StrEnum
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class AgentActionName(StrEnum):
+    SEARCH_CHUNKS = "search_chunks"
+    SEARCH_ENTITIES = "search_entities"
+    SEARCH_RELATIONS = "search_relations"
+    EXPAND_GRAPH = "expand_graph"
+    READ_EVIDENCE = "read_evidence"
+    ANSWER_FROM_EVIDENCE = "answer_from_evidence"
+    FINISH = "finish"
+
+
+class AgentAction(BaseModel):
+    """One planner-selected action; arguments are validated by the receiving tool."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action: AgentActionName
+    args: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = Field(default="", max_length=500)
+
+
+class AgentBudget(BaseModel):
+    """Hard server-side limits for one run, never chosen by the planner."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    max_steps: int = Field(default=6, ge=1, le=12)
+    max_searches: int = Field(default=3, ge=1, le=8)
+    max_graph_expansions: int = Field(default=2, ge=0, le=4)
+    max_reads: int = Field(default=2, ge=1, le=4)
+    max_evidence_chunks: int = Field(default=8, ge=1, le=16)
+    max_graph_hops: int = Field(default=2, ge=1, le=2)
+    evidence_token_budget: int = Field(default=2400, ge=128, le=8000)
+
+
+class AgentEvent(BaseModel):
+    """One JSON-serializable event emitted by :class:`AgentRunner`."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    event: Literal[
+        "run_started",
+        "planner_action",
+        "tool_result",
+        "answer",
+        "completed",
+        "failed",
+    ]
+    run_id: str
+    step: int = Field(ge=0)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolOutcome(BaseModel):
+    """A compact tool result safe to reveal to both planner and browser."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tool: AgentActionName
+    ok: bool
+    summary: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunReport(BaseModel):
+    """Durable, inspectable report written after a completed or failed run."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    run_id: str
+    question: str
+    profile_id: str
+    corpus_content_hash: str | None = None
+    planner: str
+    budget: AgentBudget
+    events: tuple[AgentEvent, ...]
+    status: Literal["completed", "failed"]
+    termination_reason: str

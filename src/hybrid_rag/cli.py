@@ -66,6 +66,18 @@ app.add_typer(retrieval_app, name="retrieval")
 console = Console()
 
 
+@app.command("serve")
+def serve(
+    host: Annotated[str, typer.Option("--host", help="Bind host for the local web API")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535, help="Bind port")] = 8000,
+) -> None:
+    """Serve the local Python agent API consumed by the Bun/React workbench."""
+
+    import uvicorn
+
+    uvicorn.run("hybrid_rag.web_api:app", host=host, port=port)
+
+
 def _database_url(db_path: Path | None, settings: Settings) -> str:
     return sqlite_url(db_path) if db_path is not None else settings.database_url
 

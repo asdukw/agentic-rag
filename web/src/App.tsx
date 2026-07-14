@@ -1,0 +1,415 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ApiError, buildIndex, health, runtimeDefaults, streamAgentRun } from "./api";
+import type {
+  AgentBudget,
+  AgentEvent,
+  AgentRunRequest,
+  EvidenceItem,
+  GroundedAnswer,
+} from "./types";
+
+const DEFAULT_BUDGET: AgentBudget = {
+  max_steps: 6,
+  max_searches: 3,
+  max_graph_expansions: 2,
+  max_reads: 2,
+  max_evidence_chunks: 8,
+  max_graph_hops: 2,
+  evidence_token_budget: 2400,
+};
+
+const TOOL_LABELS: Record<string, { title: string; copy: string }> = {
+  search_chunks: { title: "Chunk search", copy: "Dense, BM25, or both — chosen per question." },
+  search_entities: { title: "Entity search", copy: "Use entities as graph retrieval anchors." },
+  search_relations: {
+    title: "Relation search",
+    copy: "Search relation semantics and source passages.",
+  },
+  expand_graph: { title: "Graph expansion", copy: "Bounded to discovered IDs and two hops." },
+  read_evidence: { title: "Read evidence", copy: "Only discovered chunks enter the evidence set." },
+  answer_from_evidence: {
+    title: "Grounded answer",
+    copy: "Citations are verified against read chunks.",
+  },
+};
+
+export default function App() {
+  const [apiBase, setApiBase] = useState(() => localStorage.getItem("hybrid-rag-api") ?? "");
+  const [databaseUrl, setDatabaseUrl] = useState("");
+  const [profileId, setProfileId] = useState("");
+  const [question, setQuestion] = useState("");
+  const [useDeepSeek, setUseDeepSeek] = useState(false);
+  const [budget, setBudget] = useState(DEFAULT_BUDGET);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
+  const [status, setStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [running, setRunning] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const base = apiBase.trim();
+  const runId = events[0]?.run_id;
+  const plannerActions = useMemo(
+    () => events.filter((event) => event.event === "planner_action"),
+    [events],
+  );
+
+  useEffect(() => {
+    localStorage.setItem("hybrid-rag-api", apiBase);
+  }, [apiBase]);
+
+  const refreshRuntime = useCallback(async () => {
+    setStatus("checking");
+    try {
+      const [current, defaults] = await Promise.all([health(base), runtimeDefaults(base)]);
+      setStatus(current.status === "ok" ? "online" : "offline");
+      setBudget((value) => ({ ...value, ...defaults.agent_budget }));
+    } catch {
+      setStatus("offline");
+    }
+  }, [base]);
+
+  useEffect(() => {
+    void refreshRuntime();
+  }, [refreshRuntime]);
+
+  async function runAgent() {
+    if (!question.trim()) {
+      setError("请输入问题后再运行 Agent。");
+      return;
+    }
+    setRunning(true);
+    setError(null);
+    setNotice(null);
+    setEvents([]);
+    setAnswer(null);
+    setEvidence([]);
+    const payload: AgentRunRequest = {
+      question: question.trim(),
+      ...(profileId.trim() ? { profile_id: profileId.trim() } : {}),
+      ...(databaseUrl.trim() ? { database_url: databaseUrl.trim() } : {}),
+      use_deepseek: useDeepSeek,
+      budget,
+    };
+    try {
+      await streamAgentRun(base, payload, (event) => {
+        setEvents((current) => [...current, event]);
+        if (event.event === "answer") {
+          const data = event.data as { answer?: GroundedAnswer; evidence?: EvidenceItem[] };
+          setAnswer(data.answer ?? null);
+          setEvidence(data.evidence ?? []);
+        }
+        if (event.event === "failed") {
+          setError(String(event.data.error ?? "Agent 运行失败。"));
+        }
+        if (event.event === "completed") {
+          setNotice(
+            `Run ${event.run_id} 已完成：${String(event.data.termination_reason ?? "done")}`,
+          );
+        }
+      });
+      void refreshRuntime();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "无法连接到 Python Agent 服务。");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function requestIndexBuild() {
+    setError(null);
+    setNotice("正在构建索引…");
+    try {
+      const report = await buildIndex(
+        base,
+        databaseUrl.trim() ? { database_url: databaseUrl.trim() } : {},
+      );
+      setNotice(
+        `索引就绪：${report.chunks} chunks / ${report.entities} entities / ${report.relations} relations`,
+      );
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "构建索引失败。");
+    }
+  }
+
+  return (
+    <main className="shell">
+      <header className="masthead">
+        <div>
+          <p className="eyebrow">Hybrid RAG · Python Agent Runtime</p>
+          <h1>Agentic evidence workbench</h1>
+          <p className="lede">模型决定下一步检索路径；Python 强制执行证据、图谱和引用边界。</p>
+        </div>
+        <button className={`status ${status}`} type="button" onClick={() => void refreshRuntime()}>
+          <span />
+          {status === "online"
+            ? "Agent API 已连接"
+            : status === "checking"
+              ? "检查连接"
+              : "API 未连接"}
+        </button>
+      </header>
+
+      <section className="hero-grid">
+        <section className="question-card">
+          <div className="section-kicker">01 · Ask</div>
+          <label htmlFor="question">研究问题</label>
+          <textarea
+            id="question"
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="例如：LightRAG 如何将实体和关系用于不同范围的检索？"
+            rows={4}
+          />
+          <div className="run-row">
+            <button
+              className="run-button"
+              type="button"
+              onClick={() => void runAgent()}
+              disabled={running}
+            >
+              {running ? "Agent 正在执行…" : "启动 Agent Run"}
+            </button>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={useDeepSeek}
+                onChange={(event) => setUseDeepSeek(event.target.checked)}
+              />{" "}
+              使用 DeepSeek 规划与回答
+            </label>
+          </div>
+          <p className="hint">不开启模型时，系统会以确定性策略执行相同的受限工具链。</p>
+        </section>
+
+        <aside className="runtime-card">
+          <div className="section-kicker">Runtime</div>
+          <label>
+            API Base URL
+            <input
+              value={apiBase}
+              onChange={(event) => setApiBase(event.target.value)}
+              placeholder="同域 /api 留空"
+            />
+          </label>
+          <label>
+            SQLite 数据库
+            <input
+              value={databaseUrl}
+              onChange={(event) => setDatabaseUrl(event.target.value)}
+              placeholder="留空使用后端默认：storage/app.db"
+            />
+          </label>
+          <label>
+            Index Profile（可选）
+            <input
+              value={profileId}
+              onChange={(event) => setProfileId(event.target.value)}
+              placeholder="idx_…"
+            />
+          </label>
+          <div className="budget-line">
+            <span>最多 planner steps</span>
+            <input
+              type="number"
+              min="1"
+              max="12"
+              value={budget.max_steps}
+              onChange={(event) =>
+                setBudget({
+                  ...budget,
+                  max_steps: bounded(event.target.value, 1, 12, budget.max_steps),
+                })
+              }
+            />
+          </div>
+          <div className="budget-line">
+            <span>证据 token 预算</span>
+            <input
+              type="number"
+              min="128"
+              max="8000"
+              value={budget.evidence_token_budget}
+              onChange={(event) =>
+                setBudget({
+                  ...budget,
+                  evidence_token_budget: bounded(
+                    event.target.value,
+                    128,
+                    8000,
+                    budget.evidence_token_budget,
+                  ),
+                })
+              }
+            />
+          </div>
+          <button className="subtle-button" type="button" onClick={() => void requestIndexBuild()}>
+            构建 / 复用索引
+          </button>
+        </aside>
+      </section>
+
+      {(error || notice) && (
+        <div className={error ? "banner error" : "banner"}>{error ?? notice}</div>
+      )}
+
+      <section className="tool-strip" aria-label="Agent 工具边界">
+        {Object.entries(TOOL_LABELS).map(([key, value]) => (
+          <article key={key}>
+            <span>{String(Object.keys(TOOL_LABELS).indexOf(key) + 1).padStart(2, "0")}</span>
+            <h2>{value.title}</h2>
+            <p>{value.copy}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="run-layout">
+        <section className="timeline-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">02 · Observe</p>
+              <h2>Agent timeline</h2>
+            </div>
+            <span>{runId ?? "等待运行"}</span>
+          </div>
+          {!events.length ? (
+            <EmptyTimeline />
+          ) : (
+            <ol className="timeline">
+              {events.map((event, index) => (
+                <TimelineEvent
+                  event={event}
+                  index={index}
+                  key={`${event.run_id}-${event.step}-${event.event}`}
+                />
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <section className="answer-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">03 · Verify</p>
+              <h2>Grounded answer</h2>
+            </div>
+            <span>{answer?.citations.length ?? 0} citations</span>
+          </div>
+          {answer ? (
+            <>
+              <p className={answer.insufficient_evidence ? "answer insufficient" : "answer"}>
+                {answer.answer}
+              </p>
+              <div className="citation-row">
+                {answer.citations.map((citation) => (
+                  <span key={citation}>{citation}</span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="empty-copy">
+              回答只会在 Agent 读取证据后出现。引用仅能来自本次会话已经读取的 chunk。
+            </p>
+          )}
+        </section>
+      </section>
+
+      <section className="evidence-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Evidence set</p>
+            <h2>已读取的原始文档片段</h2>
+          </div>
+          <span>{evidence.length} chunks</span>
+        </div>
+        {evidence.length ? (
+          <div className="evidence-grid">
+            {evidence.map((item) => (
+              <EvidenceCard item={item} key={item.chunk_id} />
+            ))}
+          </div>
+        ) : (
+          <p className="empty-copy">
+            Agent 的实体、关系与路径只是检索线索；只有这里的原文 chunk 可以支持最终回答。
+          </p>
+        )}
+      </section>
+
+      {plannerActions.length > 0 && (
+        <details className="raw-log">
+          <summary>查看结构化规划记录</summary>
+          <pre>{JSON.stringify(plannerActions, null, 2)}</pre>
+        </details>
+      )}
+    </main>
+  );
+}
+
+function TimelineEvent({ event, index }: { event: AgentEvent; index: number }) {
+  const detail =
+    event.event === "planner_action"
+      ? String(event.data.rationale ?? event.data.action ?? "")
+      : event.event === "tool_result"
+        ? String(event.data.summary ?? "")
+        : event.event === "answer"
+          ? "答案与可引用证据已准备。"
+          : event.event === "run_started"
+            ? `固定 profile: ${String(event.data.profile_id ?? "—")}`
+            : String(event.data.termination_reason ?? event.data.error ?? "");
+  return (
+    <li className={`event ${event.event}`}>
+      <span className="event-index">{String(index + 1).padStart(2, "0")}</span>
+      <div>
+        <strong>{labelFor(event.event)}</strong>
+        <p>{detail}</p>
+        {event.event === "tool_result" && (
+          <details>
+            <summary>工具结果</summary>
+            <pre>{JSON.stringify(event.data.data ?? {}, null, 2)}</pre>
+          </details>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function EvidenceCard({ item }: { item: EvidenceItem }) {
+  const section = item.section_path?.join(" / ") || "未分段";
+  return (
+    <article className="evidence-card">
+      <div className="evidence-meta">
+        <span>{item.citation_id}</span>
+        <span>{item.token_count} tokens</span>
+      </div>
+      <h3>{item.document_title}</h3>
+      <p className="section">{section}</p>
+      <p>{item.text}</p>
+    </article>
+  );
+}
+
+function EmptyTimeline() {
+  return (
+    <div className="empty-timeline">
+      <span>◌</span>
+      <p>每一步会显示 planner 选择的工具、工具摘要、证据读取与终止原因。</p>
+    </div>
+  );
+}
+
+function bounded(value: string, min: number, max: number, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback;
+}
+
+function labelFor(event: AgentEvent["event"]) {
+  return {
+    run_started: "会话已固定",
+    planner_action: "Planner 决策",
+    tool_result: "工具已执行",
+    answer: "证据约束回答",
+    completed: "运行完成",
+    failed: "运行失败",
+  }[event];
+}

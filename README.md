@@ -14,7 +14,7 @@
 
 ## Quick Start
 
-需要 Python 3.11--3.13 和 [uv](https://docs.astral.sh/uv/)。默认流程使用仓库内的
+需要 Python 3.11--3.13、[uv](https://docs.astral.sh/uv/) 和 [Bun](https://bun.sh/)。默认流程使用仓库内的
 `tests/fixtures/corpus`，不需要下载论文；首次建立索引时会下载本地 BGE-M3 模型权重，因此需要网络，
 但不需要 embedding API key。默认数据库为 `storage/app.db`。
 
@@ -24,7 +24,7 @@ uv sync --dev
 # 导入内置 fixture 语料并切成可追溯的 chunks。
 uv run hybrid-rag ingest tests/fixtures/corpus
 
-# 可选：抽取实体和关系，为 local、global、hybrid 及 mix 提供图谱证据（需要 DEEPSEEK_API_KEY）。
+# 可选：抽取实体和关系（需要 DEEPSEEK_API_KEY）。
 # 只使用 naive，或只需 mix 的 chunk 路径时可跳过这一步。
 uv run hybrid-rag build-graph --limit 10
 
@@ -48,6 +48,30 @@ uv run hybrid-rag ask "How does mix retrieval combine evidence?"
 - 融合后的候选默认使用本地 FlagEmbedding cross-encoder
   `BAAI/bge-reranker-v2-m3` 精排：它批量计算 `[query, passage]` 对的相关性，再决定最终 Top-K。
   首次检索会下载精排模型；将 `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 可跳过二阶段精排。
+
+### Agentic RAG Web 工作台
+
+Web 工作台使用 Bun + React/TypeScript 展示 Agent 的规划、工具调用、证据集和最终引用；Python 是唯一的
+Agent 主循环与安全边界。模型只能在受限工具中选择下一步，不能访问 SQLite、文件、embedding 向量、API key，
+也不能触发 ingest、构图或建索引等副作用操作。
+
+```bash
+# 终端 1：Python Agent API。DeepSeek 密钥只由此进程从 .env 读取。
+uv run hybrid-rag serve
+
+# 终端 2：Bun + React 界面。
+cd web
+bun install
+bun run dev
+```
+
+浏览器打开 Bun 输出的本地地址即可。默认使用确定性 planner；勾选页面中的 DeepSeek 选项后，DeepSeek 会用
+严格 JSON action 在每轮选择一个工具。当前工具为：chunk dense/BM25 检索、实体检索、关系检索、最多两跳的
+图扩展、受 token 预算限制的证据读取，以及只基于已读 chunk 的回答。每次 run 会将完整事件记录写入
+`artifacts/agent-runs/`；每一步检索仍保留现有的 `rtr_` trace。
+
+实体、关系与图路径只能作为检索线索，不能直接作为事实引用。最终回答的 citation 只能指向本次 Agent run
+实际读取的原始 chunk；没有足够证据时系统会返回 `insufficient_evidence`。
 
 ## 项目功能
 
@@ -85,7 +109,6 @@ DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响�
 `retrieve --deepseek`、`ask --deepseek` 与 `evaluate` 的 JSON/trace/报告都会保留可观测的
 用量和估算结果。Ragas 当前不暴露评审模型 usage，因此 `evaluate` 的 judge 与 total 成本会明确标为
 `unknown`，不会猜测为缓存未命中或零成本。
-
 
 模型仅按实际响应中的 `deepseek-v4-flash` 或 `deepseek-v4-pro` 精确匹配价格表。若上游没有返回两类
 缓存 token，或两者之和与输入 token 不一致，成本状态会显示为 `unknown`，而不会猜测为缓存未命中；
@@ -140,7 +163,6 @@ uv run hybrid-rag evaluate \
   --testset data/processed/my-ragas-testset.json \
   --modes naive,mix
 
-uv run streamlit run src/hybrid_rag/demo.py
 ```
 
 测试集必须是以下 envelope；裸 JSON 数组会被拒绝：
@@ -168,7 +190,7 @@ uv run streamlit run src/hybrid_rag/demo.py
 待评测 profile 改变后，重新执行 `ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
 `artifacts/evaluations/ragas-<测试集文件名>.json`；默认模式为 `mix`，可用 `--modes naive,mix`
 做显式对比。`data/processed` 下的文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前
-profile 语料 hash 绑定的文件。Streamlit 演示可查看五种检索模式、证据、图路径与 trace，但不替代
+profile 语料 hash 绑定的文件。Agentic RAG Web 工作台可查看工具调用、证据、图路径与 trace，但不替代
 Ragas 评测。评测报告还会记录测试集文件 SHA-256、锁定的 profile、检索参数，以及回答和评审模型的
 非敏感运行配置，便于区分同一语料上的不同题集或执行条件。
 

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "alembic>=1.16,<2",
+    "fastapi>=0.115,<1",
     "FlagEmbedding>=1.4,<2",
     "isort>=8.0.1",
     "langgraph>=1.2,<2",
@@ -18,9 +19,9 @@ dependencies = [
     "rapidfuzz>=3.14.5",
     "rich>=14,<15",
     "sqlalchemy>=2.0,<3",
-    "streamlit>=1.58,<2",
     "tiktoken>=0.11,<1",
     "typer>=0.16,<1",
+    "uvicorn>=0.34,<1",
 ]
 
 [project.scripts]
@@ -35,6 +36,7 @@ dev = [
     "ragas>=0.4,<1",
     "reportlab>=4.4,<5",
     "ruff>=0.12,<1",
+    "streamlit>=1.58,<2",
 ]
 
 [build-system]

@@ -1,0 +1,27 @@
+{
+  "name": "hybrid-rag-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.2.21",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "format": "biome format --write src vite.config.ts biome.json",
+    "format:check": "biome format src vite.config.ts biome.json",
+    "check": "biome check src vite.config.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.6"
+  }
+}
