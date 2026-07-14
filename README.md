@@ -124,6 +124,14 @@ uv run scripts/ragas_testset_demo.py \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
   --output data/processed/my-ragas-testset.json
 
+# 完整覆盖 data/raw（递归读取所有受支持文件及其全部段落/页面）。
+# 先用 --dry-run 核对载入量；全量生成会增加模型调用成本。
+uv run scripts/ragas_testset_demo.py \
+  --all-documents \
+  --testset-size 20 \
+  --corpus-content-hash <build-index输出的corpus_content_hash> \
+  --output data/processed/full-ragas-testset.json
+
 # 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
 uv run hybrid-rag evaluate --testset data/processed/my-ragas-testset.json
 
@@ -151,9 +159,13 @@ uv run streamlit run src/hybrid_rag/demo.py
 }
 ```
 
-`--source-dir` 可以只挑选语料中的少量 PDF 来生成题目，但 `corpus_content_hash` 必须始终对应实际用于
-`evaluate` 的完整 index profile。语料内容、导入/分块配置或待评测 profile 改变后，重新执行
-`ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
+生成脚本复用 ingest 的 loader 与清洗逻辑，递归支持 `.pdf`、`.md`、`.markdown` 与 `.txt`。默认只读取
+2 个文件、每个 6 个 loader segment，便于演示；传入 `--all-documents` 会覆盖整个 `data/raw`，也可用
+`--max-documents 0 --max-segments-per-document 0` 单独解除限制。公共 helper 位于
+`hybrid_rag.evaluation.testset`：`load_ragas_documents`、`generate_ragas_cases`、
+`build_ragas_testset_envelope` 与 `write_ragas_testset` 可供自定义工作流复用。无论选取多少文件，
+`corpus_content_hash` 都必须对应实际用于 `evaluate` 的完整 index profile。语料内容、导入/分块配置或
+待评测 profile 改变后，重新执行 `ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
 `artifacts/evaluations/ragas-<测试集文件名>.json`；默认模式为 `mix`，可用 `--modes naive,mix`
 做显式对比。`data/processed` 下的文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前
 profile 语料 hash 绑定的文件。Streamlit 演示可查看五种检索模式、证据、图路径与 trace，但不替代

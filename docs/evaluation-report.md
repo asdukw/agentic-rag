@@ -71,7 +71,10 @@ uv run scripts/ragas_testset_demo.py \
   --corpus-content-hash <build-index输出的corpus_content_hash>
 ```
 
-脚本不会自行从 PDF 计算该值，因为项目的语料指纹还依赖导入后的 document/chunk 身份与内容。语料、导入
+脚本默认只抽取少量文件和 segment，便于控制生成成本；需要覆盖整个 `data/raw` 时传入
+`--all-documents`，它会递归读取与 ingest 相同的 `.pdf`、`.md`、`.markdown`、`.txt` loader 输入。
+先使用 `--all-documents --dry-run` 核对载入量，再执行实际生成。脚本不会自行从原始文件计算 hash，
+因为项目的语料指纹还依赖导入后的 document/chunk 身份与内容。语料、导入
 配置、分块配置或目标 profile 改变后，必须重新 `ingest`、`build-index`，并生成带新 hash 的测试集。
 评测入口会拒绝 hash 不匹配或裸数组格式的测试集。
 

@@ -112,7 +112,7 @@ class DeepSeekPricing:
 
         unknown_reasons: list[str] = []
         total = Decimal("0")
-        used_tiers: list[str] = []
+        used_tiers: list[Literal["flash", "pro"]] = []
         for item in usage:
             pricing = self._pricing_for_model(item.model)
             if pricing is None:

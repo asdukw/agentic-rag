@@ -5,20 +5,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import re
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary
+from hybrid_rag.evaluation.testset_contract import (
+    RAGAS_TESTSET_SCHEMA_VERSION,
+    validate_corpus_content_hash,
+)
 from hybrid_rag.retrieval.models import RetrievalMode
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import StoredIndexProfile
-
-RAGAS_TESTSET_SCHEMA_VERSION = "1"
-_SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 
 
 class RagasCase(TypedDict):
@@ -191,7 +191,7 @@ def _load_testset(path: Path) -> RagasTestset:
             "unsupported Ragas test set schema_version "
             f"{schema_version!r}; expected {RAGAS_TESTSET_SCHEMA_VERSION!r}"
         )
-    corpus_content_hash = _corpus_content_hash(
+    corpus_content_hash = validate_corpus_content_hash(
         value.get("corpus_content_hash"),
         field="Ragas test set corpus_content_hash",
     )
@@ -229,17 +229,8 @@ def _load_testset(path: Path) -> RagasTestset:
     )
 
 
-def _corpus_content_hash(value: object, *, field: str) -> str:
-    if not isinstance(value, str):
-        raise ValueError(f"{field} must be a 64-character hexadecimal digest")
-    normalized = value.strip()
-    if not _SHA256_HEX.fullmatch(normalized):
-        raise ValueError(f"{field} must be a 64-character hexadecimal digest")
-    return normalized
-
-
 def _profile_corpus_content_hash(profile: StoredIndexProfile) -> str:
-    return _corpus_content_hash(
+    return validate_corpus_content_hash(
         profile.metadata.get("corpus_content_hash"),
         field="pinned index profile metadata.corpus_content_hash",
     )
