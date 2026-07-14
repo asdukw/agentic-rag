@@ -5,11 +5,15 @@ import unicodedata
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 
-from hybrid_rag.extraction.schemas import (CanonicalEntity, CanonicalRelation,
-                                           EntityMention,
-                                           EntityNormalizationResult,
-                                           EvidenceSpan, RelationMention,
-                                           RelationMergeResult)
+from hybrid_rag.extraction.schemas import (
+    CanonicalEntity,
+    CanonicalRelation,
+    EntityMention,
+    EntityNormalizationResult,
+    EvidenceSpan,
+    RelationMention,
+    RelationMergeResult,
+)
 from hybrid_rag.ids import stable_id
 
 _SURROUNDING_QUOTES = " \t\r\n\"'`\N{LEFT DOUBLE QUOTATION MARK}\N{RIGHT DOUBLE QUOTATION MARK}"

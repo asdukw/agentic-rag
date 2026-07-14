@@ -16,11 +16,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Any, Protocol
 
-from pydantic import (BaseModel, ConfigDict, Field, StringConstraints,
-                      ValidationError)
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
-from hybrid_rag.deepseek_costs import (DeepSeekUsage, aggregate_deepseek_usage,
-                                       deepseek_usage)
+from hybrid_rag.deepseek_costs import DeepSeekUsage, aggregate_deepseek_usage, deepseek_usage
 from hybrid_rag.extraction.client import CompletionResult, DeepSeekClient
 from hybrid_rag.extraction.prompts import ChatMessage
 

@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from hybrid_rag.schemas import (ChunkData, IngestReport, ParsedDocument,
-                                StorageStats)
+from hybrid_rag.schemas import ChunkData, IngestReport, ParsedDocument, StorageStats
 from hybrid_rag.storage.graph_repository import GraphRepository
-from hybrid_rag.storage.models import (ChunkRecord, DocumentRecord,
-                                       IngestRunRecord)
+from hybrid_rag.storage.models import ChunkRecord, DocumentRecord, IngestRunRecord
 from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
 

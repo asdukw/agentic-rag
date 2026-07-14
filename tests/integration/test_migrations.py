@@ -7,12 +7,13 @@ from sqlalchemy import inspect, text
 from hybrid_rag.config import sqlite_url
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
-from hybrid_rag.storage.models import (EmbeddingProfileRecord,
-                                       EmbeddingVectorRecord,
-                                       GraphBuildRunRecord,
-                                       RetrievalTraceRecord)
-from hybrid_rag.storage.retrieval_repository import (make_profile_id,
-                                                     make_vector_id)
+from hybrid_rag.storage.models import (
+    EmbeddingProfileRecord,
+    EmbeddingVectorRecord,
+    GraphBuildRunRecord,
+    RetrievalTraceRecord,
+)
+from hybrid_rag.storage.retrieval_repository import make_profile_id, make_vector_id
 
 
 def test_alembic_builds_empty_database(tmp_path: Path) -> None:

@@ -9,10 +9,8 @@ from pathlib import Path
 import pytest
 
 from hybrid_rag.config import sqlite_url
-from hybrid_rag.deepseek_costs import (DeepSeekCostStatus,
-                                       DeepSeekModelPricing, DeepSeekPricing)
-from hybrid_rag.extraction.client import (CompletionResult,
-                                          TerminalProviderError)
+from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekModelPricing, DeepSeekPricing
+from hybrid_rag.extraction.client import CompletionResult, TerminalProviderError
 from hybrid_rag.extraction.schemas import ExtractionConfig
 from hybrid_rag.extraction.service import GraphBuildService
 from hybrid_rag.extraction.workflow import WorkflowOptions

@@ -7,9 +7,12 @@ import pytest
 
 from hybrid_rag.cli import _judge_cost_disclosure
 from hybrid_rag.config import DeepSeekSettings
-from hybrid_rag.deepseek_costs import (DeepSeekCostStatus,
-                                       DeepSeekModelPricing, DeepSeekPricing,
-                                       deepseek_usage)
+from hybrid_rag.deepseek_costs import (
+    DeepSeekCostStatus,
+    DeepSeekModelPricing,
+    DeepSeekPricing,
+    deepseek_usage,
+)
 from hybrid_rag.evaluation import CostDisclosure
 
 

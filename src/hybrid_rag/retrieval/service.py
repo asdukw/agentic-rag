@@ -14,42 +14,67 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, ConfigDict
 
-from hybrid_rag.deepseek_costs import (DeepSeekCostStatus, DeepSeekPricing,
-                                       DeepSeekUsage)
+from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekPricing, DeepSeekUsage
 from hybrid_rag.ids import canonical_json_hash
 from hybrid_rag.ingest.tokenizer import TokenCounter
-from hybrid_rag.retrieval.bm25 import (BM25_SCORER_VERSION, DEFAULT_BM25_B,
-                                       DEFAULT_BM25_K1,
-                                       LEXICAL_TOKENIZER_VERSION, BM25Config,
-                                       BM25Scorer)
+from hybrid_rag.retrieval.bm25 import (
+    BM25_SCORER_VERSION,
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_K1,
+    LEXICAL_TOKENIZER_VERSION,
+    BM25Config,
+    BM25Scorer,
+)
 from hybrid_rag.retrieval.embedding import EmbeddingProvider, cosine_similarity
-from hybrid_rag.retrieval.fusion import (rank_ids, select_token_budget,
-                                         weighted_average_fusion,
-                                         weighted_fusion)
-from hybrid_rag.retrieval.models import (INDEX_TEXT_SCHEMA_VERSION,
-                                         CandidateHit, ContextItem, GraphPath,
-                                         IndexBuildReport, IndexSemanticConfig,
-                                         RerankComponentTrace, RerankTrace,
-                                         RerankTraceHit, RetrievalMode,
-                                         RetrievalResult, RetrievalTrace,
-                                         RouteTrace, ScoreComponent)
-from hybrid_rag.retrieval.query import (DeterministicQueryClient, EvidenceItem,
-                                        GroundedAnswer, KeywordExtractor,
-                                        QueryClient)
-from hybrid_rag.retrieval.reranker import (FLAG_EMBEDDING_RERANKER_MODEL,
-                                           RerankCandidate, Reranker,
-                                           RerankHit)
+from hybrid_rag.retrieval.fusion import (
+    rank_ids,
+    select_token_budget,
+    weighted_average_fusion,
+    weighted_fusion,
+)
+from hybrid_rag.retrieval.models import (
+    INDEX_TEXT_SCHEMA_VERSION,
+    CandidateHit,
+    ContextItem,
+    GraphPath,
+    IndexBuildReport,
+    IndexSemanticConfig,
+    RerankComponentTrace,
+    RerankTrace,
+    RerankTraceHit,
+    RetrievalMode,
+    RetrievalResult,
+    RetrievalTrace,
+    RouteTrace,
+    ScoreComponent,
+)
+from hybrid_rag.retrieval.query import (
+    DeterministicQueryClient,
+    EvidenceItem,
+    GroundedAnswer,
+    KeywordExtractor,
+    QueryClient,
+)
+from hybrid_rag.retrieval.reranker import (
+    FLAG_EMBEDDING_RERANKER_MODEL,
+    RerankCandidate,
+    Reranker,
+    RerankHit,
+)
 from hybrid_rag.storage.database import Database
-from hybrid_rag.storage.retrieval_repository import (IndexItem, IndexProfile,
-                                                     LoadedIndex,
-                                                     RetrievalRepository)
-from hybrid_rag.storage.retrieval_repository import \
-    RetrievalTrace as StoredTraceInput
-from hybrid_rag.storage.retrieval_repository import (SourceChunk, SourceEntity,
-                                                     SourceRelation,
-                                                     SourceSnapshot,
-                                                     StoredIndexProfile,
-                                                     make_profile_id)
+from hybrid_rag.storage.retrieval_repository import (
+    IndexItem,
+    IndexProfile,
+    LoadedIndex,
+    RetrievalRepository,
+    SourceChunk,
+    SourceEntity,
+    SourceRelation,
+    SourceSnapshot,
+    StoredIndexProfile,
+    make_profile_id,
+)
+from hybrid_rag.storage.retrieval_repository import RetrievalTrace as StoredTraceInput
 
 
 @dataclass(frozen=True, slots=True)

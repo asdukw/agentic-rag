@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from hybrid_rag.retrieval.reranker import (FLAG_EMBEDDING_RERANKER_MODEL,
-                                           FLAG_EMBEDDING_RERANKER_PROVIDER,
-                                           FLAG_EMBEDDING_RERANKER_VERSION,
-                                           FlagEmbeddingReranker,
-                                           RerankCandidate, Reranker,
-                                           create_reranker)
+from hybrid_rag.retrieval.reranker import (
+    FLAG_EMBEDDING_RERANKER_MODEL,
+    FLAG_EMBEDDING_RERANKER_PROVIDER,
+    FLAG_EMBEDDING_RERANKER_VERSION,
+    FlagEmbeddingReranker,
+    RerankCandidate,
+    Reranker,
+    create_reranker,
+)
 
 
 def _candidate(object_id: str, text: str, *, prior_score: float = 0.0) -> RerankCandidate:

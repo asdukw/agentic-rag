@@ -9,10 +9,14 @@ from pathlib import Path
 import pytest
 
 from hybrid_rag.config import sqlite_url
-from hybrid_rag.deepseek_costs import (DeepSeekCostStatus,
-                                       DeepSeekModelPricing, DeepSeekPricing,
-                                       DeepSeekUsage, aggregate_deepseek_usage,
-                                       deepseek_usage)
+from hybrid_rag.deepseek_costs import (
+    DeepSeekCostStatus,
+    DeepSeekModelPricing,
+    DeepSeekPricing,
+    DeepSeekUsage,
+    aggregate_deepseek_usage,
+    deepseek_usage,
+)
 from hybrid_rag.extraction.client import CompletionResult
 from hybrid_rag.extraction.schemas import ExtractionConfig
 from hybrid_rag.extraction.service import GraphBuildService
@@ -21,13 +25,11 @@ from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.embedding import HashEmbeddingProvider
 from hybrid_rag.retrieval.models import RetrievalMode, RetrievalResult
-from hybrid_rag.retrieval.query import (EvidenceItem, GroundedAnswer,
-                                        KeywordExtraction)
+from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, KeywordExtraction
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
-from hybrid_rag.storage.retrieval_repository import (RetrievalRepository,
-                                                     RetrievalRepositoryError)
+from hybrid_rag.storage.retrieval_repository import RetrievalRepository, RetrievalRepositoryError
 
 
 class WordCounter:

@@ -19,8 +19,7 @@ from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
-from hybrid_rag.storage.models import (ExtractionAttemptRecord,
-                                       GraphBuildRunRecord)
+from hybrid_rag.storage.models import ExtractionAttemptRecord, GraphBuildRunRecord
 
 EVIDENCE = "LightRAG-style systems extract entities and relations before retrieval."
 

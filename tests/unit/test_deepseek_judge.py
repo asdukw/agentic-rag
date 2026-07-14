@@ -4,10 +4,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from hybrid_rag.evaluation import (BlindCandidate, BlindComparison,
-                                   BlindJudgment, BlindLabel, BlindWinner)
-from hybrid_rag.evaluation.deepseek_judge import (DeepSeekBlindJudge,
-                                                  DeepSeekJudgeError)
+from hybrid_rag.evaluation import (
+    BlindCandidate,
+    BlindComparison,
+    BlindJudgment,
+    BlindLabel,
+    BlindWinner,
+)
+from hybrid_rag.evaluation.deepseek_judge import DeepSeekBlindJudge, DeepSeekJudgeError
 from hybrid_rag.extraction.client import CompletionResult
 
 

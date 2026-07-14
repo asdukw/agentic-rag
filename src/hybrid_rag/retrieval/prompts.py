@@ -6,8 +6,12 @@ import json
 from collections.abc import Sequence
 
 from hybrid_rag.extraction.prompts import ChatMessage
-from hybrid_rag.retrieval.query import (EvidenceItem, GroundedAnswer,
-                                        KeywordExtraction, _validate_question)
+from hybrid_rag.retrieval.query import (
+    EvidenceItem,
+    GroundedAnswer,
+    KeywordExtraction,
+    _validate_question,
+)
 
 
 def build_keyword_messages(question: str) -> tuple[ChatMessage, ChatMessage]:

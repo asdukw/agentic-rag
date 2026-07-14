@@ -6,8 +6,12 @@ import re
 from pathlib import Path
 
 from hybrid_rag.config import sqlite_url
-from hybrid_rag.evaluation import (EvaluationOptions, EvaluationRunner,
-                                   fixture_benchmark_path, load_benchmark)
+from hybrid_rag.evaluation import (
+    EvaluationOptions,
+    EvaluationRunner,
+    fixture_benchmark_path,
+    load_benchmark,
+)
 from hybrid_rag.extraction.client import CompletionResult
 from hybrid_rag.extraction.schemas import ExtractionConfig
 from hybrid_rag.extraction.service import GraphBuildService

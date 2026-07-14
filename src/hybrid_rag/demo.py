@@ -21,18 +21,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, TypeVar
 
-from hybrid_rag.config import (DeepSeekSettings, RetrievalSettings, Settings,
-                               sqlite_url)
+from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
-from hybrid_rag.retrieval.embedding import (BGEM3EmbeddingProvider,
-                                            HashEmbeddingProvider)
-from hybrid_rag.retrieval.models import (CandidateHit, GraphPath, RerankTrace,
-                                         RetrievalMode, RetrievalResult)
-from hybrid_rag.retrieval.query import (DeepSeekQueryClient,
-                                        DeterministicQueryClient, QueryClient)
+from hybrid_rag.retrieval.embedding import BGEM3EmbeddingProvider, HashEmbeddingProvider
+from hybrid_rag.retrieval.models import (
+    CandidateHit,
+    GraphPath,
+    RerankTrace,
+    RetrievalMode,
+    RetrievalResult,
+)
+from hybrid_rag.retrieval.query import DeepSeekQueryClient, DeterministicQueryClient, QueryClient
 from hybrid_rag.retrieval.reranker import create_reranker
-from hybrid_rag.retrieval.service import (AnswerResult, RetrievalOptions,
-                                          RetrievalService)
+from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
 

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from hybrid_rag.retrieval.bm25 import (DEFAULT_BM25_B, DEFAULT_BM25_K1,
-                                       BM25Config, BM25Scorer,
-                                       tokenize_lexical)
+from hybrid_rag.retrieval.bm25 import (
+    DEFAULT_BM25_B,
+    DEFAULT_BM25_K1,
+    BM25Config,
+    BM25Scorer,
+    tokenize_lexical,
+)
 from hybrid_rag.storage.retrieval_repository import IndexItem
 
 

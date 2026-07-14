@@ -5,9 +5,14 @@ from __future__ import annotations
 import hashlib
 from typing import Protocol
 
-from hybrid_rag.evaluation.contracts import (BlindCandidate, BlindComparison,
-                                             BlindJudgment, BlindLabel,
-                                             BlindWinner, RetrievalEvaluation)
+from hybrid_rag.evaluation.contracts import (
+    BlindCandidate,
+    BlindComparison,
+    BlindJudgment,
+    BlindLabel,
+    BlindWinner,
+    RetrievalEvaluation,
+)
 from hybrid_rag.retrieval.models import RetrievalMode
 
 

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from hybrid_rag.evaluation import (BlindCandidate, BlindComparison, BlindLabel,
-                                   BlindWinner, DeterministicBlindJudge)
+from hybrid_rag.evaluation import (
+    BlindCandidate,
+    BlindComparison,
+    BlindLabel,
+    BlindWinner,
+    DeterministicBlindJudge,
+)
 
 
 def test_deterministic_blind_judge_returns_tie_without_using_latency() -> None:

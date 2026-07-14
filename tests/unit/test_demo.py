@@ -9,14 +9,15 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import hybrid_rag.demo as demo
-from hybrid_rag.config import (DeepSeekSettings, RetrievalSettings, Settings,
-                               sqlite_url)
-from hybrid_rag.retrieval.embedding import (BGEM3EmbeddingProvider,
-                                            HashEmbeddingProvider)
-from hybrid_rag.retrieval.models import (RerankComponentTrace, RerankTrace,
-                                         RerankTraceHit, RetrievalMode)
-from hybrid_rag.retrieval.query import (DeepSeekQueryClient,
-                                        DeterministicQueryClient)
+from hybrid_rag.config import DeepSeekSettings, RetrievalSettings, Settings, sqlite_url
+from hybrid_rag.retrieval.embedding import BGEM3EmbeddingProvider, HashEmbeddingProvider
+from hybrid_rag.retrieval.models import (
+    RerankComponentTrace,
+    RerankTrace,
+    RerankTraceHit,
+    RetrievalMode,
+)
+from hybrid_rag.retrieval.query import DeepSeekQueryClient, DeterministicQueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions
 
 

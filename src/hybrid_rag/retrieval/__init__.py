@@ -1,54 +1,82 @@
 """Retrieval-domain primitives and constrained query-time adapters."""
 
-from hybrid_rag.retrieval.bm25 import (BM25_SCORER_VERSION, DEFAULT_BM25_B,
+from hybrid_rag.retrieval.bm25 import (
+                                       BM25_SCORER_VERSION,
+                                       DEFAULT_BM25_B,
                                        DEFAULT_BM25_K1,
-                                       LEXICAL_TOKENIZER_VERSION, BM25Config,
-                                       BM25Hit, BM25Scorer, tokenize_lexical)
-from hybrid_rag.retrieval.embedding import (BGE_M3_DIMENSIONS,
-                                            BGE_M3_MAX_LENGTH, BGE_M3_MODEL,
-                                            BGE_M3_PROVIDER,
-                                            BGEM3EmbeddingProvider,
-                                            EmbeddingConfigurationError,
-                                            EmbeddingProvider,
-                                            HashEmbeddingProvider,
-                                            cosine_similarity)
-from hybrid_rag.retrieval.fusion import (rank_ids, select_token_budget,
-                                         weighted_average_fusion,
-                                         weighted_fusion)
-from hybrid_rag.retrieval.models import (INDEX_TEXT_SCHEMA_VERSION,
-                                         RETRIEVAL_SCHEMA_VERSION,
-                                         CandidateHit, ContextItem, GraphPath,
-                                         IndexBuildReport, IndexSemanticConfig,
-                                         RerankComponentTrace, RerankTrace,
-                                         RerankTraceHit, RetrievalMode,
-                                         RetrievalResult, RetrievalTrace,
-                                         RouteTrace, ScoreComponent)
-from hybrid_rag.retrieval.prompts import (build_answer_messages,
-                                          build_keyword_messages)
-from hybrid_rag.retrieval.query import (DeepSeekQueryClient,
-                                        DeterministicQueryClient,
-                                        EvidenceAnswerer, EvidenceItem,
-                                        GroundedAnswer, KeywordExtraction,
-                                        KeywordExtractor,
-                                        OpenAICompatibleQueryClient,
-                                        QueryClient, QueryConfigurationError,
-                                        QueryValidationError,
-                                        QueryValidationFailureKind,
-                                        QueryValidationIssue,
-                                        deterministic_answer,
-                                        deterministic_keywords,
-                                        validate_answer_completion,
-                                        validate_keyword_completion)
-from hybrid_rag.retrieval.reranker import (FLAG_EMBEDDING_RERANKER_MODEL,
-                                           FLAG_EMBEDDING_RERANKER_PROVIDER,
-                                           FLAG_EMBEDDING_RERANKER_VERSION,
-                                           FlagEmbeddingReranker,
-                                           RerankCandidate, Reranker,
-                                           RerankerConfigurationError,
-                                           RerankHit, RerankScoreComponent,
-                                           create_reranker)
-from hybrid_rag.retrieval.service import (AnswerResult, RetrievalOptions,
-                                          RetrievalService)
+                                       LEXICAL_TOKENIZER_VERSION,
+                                       BM25Config,
+                                       BM25Hit,
+                                       BM25Scorer,
+                                       tokenize_lexical,
+)
+from hybrid_rag.retrieval.embedding import (
+                                       BGE_M3_DIMENSIONS,
+                                       BGE_M3_MAX_LENGTH,
+                                       BGE_M3_MODEL,
+                                       BGE_M3_PROVIDER,
+                                       BGEM3EmbeddingProvider,
+                                       EmbeddingConfigurationError,
+                                       EmbeddingProvider,
+                                       HashEmbeddingProvider,
+                                       cosine_similarity,
+)
+from hybrid_rag.retrieval.fusion import (
+                                       rank_ids,
+                                       select_token_budget,
+                                       weighted_average_fusion,
+                                       weighted_fusion,
+)
+from hybrid_rag.retrieval.models import (
+                                       INDEX_TEXT_SCHEMA_VERSION,
+                                       RETRIEVAL_SCHEMA_VERSION,
+                                       CandidateHit,
+                                       ContextItem,
+                                       GraphPath,
+                                       IndexBuildReport,
+                                       IndexSemanticConfig,
+                                       RerankComponentTrace,
+                                       RerankTrace,
+                                       RerankTraceHit,
+                                       RetrievalMode,
+                                       RetrievalResult,
+                                       RetrievalTrace,
+                                       RouteTrace,
+                                       ScoreComponent,
+)
+from hybrid_rag.retrieval.prompts import build_answer_messages, build_keyword_messages
+from hybrid_rag.retrieval.query import (
+                                       DeepSeekQueryClient,
+                                       DeterministicQueryClient,
+                                       EvidenceAnswerer,
+                                       EvidenceItem,
+                                       GroundedAnswer,
+                                       KeywordExtraction,
+                                       KeywordExtractor,
+                                       OpenAICompatibleQueryClient,
+                                       QueryClient,
+                                       QueryConfigurationError,
+                                       QueryValidationError,
+                                       QueryValidationFailureKind,
+                                       QueryValidationIssue,
+                                       deterministic_answer,
+                                       deterministic_keywords,
+                                       validate_answer_completion,
+                                       validate_keyword_completion,
+)
+from hybrid_rag.retrieval.reranker import (
+                                       FLAG_EMBEDDING_RERANKER_MODEL,
+                                       FLAG_EMBEDDING_RERANKER_PROVIDER,
+                                       FLAG_EMBEDDING_RERANKER_VERSION,
+                                       FlagEmbeddingReranker,
+                                       RerankCandidate,
+                                       Reranker,
+                                       RerankerConfigurationError,
+                                       RerankHit,
+                                       RerankScoreComponent,
+                                       create_reranker,
+)
+from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 
 __all__ = [
     "BGE_M3_DIMENSIONS",

@@ -13,12 +13,17 @@ from sqlalchemy.orm import Session
 from hybrid_rag.deepseek_costs import DeepSeekUsage, aggregate_deepseek_usage
 from hybrid_rag.deepseek_costs import deepseek_usage as make_deepseek_usage
 from hybrid_rag.ids import canonical_json_hash, stable_id
-from hybrid_rag.storage.models import (ChunkExtractionRecord, ChunkRecord,
-                                       EntityEvidenceRecord, EntityRecord,
-                                       ExtractionAttemptRecord,
-                                       GraphBuildItemRecord,
-                                       GraphBuildRunRecord,
-                                       RelationEvidenceRecord, RelationRecord)
+from hybrid_rag.storage.models import (
+    ChunkExtractionRecord,
+    ChunkRecord,
+    EntityEvidenceRecord,
+    EntityRecord,
+    ExtractionAttemptRecord,
+    GraphBuildItemRecord,
+    GraphBuildRunRecord,
+    RelationEvidenceRecord,
+    RelationRecord,
+)
 
 RUN_STATUSES = {
     "running",

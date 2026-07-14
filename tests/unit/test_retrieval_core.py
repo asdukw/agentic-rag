@@ -4,13 +4,18 @@ import math
 
 import pytest
 
-from hybrid_rag.retrieval.embedding import (BGEM3EmbeddingProvider,
-                                            HashEmbeddingProvider,
-                                            cosine_similarity,
-                                            min_max_normalize)
-from hybrid_rag.retrieval.fusion import (rank_ids, select_token_budget,
-                                         weighted_average_fusion,
-                                         weighted_fusion)
+from hybrid_rag.retrieval.embedding import (
+    BGEM3EmbeddingProvider,
+    HashEmbeddingProvider,
+    cosine_similarity,
+    min_max_normalize,
+)
+from hybrid_rag.retrieval.fusion import (
+    rank_ids,
+    select_token_budget,
+    weighted_average_fusion,
+    weighted_fusion,
+)
 
 
 def test_hash_embeddings_are_deterministic_normalized_and_unicode_aware() -> None:

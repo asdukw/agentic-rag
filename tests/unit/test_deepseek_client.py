@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from hybrid_rag.extraction.client import (DeepSeekClient,
-                                          RetryableProviderError,
-                                          TerminalProviderError,
-                                          classify_provider_error)
+from hybrid_rag.extraction.client import (
+    DeepSeekClient,
+    RetryableProviderError,
+    TerminalProviderError,
+    classify_provider_error,
+)
 
 
 class FakeCompletions:
