@@ -36,6 +36,13 @@ uv run hrag build-index
 uv run hrag ask "How does mix retrieval combine evidence?"
 ```
 
+也可用准备脚本串行执行 ingest、构图与建索引，并打印 Ragas 所需的 `corpus_content_hash`。语料未变化且
+数据库中已有 graph-backed active index 时，脚本会跳过构图和 embedding，直接读取已有 profile：
+
+```bash
+uv run scripts/prepare_corpus.py
+```
+
 完成后可在输出中查看回答所依据的 citation，用于观察 RAG 的检索与证据归因效果。fixture 语料较小，
 适合快速验证命令流程，不代表论文语料上的演示效果。
 
