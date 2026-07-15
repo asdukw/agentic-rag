@@ -9,6 +9,14 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
 from hybrid_rag.agentic import AgentRunner, AgentRunRequest
@@ -65,6 +73,7 @@ app.add_typer(db_app, name="db")
 app.add_typer(graph_app, name="graph")
 app.add_typer(retrieval_app, name="retrieval")
 console = Console()
+progress_console = Console(stderr=True)
 
 
 @app.command("serve")
@@ -360,12 +369,162 @@ async def _run_graph_build(
     client: DeepSeekClient | None,
     options: WorkflowOptions,
     resume_run_id: str | None,
+    *,
+    show_progress: bool,
 ) -> GraphBuildReport:
+    task = asyncio.create_task(service.build(options, resume_run_id=resume_run_id))
     try:
-        return await service.build(options, resume_run_id=resume_run_id)
+        if show_progress:
+            await _monitor_graph_build(service, task, resume_run_id=resume_run_id)
+        return await task
     finally:
         if client is not None:
             await client.close()
+
+
+async def _monitor_graph_build(
+    service: GraphBuildService,
+    task: asyncio.Task[GraphBuildReport],
+    *,
+    resume_run_id: str | None,
+) -> None:
+    if not progress_console.is_terminal:
+        await _monitor_graph_build_lines(service, task, resume_run_id=resume_run_id)
+        return
+
+    columns = (
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("{task.completed:.0f}/{task.total:.0f}"),
+        TimeElapsedColumn(),
+        TextColumn(
+            "remaining={task.fields[remaining]} cached={task.fields[cached]} "
+            "attempts={task.fields[attempts]} "
+            "repair={task.fields[repair]} failed={task.fields[failed]} "
+            "tokens={task.fields[tokens]}"
+        ),
+    )
+    with Progress(*columns, console=progress_console, transient=False) as progress:
+        progress_task = progress.add_task(
+            "Starting graph build",
+            total=1,
+            remaining="?",
+            cached=0,
+            attempts=0,
+            repair=0,
+            failed=0,
+            tokens=0,
+        )
+        while not task.done():
+            run_id = service.last_run_id or resume_run_id
+            if run_id is not None:
+                try:
+                    stats = await asyncio.to_thread(service.stats, run_id=run_id, top_k=0)
+                except Exception as error:  # Progress reporting must not fail the durable build.
+                    progress.update(progress_task, description=f"Graph {run_id}: {error}")
+                else:
+                    chunks = stats.chunks
+                    attempts = stats.attempts
+                    usage = stats.usage
+                    total = max(chunks.get("total", 0), 1)
+                    completed = min(
+                        chunks.get("succeeded", 0)
+                        + chunks.get("needs_review", 0)
+                        + chunks.get("failed", 0),
+                        total,
+                    )
+                    progress.update(
+                        progress_task,
+                        description=f"Graph {run_id}",
+                        total=total,
+                        completed=completed,
+                        remaining=max(total - completed, 0),
+                        cached=chunks.get("cached", 0),
+                        attempts=attempts.get("total", 0),
+                        repair=attempts.get("repair", 0),
+                        failed=chunks.get("failed", 0),
+                        tokens=usage.get("total_tokens", 0),
+                    )
+            await asyncio.wait({task}, timeout=1.0)
+
+        if not task.cancelled() and task.exception() is None:
+            report = task.result()
+            progress.update(
+                progress_task,
+                description=f"Graph {report.run_id} ({report.status})",
+                total=max(report.chunks.total, 1),
+                completed=report.chunks.total,
+                remaining=report.chunks.remaining,
+                cached=report.chunks.cached,
+                attempts=report.attempts.total,
+                repair=report.attempts.repair,
+                failed=report.chunks.failed,
+                tokens=report.usage.total_tokens,
+            )
+
+
+async def _monitor_graph_build_lines(
+    service: GraphBuildService,
+    task: asyncio.Task[GraphBuildReport],
+    *,
+    resume_run_id: str | None,
+) -> None:
+    progress_console.print("Starting graph build...", markup=False)
+    last_snapshot: tuple[int, ...] | None = None
+    reported_error = False
+    while not task.done():
+        run_id = service.last_run_id or resume_run_id
+        if run_id is not None:
+            try:
+                stats = await asyncio.to_thread(service.stats, run_id=run_id, top_k=0)
+            except Exception as error:  # Progress reporting must not fail the durable build.
+                if not reported_error:
+                    progress_console.print(
+                        f"Graph {run_id}: progress unavailable: {error}",
+                        markup=False,
+                    )
+                    reported_error = True
+            else:
+                reported_error = False
+                chunks = stats.chunks
+                attempts = stats.attempts
+                usage = stats.usage
+                total = chunks.get("total", 0)
+                succeeded = chunks.get("succeeded", 0)
+                needs_review = chunks.get("needs_review", 0)
+                failed = chunks.get("failed", 0)
+                completed = min(succeeded + needs_review + failed, total)
+                snapshot = (
+                    completed,
+                    total,
+                    chunks.get("cached", 0),
+                    attempts.get("total", 0),
+                    attempts.get("repair", 0),
+                    failed,
+                    usage.get("total_tokens", 0),
+                )
+                if snapshot != last_snapshot:
+                    percentage = completed / total * 100 if total else 0.0
+                    progress_console.print(
+                        f"Graph {run_id}: {completed}/{total} ({percentage:.1f}%) "
+                        f"remaining={max(total - completed, 0)} cached={snapshot[2]} "
+                        f"attempts={snapshot[3]} repair={snapshot[4]} "
+                        f"failed={failed} tokens={snapshot[6]}",
+                        markup=False,
+                    )
+                    last_snapshot = snapshot
+        await asyncio.wait({task}, timeout=5.0)
+
+    if not task.cancelled() and task.exception() is None:
+        report = task.result()
+        progress_console.print(
+            f"Graph {report.run_id}: {report.status}; "
+            f"{report.chunks.total - report.chunks.remaining}/{report.chunks.total} complete, "
+            f"failed={report.chunks.failed}, tokens={report.usage.total_tokens}",
+            markup=False,
+        )
 
 
 def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -> None:
@@ -612,6 +771,13 @@ def build_graph(
         typer.Option("--output", help="Write deterministic NetworkX node-link JSON"),
     ] = None,
     top: Annotated[int | None, typer.Option("--top", min=1)] = None,
+    progress: Annotated[
+        bool,
+        typer.Option(
+            "--progress/--no-progress",
+            help="Show live graph extraction counters in the terminal",
+        ),
+    ] = True,
     json_output: Annotated[bool, typer.Option("--json", help="Print a JSON report")] = False,
 ) -> None:
     if resume is not None and (
@@ -671,7 +837,15 @@ def build_graph(
             deepseek_pricing=_configured_deepseek_pricing(deepseek),
         )
         try:
-            report = asyncio.run(_run_graph_build(service, client, options, resume))
+            report = asyncio.run(
+                _run_graph_build(
+                    service,
+                    client,
+                    options,
+                    resume,
+                    show_progress=progress,
+                )
+            )
         except KeyboardInterrupt as error:
             run_id = service.last_run_id or resume
             console.print("[yellow]Graph build interrupted after durable checkpoints.[/yellow]")
