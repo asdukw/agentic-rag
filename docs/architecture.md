@@ -7,7 +7,8 @@
 The project owns the domain contracts and the retrieval decisions.  Third-party
 libraries are confined to adapters: PyMuPDF parsing, token counting, SQLAlchemy
 and Alembic persistence, LangGraph checkpointing, NetworkX projection,
-FlagEmbedding, and the opt-in DeepSeek API client. The planner may select only
+FlagEmbedding, and the configurable DeepSeek API client. CLI `ask` and the web
+workbench enable DeepSeek by default. The planner may select only
 project-defined, budgeted retrieval tools; it cannot invent tools or bypass the
 evidence boundary.
 
@@ -61,7 +62,7 @@ flowchart LR
         Routes --> Local["local: entity vectors + graph"]
         Routes --> Global["global: relation vectors + graph"]
         Routes --> Hybrid["hybrid: local + global\nround-robin fusion"]
-        Routes --> Mix["mix: naive + local + global\nround-robin fusion (default)"]
+        Routes --> Mix["mix: naive + local + global\nround-robin fusion (fixed-route default)"]
         Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication and graph expansion"]
         Local --> Fusion
         Global --> Fusion
@@ -75,8 +76,8 @@ flowchart LR
         Answer --> Trace
     end
 
-    subgraph Agent[Optional bounded planner loop]
-        AgentQuestion["Question + pinned profile + budgets"] --> Planner["DeepSeek planner"]
+    subgraph Agent[Bounded planner loop (CLI/Web default)]
+        AgentQuestion["Question + pinned profile + budgets"] --> Planner["DeepSeek planner by default"]
         Planner --> Tools["search chunks/entities/relations\nexpand graph · read evidence"]
         Tools --> Planner
         Planner --> AgentAnswer["answer_from_evidence\ncitations limited to session-read chunks"]
@@ -118,7 +119,7 @@ each `[query, passage]` pair and records its raw logit plus sigmoid-normalized
 score. Set its provider to `none` to retain first-stage order.
 `hybrid` is not a fourth opaque vector store: it runs only the `local` and
 `global` graph routes in parallel, then interleaves their chunk candidates and
-deduplicates by chunk ID. `mix` is the default LightRAG-aligned composite mode:
+deduplicates by chunk ID. `mix` is the default fixed-route LightRAG-aligned composite mode:
 it adds the project's `naive` chunk route and interleaves naive/local/global
 candidates before the same rerank and context-selection rules. The project's
 `naive` route retains local BM25 as an explicit extension beyond LightRAG's
@@ -210,10 +211,12 @@ explicitly use the deterministic hash adapter for speed and repeatability; the
 default local BGE-M3 model still needs a corpus-bound Ragas evaluation before any
 production use.
 
-The optional agent runner adds a planner, not an unrestricted agent runtime. A
+The CLI `ask` and web workbench default to the agent runner, which adds a planner,
+not an unrestricted agent runtime. A
 run pins one ready profile and enforces maximum steps, searches, graph
 expansions, hops, evidence reads, evidence chunks, and evidence tokens. Search
-tools may expose candidate IDs; graph expansion and evidence reads accept only
+tools apply the configured optional cross-encoder reranker before exposing
+candidate chunks to the planner. Graph expansion and evidence reads accept only
 IDs already discovered in the same session. `answer_from_evidence` can use and
 cite only chunks explicitly read in that session. Duplicate normalized actions
 are rejected, events stream to the web client, and the complete run is written

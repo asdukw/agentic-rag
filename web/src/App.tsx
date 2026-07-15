@@ -55,7 +55,8 @@ export default function App() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [profileId, setProfileId] = useState("");
   const [question, setQuestion] = useState("");
-  const [useDeepSeek, setUseDeepSeek] = useState(false);
+  const [useDeepSeek, setUseDeepSeek] = useState(true);
+  const [useReranker, setUseReranker] = useState(false);
   const [budget, setBudget] = useState(DEFAULT_BUDGET);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
@@ -122,6 +123,7 @@ export default function App() {
       workspace_id: workspaceId,
       ...(profileId.trim() ? { profile_id: profileId.trim() } : {}),
       use_deepseek: useDeepSeek,
+      reranker_enabled: useReranker,
       budget,
     };
     try {
@@ -280,6 +282,14 @@ export default function App() {
                 onChange={(event) => setUseDeepSeek(event.target.checked)}
               />{" "}
               使用 DeepSeek 规划与回答
+            </label>
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={useReranker}
+                onChange={(event) => setUseReranker(event.target.checked)}
+              />{" "}
+              工具内候选重排
             </label>
           </div>
           <p className="hint">不开启模型时，系统会以确定性策略执行相同的受限工具链。</p>

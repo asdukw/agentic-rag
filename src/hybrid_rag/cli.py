@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
@@ -10,6 +11,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from hybrid_rag.agentic import AgentRunner, AgentRunRequest
+from hybrid_rag.agentic.models import AgentEvent
+from hybrid_rag.agentic.planner import DeepSeekAgentPlanner, DeterministicAgentPlanner
 from hybrid_rag.config import (
     DeepSeekPricingSettings,
     DeepSeekSettings,
@@ -41,7 +45,7 @@ from hybrid_rag.retrieval.embedding import (
     HashEmbeddingProvider,
 )
 from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
-from hybrid_rag.retrieval.query import DeepSeekQueryClient, QueryClient
+from hybrid_rag.retrieval.query import DeepSeekQueryClient, DeterministicQueryClient, QueryClient
 from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
@@ -179,6 +183,28 @@ async def _close_query_client(client: QueryClient | None) -> None:
             await result
 
 
+def _agent_planner(
+    *,
+    use_deepseek: bool,
+    settings: DeepSeekSettings,
+) -> DeepSeekAgentPlanner | DeterministicAgentPlanner:
+    if not use_deepseek:
+        return DeterministicAgentPlanner()
+    api_key = settings.api_key.get_secret_value().strip() if settings.api_key else ""
+    if not api_key:
+        raise typer.BadParameter("agentic mode requires DEEPSEEK_API_KEY")
+    return DeepSeekAgentPlanner(
+        DeepSeekClient(
+            api_key=api_key,
+            base_url=settings.base_url,
+            model=settings.query_model,
+            max_output_tokens=512,
+            timeout_seconds=settings.timeout_seconds,
+            temperature=0,
+        )
+    )
+
+
 def _render_index_build_report(report: IndexBuildReport, *, json_output: bool) -> None:
     if json_output:
         console.print_json(report.model_dump_json())
@@ -241,6 +267,50 @@ def _render_answer_result(result: AnswerResult, *, json_output: bool) -> None:
     console.print("\n[bold]Answer[/bold]")
     console.print(result.answer.answer)
     console.print(f"Citations: {', '.join(result.answer.citations) or '(insufficient evidence)'}")
+
+
+def _render_agent_result(events: list[AgentEvent], *, json_output: bool) -> None:
+    if json_output:
+        console.print_json(
+            json.dumps(
+                {
+                    "mode": "agentic",
+                    "run_id": events[0].run_id if events else None,
+                    "events": [event.model_dump(mode="json") for event in events],
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    table = Table(title="Agentic retrieval")
+    table.add_column("Step", justify="right")
+    table.add_column("Event")
+    table.add_column("Summary")
+    for event in events:
+        if event.event == "planner_action":
+            summary = f"{event.data.get('action', '')}: {event.data.get('rationale', '')}"
+        elif event.event == "tool_result":
+            summary = str(event.data.get("summary", ""))
+        elif event.event == "completed":
+            summary = str(event.data.get("termination_reason", ""))
+        else:
+            continue
+        table.add_row(str(event.step), event.event, summary)
+    console.print(table)
+
+    answer_event = next((event for event in events if event.event == "answer"), None)
+    if answer_event is None:
+        console.print("[yellow]No answer was generated.[/yellow]")
+        return
+    answer = answer_event.data.get("answer", {})
+    citations = answer.get("citations", []) if isinstance(answer, dict) else []
+    console.print("\n[bold]Answer[/bold]")
+    console.print(answer.get("answer", "") if isinstance(answer, dict) else "")
+    console.print(
+        f"Citations: {', '.join(str(value) for value in citations) or '(insufficient evidence)'}"
+    )
+    console.print(f"Run: {answer_event.run_id}")
 
 
 def _build_extraction_config(
@@ -747,8 +817,8 @@ def ask(
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
     mode: Annotated[
         str,
-        typer.Option("--mode", help="naive, local, global, hybrid, or mix"),
-    ] = "mix",
+        typer.Option("--mode", help="agentic, naive, local, global, hybrid, or mix"),
+    ] = "agentic",
     profile: Annotated[
         str | None,
         typer.Option("--profile", help="idx_ profile ID or config hash"),
@@ -758,17 +828,31 @@ def ask(
     graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
     deepseek: Annotated[
         bool,
-        typer.Option("--deepseek", help="Use DeepSeek for keywords and a citation-bound answer"),
+        typer.Option(
+            "--deepseek/--no-deepseek",
+            help="Use DeepSeek for planning, keywords, and citation-bound answers",
+        ),
+    ] = True,
+    rerank: Annotated[
+        bool,
+        typer.Option(
+            "--rerank/--no-rerank",
+            help="Rerank candidates returned by agentic search tools",
+        ),
     ] = False,
     json_output: Annotated[
         bool,
         typer.Option("--json", help="Print JSON answer, evidence, and trace"),
     ] = False,
 ) -> None:
-    try:
-        selected_mode = RetrievalMode(mode)
-    except ValueError as error:
-        raise typer.BadParameter("--mode must be naive, local, global, hybrid, or mix") from error
+    selected_mode: RetrievalMode | None = None
+    if mode != "agentic":
+        try:
+            selected_mode = RetrievalMode(mode)
+        except ValueError as error:
+            raise typer.BadParameter(
+                "--mode must be agentic, naive, local, global, hybrid, or mix"
+            ) from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
     deepseek_settings = DeepSeekSettings()
@@ -776,8 +860,10 @@ def ask(
     upgrade_database(url)
     database = Database(url)
     client: QueryClient | None = None
+    planner: DeepSeekAgentPlanner | DeterministicAgentPlanner | None = None
+    agent_events: list[AgentEvent] | None = None
+    result: AnswerResult | None = None
     try:
-        client = _deepseek_query_client() if deepseek else None
         service = RetrievalService(
             database,
             _embedding_provider(retrieval_settings),
@@ -792,25 +878,71 @@ def ask(
             graph_hops=graph_hops,
         )
 
-        async def run() -> AnswerResult:
-            try:
-                return await service.ask(
-                    question,
-                    query_client=client,
-                    mode=selected_mode,
-                    options=options,
-                    profile_ref=profile,
-                )
-            finally:
-                await _close_query_client(client)
+        if selected_mode is None:
+            if not rerank:
+                options = replace(options, reranker_provider="none")
+            client = (
+                _deepseek_query_client(required_by="agentic mode")
+                if deepseek
+                else (DeterministicQueryClient())
+            )
+            planner = _agent_planner(use_deepseek=deepseek, settings=deepseek_settings)
+            runner = AgentRunner(
+                service,
+                planner=planner,
+                answer_client=client,
+                retrieval_options=options,
+            )
 
-        result = asyncio.run(run())
+            async def run_agent() -> list[AgentEvent]:
+                try:
+                    events = [
+                        event
+                        async for event in runner.run(
+                            AgentRunRequest(question=question, profile_id=profile)
+                        )
+                    ]
+                    failed = next((event for event in events if event.event == "failed"), None)
+                    if failed is not None:
+                        raise RuntimeError(str(failed.data.get("error", "agent run failed")))
+                    return events
+                finally:
+                    await _close_query_client(client)
+                    if planner is not None:
+                        close = getattr(planner, "close", None)
+                        if callable(close):
+                            close_result = close()
+                            if inspect.isawaitable(close_result):
+                                await close_result
+
+            agent_events = asyncio.run(run_agent())
+        else:
+            client = _deepseek_query_client() if deepseek else None
+
+            async def run_fixed() -> AnswerResult:
+                try:
+                    return await service.ask(
+                        question,
+                        query_client=client,
+                        mode=selected_mode,
+                        options=options,
+                        profile_ref=profile,
+                    )
+                finally:
+                    await _close_query_client(client)
+
+            result = asyncio.run(run_fixed())
     except (EmbeddingConfigurationError, ValueError, RuntimeError) as error:
         console.print(f"[red]{type(error).__name__}:[/red] {error}")
         raise typer.Exit(code=1) from error
     finally:
         database.dispose()
-    _render_answer_result(result, json_output=json_output)
+    if selected_mode is None:
+        assert agent_events is not None
+        _render_agent_result(agent_events, json_output=json_output)
+    else:
+        assert result is not None
+        _render_answer_result(result, json_output=json_output)
 
 
 @app.command("evaluate")

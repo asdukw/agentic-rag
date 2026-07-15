@@ -16,7 +16,8 @@
 
 需要 Python 3.11--3.13、[uv](https://docs.astral.sh/uv/) 和 [Bun](https://bun.sh/)。下面的 CLI 演示使用
 仓库内的 `tests/fixtures/corpus`；实际使用请通过 Web UI 上传自己的语料。首次建立索引时会下载本地 BGE-M3
-模型权重，因此需要网络，但不需要 embedding API key。CLI 默认数据库为 `storage/app.db`。
+模型权重，因此需要网络，但不需要 embedding API key。默认的 `ask` 使用 Agentic + DeepSeek，需先配置
+`DEEPSEEK_API_KEY`；CLI 默认数据库为 `storage/app.db`。
 
 ```bash
 uv sync --dev
@@ -31,7 +32,7 @@ uv run hrag build-graph --limit 10
 # 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
 uv run hrag build-index
 
-# 检索并生成基于语料证据的离线回答。
+# 默认由 DeepSeek planner 调用受限工具、选择证据并生成引用受约束的回答。
 uv run hrag ask "How does mix retrieval combine evidence?"
 ```
 
@@ -65,8 +66,8 @@ bun install
 bun run dev
 ```
 
-浏览器打开 Bun 输出的本地地址即可。默认使用确定性 planner；勾选页面中的 DeepSeek 选项后，DeepSeek 会用
-严格 JSON action 在每轮选择一个工具。当前工具为：chunk dense/BM25 检索、实体检索、关系检索、最多两跳的
+浏览器打开 Bun 输出的本地地址即可。Web 默认启用 DeepSeek planner，以严格 JSON action 在每轮选择一个工具；
+需要离线调试时可取消页面中的 DeepSeek 选项。当前工具为：chunk dense/BM25 检索、实体检索、关系检索、最多两跳的
 图扩展、受 token 预算限制的证据读取，以及只基于已读 chunk 的回答。每次 run 会将完整事件记录写入
 `artifacts/agent-runs/`；每一步检索仍保留现有的 `rtr_` trace。
 
@@ -113,7 +114,7 @@ uv run hrag build-index
 
 DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响应中的实际模型、缓存命中输入、
 缓存未命中输入和输出 token，结合 `.env` 中的六项单价估算人民币成本；`build-graph`、
-`retrieve --deepseek`、`ask --deepseek` 与 `evaluate` 的 JSON/trace/报告都会保留可观测的
+`retrieve --deepseek`、默认启用 DeepSeek 的 `ask` 与 `evaluate` 的 JSON/trace/报告都会保留可观测的
 用量和估算结果。Ragas 当前不暴露评审模型 usage，因此 `evaluate` 的 judge 与 total 成本会明确标为
 `unknown`，不会猜测为缓存未命中或零成本。
 
@@ -128,12 +129,15 @@ uv run hrag retrieve "How does LightRAG use entities?" --mode mix --json
 uv run hrag retrieval replay rtr_<id> --json
 ```
 
-可选 `--mode naive|local|global|hybrid|mix`，默认 `mix`：`naive` 是项目扩展的 chunk dense +
+`retrieve` 可选 `--mode naive|local|global|hybrid|mix`，默认 `mix`：`naive` 是项目扩展的 chunk dense +
 BM25 召回；`local` 从实体命中扩展图邻居；`global` 从关系命中汇聚证据；`hybrid` 只组合
 `local + global`；`mix` 以 LightRAG 的语义组合 `naive + local + global`。复合模式按来源轮询
 候选并按 chunk ID 去重，之后统一精排和裁剪。每次检索都会产生可 replay 的 `rtr_` trace；其中保留
-naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次。`--deepseek` 才会启用模型做关键词
-提取或受证据约束的回答。
+naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次。
+
+`ask` 默认使用 `--mode agentic --deepseek --no-rerank`：Planner 跨查询和工具选择最终 evidence，工具返回结果
+默认保留一阶段顺序；需要提高单次工具候选质量时可加 `--rerank`。固定链路仍可用
+`--mode naive|local|global|hybrid|mix`，离线调试可用 `--no-deepseek`。
 
 ### 使用 Ragas 评测
 

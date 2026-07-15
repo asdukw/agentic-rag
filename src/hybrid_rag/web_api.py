@@ -68,7 +68,7 @@ class AgentWebRequest(AgentRunRequest):
     embedding_provider: Literal["flagembedding", "hash"] | None = None
     embedding_model: str | None = Field(default=None, max_length=200)
     embedding_dimensions: int | None = Field(default=None, ge=32, le=4096)
-    use_deepseek: bool = False
+    use_deepseek: bool = True
     top_k: int | None = Field(default=None, ge=1, le=8)
     context_token_budget: int | None = Field(default=None, ge=128, le=8000)
     graph_hops: int | None = Field(default=None, ge=1, le=2)
@@ -114,7 +114,7 @@ async def runtime_defaults() -> dict[str, Any]:
             "context_token_budget": retrieval.context_token_budget,
             "graph_hops": min(retrieval.graph_max_hops, 2),
         },
-        "use_deepseek_default": False,
+        "use_deepseek_default": True,
     }
 
 
@@ -322,6 +322,7 @@ async def stream_agent_run(request: AgentWebRequest) -> StreamingResponse:
                     service,
                     planner=planner,
                     answer_client=answer_client,
+                    retrieval_options=runtime.options,
                 )
                 async for event in runner.run(
                     AgentRunRequest(

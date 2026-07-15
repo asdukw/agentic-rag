@@ -23,7 +23,7 @@ from hybrid_rag.agentic.models import (
     ToolOutcome,
 )
 from hybrid_rag.agentic.planner import AgentPlanner
-from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalMode
+from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalMode, RetrievalResult
 from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import IndexItem, LoadedIndex
@@ -46,10 +46,12 @@ class _AgentSession:
         service: RetrievalService,
         profile_id: str,
         budget: AgentBudget,
+        retrieval_options: RetrievalOptions,
     ) -> None:
         self.service = service
         self.profile_id = profile_id
         self.budget = budget
+        self.retrieval_options = retrieval_options
         self.discovered_chunk_ids: dict[str, ContextItem] = {}
         self.read_chunk_ids: dict[str, ContextItem] = {}
         self.discovered_entity_ids: set[str] = set()
@@ -81,11 +83,13 @@ class AgentRunner:
         *,
         planner: AgentPlanner,
         answer_client: QueryClient,
+        retrieval_options: RetrievalOptions | None = None,
         audit_dir: Path = Path("artifacts/agent-runs"),
     ) -> None:
         self.service = service
         self.planner = planner
         self.answer_client = answer_client
+        self.retrieval_options = retrieval_options or RetrievalOptions()
         self.audit_dir = audit_dir
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
@@ -95,6 +99,7 @@ class AgentRunner:
             service=self.service,
             profile_id=profile.id,
             budget=request.budget,
+            retrieval_options=self.retrieval_options,
         )
         events: list[AgentEvent] = []
         planner_state: list[dict[str, Any]] = []
@@ -106,6 +111,14 @@ class AgentRunner:
                 "profile_id": profile.id,
                 "corpus_content_hash": profile.metadata.get("corpus_content_hash"),
                 "budget": request.budget.model_dump(mode="json"),
+                "retrieval": {
+                    "top_k": self.retrieval_options.top_k,
+                    "reranker_provider": self.retrieval_options.reranker_provider,
+                    "reranker_model": self.retrieval_options.reranker_model,
+                    "rerank_candidate_multiplier": (
+                        self.retrieval_options.rerank_candidate_multiplier
+                    ),
+                },
             },
         )
         events.append(started)
@@ -247,7 +260,7 @@ class AgentRunner:
             return _budget_outcome(action.action, "search")
         query = _required_string(action.args, "query")
         strategy = _enum_string(action.args, "strategy", {"dense", "bm25", "hybrid"}, "hybrid")
-        options = _tool_options(session.budget, action.args)
+        options = _tool_options(session, action.args)
         if strategy == "dense":
             options = replace(options, naive_dense_weight=1.0, naive_bm25_weight=0.0)
         elif strategy == "bm25":
@@ -271,6 +284,7 @@ class AgentRunner:
             data={
                 "trace_id": result.trace_id,
                 "strategy": strategy,
+                "rerank": _rerank_summary(result),
                 "chunks": [_context_summary(item) for item in result.context_items],
             },
         )
@@ -288,7 +302,7 @@ class AgentRunner:
         result = session.service.retrieve(
             query,
             mode=mode,
-            options=_tool_options(session.budget, action.args),
+            options=_tool_options(session, action.args),
             profile_ref=session.profile_id,
             persist=True,
             model_info={"agentic_tool": action.action.value},
@@ -312,7 +326,11 @@ class AgentRunner:
                 f"Found {len(candidates)} {expected_kind} candidates and "
                 f"{len(result.context_items)} source chunks."
             ),
-            data={"trace_id": result.trace_id, f"{expected_kind}s": candidates[:8]},
+            data={
+                "trace_id": result.trace_id,
+                "rerank": _rerank_summary(result),
+                f"{expected_kind}s": candidates[:8],
+            },
         )
 
     def _expand_graph(self, session: _AgentSession, action: AgentAction) -> ToolOutcome:
@@ -494,13 +512,30 @@ class AgentRunner:
         )
 
 
-def _tool_options(budget: AgentBudget, args: Mapping[str, Any]) -> RetrievalOptions:
-    return RetrievalOptions(
-        top_k=_bounded_int(args.get("top_k"), default=6, minimum=1, maximum=8),
-        context_token_budget=budget.evidence_token_budget,
-        graph_max_hops=budget.max_graph_hops,
-        reranker_provider="none",
+def _tool_options(session: _AgentSession, args: Mapping[str, Any]) -> RetrievalOptions:
+    return replace(
+        session.retrieval_options,
+        top_k=_bounded_int(
+            args.get("top_k"),
+            default=min(session.retrieval_options.top_k, 8),
+            minimum=1,
+            maximum=8,
+        ),
+        context_token_budget=session.budget.evidence_token_budget,
+        graph_max_hops=session.budget.max_graph_hops,
     )
+
+
+def _rerank_summary(result: RetrievalResult) -> dict[str, Any] | None:
+    rerank = result.trace.rerank
+    if rerank is None:
+        return None
+    return {
+        "provider": rerank.provider,
+        "model": rerank.model,
+        "version": rerank.version,
+        "candidate_count": len(rerank.hits),
+    }
 
 
 def _bounded_paths(
