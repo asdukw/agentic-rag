@@ -1,7 +1,7 @@
 [project]
-name = "hybrid-rag"
+name = "hybrid-rag-lab"
 version = "0.1.0"
-description = "A lightweight, explainable LightRAG-style graph RAG implementation"
+description = "A lightweight, explainable lab for comparing hybrid and agentic RAG modes"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-hybrid-rag = "hybrid_rag.cli:app"
+hrag = "hybrid_rag.cli:app"
 
 [dependency-groups]
 dev = [

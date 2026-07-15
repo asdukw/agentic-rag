@@ -46,7 +46,10 @@ const TOOL_LABELS: Record<string, { title: string; copy: string }> = {
 };
 
 export default function App() {
-  const [apiBase, setApiBase] = useState(() => localStorage.getItem("hybrid-rag-api") ?? "");
+  const [apiBase, setApiBase] = useState(
+    () =>
+      localStorage.getItem("hybrid-rag-lab-api") ?? localStorage.getItem("hybrid-rag-api") ?? "",
+  );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
   const [workspaceName, setWorkspaceName] = useState("");
@@ -71,7 +74,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    localStorage.setItem("hybrid-rag-api", apiBase);
+    localStorage.setItem("hybrid-rag-lab-api", apiBase);
   }, [apiBase]);
 
   const refreshRuntime = useCallback(async () => {
@@ -236,7 +239,7 @@ export default function App() {
     <main className="shell">
       <header className="masthead">
         <div>
-          <p className="eyebrow">Hybrid RAG · Python Agent Runtime</p>
+          <p className="eyebrow">Hybrid RAG Lab · Python Agent Runtime</p>
           <h1>Agentic evidence workbench</h1>
           <p className="lede">模型决定下一步检索路径；Python 强制执行证据、图谱和引用边界。</p>
         </div>

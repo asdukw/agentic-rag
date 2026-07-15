@@ -45,7 +45,7 @@ from hybrid_rag.storage.migrations import upgrade_database
 from hybrid_rag.storage.repository import IngestRepository
 from hybrid_rag.workspace import WorkspaceStore
 
-app = FastAPI(title="Hybrid RAG Agent API", version="0.1.0")
+app = FastAPI(title="Hybrid RAG Lab API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

@@ -50,7 +50,7 @@ from hybrid_rag.storage.migrations import upgrade_database
 from hybrid_rag.storage.repository import IngestRepository
 from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
-app = typer.Typer(no_args_is_help=True, help="Hybrid RAG development CLI")
+app = typer.Typer(no_args_is_help=True, help="Hybrid RAG Lab CLI")
 db_app = typer.Typer(no_args_is_help=True, help="Database schema commands")
 graph_app = typer.Typer(no_args_is_help=True, help="Graph extraction and inspection commands")
 retrieval_app = typer.Typer(
@@ -228,7 +228,7 @@ def _render_retrieval_result(result: RetrievalResult, *, json_output: bool) -> N
             f"({len(rerank.hits)} candidates, limit={rerank.candidate_limit})"
         )
     if result.trace_id:
-        console.print(f"Replay with: hybrid-rag retrieval replay {result.trace_id}")
+        console.print(f"Replay with: hrag retrieval replay {result.trace_id}")
     _render_deepseek_cost(result.trace.deepseek_cost)
     console.print(result.context or "[yellow]No evidence fit the context budget.[/yellow]")
 
@@ -606,13 +606,13 @@ def build_graph(
             run_id = service.last_run_id or resume
             console.print("[yellow]Graph build interrupted after durable checkpoints.[/yellow]")
             if run_id:
-                console.print(f"Resume with: hybrid-rag build-graph --resume {run_id}")
+                console.print(f"Resume with: hrag build-graph --resume {run_id}")
             raise typer.Exit(code=130) from error
         except Exception as error:
             run_id = service.last_run_id or resume
             console.print(f"[red]{type(error).__name__}:[/red] {error}")
             if run_id:
-                console.print(f"Resume with: hybrid-rag build-graph --resume {run_id}")
+                console.print(f"Resume with: hrag build-graph --resume {run_id}")
             raise typer.Exit(code=1) from error
     finally:
         database.dispose()

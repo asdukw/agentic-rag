@@ -1,4 +1,4 @@
-# Hybrid RAG architecture
+# Hybrid RAG Lab architecture
 
 > Status: implemented architecture. The same persisted corpus, graph snapshot,
 > index profile, and evidence contracts serve the CLI, web workbench, bounded

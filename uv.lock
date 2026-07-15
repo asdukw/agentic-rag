@@ -829,7 +829,7 @@ wheels = [
 ]
 
 [[package]]
-name = "hybrid-rag"
+name = "hybrid-rag-lab"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

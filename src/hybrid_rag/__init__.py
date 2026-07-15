@@ -1,3 +1,3 @@
-"""Hybrid RAG package."""
+"""Hybrid RAG Lab package."""
 
 __version__ = "0.1.0"

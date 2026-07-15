@@ -1,4 +1,4 @@
-# Hybrid RAG
+# Hybrid RAG Lab
 
 一个以学习和演示为主的 Hybrid/Graph RAG 项目。Web UI 由用户上传自己的文档；仓库内的小型 fixture
 语料仅用于 CLI 开发和演示。项目展示从文档导入、索引与可选知识图谱构建，到检索、回答和 citation
@@ -22,17 +22,17 @@
 uv sync --dev
 
 # 导入内置 fixture 语料并切成可追溯的 chunks。
-uv run hybrid-rag ingest tests/fixtures/corpus
+uv run hrag ingest tests/fixtures/corpus
 
 # 可选：抽取实体和关系（需要 DEEPSEEK_API_KEY）。
 # 只使用 naive，或只需 mix 的 chunk 路径时可跳过这一步。
-uv run hybrid-rag build-graph --limit 10
+uv run hrag build-graph --limit 10
 
 # 用默认的本地 BGE-M3 embedding 为 chunk 建立语义索引。
-uv run hybrid-rag build-index
+uv run hrag build-index
 
 # 检索并生成基于语料证据的离线回答。
-uv run hybrid-rag ask "How does mix retrieval combine evidence?"
+uv run hrag ask "How does mix retrieval combine evidence?"
 ```
 
 完成后可在输出中查看回答所依据的 citation，用于观察 RAG 的检索与证据归因效果。fixture 语料较小，
@@ -57,7 +57,7 @@ Agent 主循环与安全边界。模型只能在受限工具中选择下一步�
 
 ```bash
 # 终端 1：Python Agent API。DeepSeek 密钥只由此进程从 .env 读取。
-uv run hybrid-rag serve
+uv run hrag serve
 
 # 终端 2：Bun + React 界面。
 cd web
@@ -86,7 +86,7 @@ Markdown 或 TXT；每个 workspace 都拥有自己的 `uploads/`、`workspace.d
 正常执行检索或问答命令即可：
 
 ```bash
-uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
+uv run hrag retrieve "How does LightRAG use entities?" --mode mix --json
 ```
 
 首次检索会下载模型权重。实现会批量计算 `[query, passage]` 对的交叉编码器分数，并在 trace 中保留
@@ -99,8 +99,8 @@ uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
 配置 `DEEPSEEK_API_KEY` 后，抽取实体与关系；完成后重新建索引以纳入 entity/relation 向量：
 
 ```bash
-uv run hybrid-rag build-graph --limit 10
-uv run hybrid-rag build-index
+uv run hrag build-graph --limit 10
+uv run hrag build-index
 ```
 
 构图默认会重试历史上失败的抽取；仅在明确需要跳过它们时使用 `--no-retry-failed`。
@@ -124,8 +124,8 @@ DeepSeek 的上游响应提供 token 用量而非账单金额。项目会用响�
 ### 选择检索模式与查看证据
 
 ```bash
-uv run hybrid-rag retrieve "How does LightRAG use entities?" --mode mix --json
-uv run hybrid-rag retrieval replay rtr_<id> --json
+uv run hrag retrieve "How does LightRAG use entities?" --mode mix --json
+uv run hrag retrieval replay rtr_<id> --json
 ```
 
 可选 `--mode naive|local|global|hybrid|mix`，默认 `mix`：`naive` 是项目扩展的 chunk dense +
@@ -147,7 +147,7 @@ naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次�
 
 ```bash
 # 对指定 workspace 建立或刷新待评测的索引，并记录输出中的 corpus_content_hash。
-uv run hybrid-rag build-index \
+uv run hrag build-index \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --json
 
@@ -167,12 +167,12 @@ uv run scripts/ragas_testset_demo.py \
   --output artifacts/ragas/full-ragas-testset.json
 
 # 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
-uv run hybrid-rag evaluate \
+uv run hrag evaluate \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --testset artifacts/ragas/my-ragas-testset.json
 
 # 可选：在同一测试集和同一索引上比较多个模式。
-uv run hybrid-rag evaluate \
+uv run hrag evaluate \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --testset artifacts/ragas/my-ragas-testset.json \
   --modes naive,mix
@@ -215,7 +215,7 @@ PDF、Markdown 或 TXT，再依次点击“导入文档 → 构建知识图谱 �
 独立的数据库和上传目录，互不影响。
 
 ```bash
-uv run hybrid-rag serve
+uv run hrag serve
 cd web
 bun install
 bun run dev
