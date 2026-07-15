@@ -14,6 +14,7 @@ from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary
 from hybrid_rag.evaluation.testset_contract import (
     RAGAS_TESTSET_SCHEMA_VERSION,
     validate_corpus_content_hash,
+    validate_testset_sources,
 )
 from hybrid_rag.retrieval.models import RetrievalMode
 from hybrid_rag.retrieval.query import QueryClient
@@ -35,6 +36,7 @@ class RagasTestset:
     corpus_content_hash: str
     file_sha256: str
     cases: tuple[RagasCase, ...]
+    sources: tuple[dict[str, object], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +152,7 @@ class RagasEvaluationRunner:
                     "corpus_content_hash": testset.corpus_content_hash,
                     "file_sha256": testset.file_sha256,
                     "case_count": len(testset.cases),
+                    "sources": list(testset.sources),
                 },
                 "profile": _profile_provenance(profile, profile_corpus_content_hash),
                 "runtime": {
@@ -198,6 +201,8 @@ def _load_testset(path: Path) -> RagasTestset:
     values = value.get("cases")
     if not isinstance(values, list) or not values:
         raise ValueError("Ragas test set envelope cases must be a non-empty JSON array")
+    raw_sources = value.get("sources")
+    sources = validate_testset_sources(raw_sources) if raw_sources is not None else []
 
     cases: list[RagasCase] = []
     for index, item in enumerate(values, start=1):
@@ -226,6 +231,7 @@ def _load_testset(path: Path) -> RagasTestset:
         corpus_content_hash=corpus_content_hash,
         file_sha256=hashlib.sha256(raw).hexdigest(),
         cases=tuple(cases),
+        sources=tuple(sources),
     )
 
 

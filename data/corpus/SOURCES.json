@@ -1,0 +1,115 @@
+{
+  "notice": "The PDF files are local-only evaluation inputs and are not redistributed by this repository. Copyright and all rights remain with the authors or other copyright holders. Official metadata is from the CVF Open Access repository.",
+  "sources": [
+    {
+      "source_uri": "file:corpus/lee_exemplar-free_continual_learning_for_state_space_models_cvpr_2026_paper.pdf",
+      "filename": "Lee_Exemplar-Free_Continual_Learning_for_State_Space_Models_CVPR_2026_paper.pdf",
+      "title": "Exemplar-Free Continual Learning for State Space Models",
+      "authors": ["Isaac Ning Lee", "Leila Mahmoodi", "Trung Le", "Mehrtash Harandi"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "25077-25087",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Lee_Exemplar-Free_Continual_Learning_for_State_Space_Models_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/nadar_posed-flow_versatile_and_guided_flow_matching_model_of_human_pose_cvpr_2026_paper.pdf",
+      "filename": "Nadar_PoseD-Flow_Versatile_and_Guided_Flow_Matching_Model_of_Human_Pose_CVPR_2026_paper.pdf",
+      "title": "PoseD-Flow: Versatile and Guided Flow Matching Model of Human Pose",
+      "authors": ["Jebastin Nadar", "Simone Foti", "Tolga Birdal"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "21165-21175",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Nadar_PoseD-Flow_Versatile_and_Guided_Flow_Matching_Model_of_Human_Pose_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/ni_unigeoseg_towards_unified_open-world_segmentation_for_geospatial_scenes_cvpr_2026_paper.pdf",
+      "filename": "Ni_UniGeoSeg_Towards_Unified_Open-World_Segmentation_for_Geospatial_Scenes_CVPR_2026_paper.pdf",
+      "title": "UniGeoSeg: Towards Unified Open-World Segmentation for Geospatial Scenes",
+      "authors": ["Shuo Ni", "Di Wang", "He Chen", "Haonan Guo", "Ning Zhang", "Jing Zhang"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "34865-34876",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Ni_UniGeoSeg_Towards_Unified_Open-World_Segmentation_for_Geospatial_Scenes_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/rao_latent_diffusion_inversion_requires_understanding_the_latent_space_cvpr_2026_paper.pdf",
+      "filename": "Rao_Latent_Diffusion_Inversion_Requires_Understanding_the_Latent_Space_CVPR_2026_paper.pdf",
+      "title": "Latent Diffusion Inversion Requires Understanding the Latent Space",
+      "authors": ["Mingxing Rao", "Bowen Qu", "Daniel Moyer"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "34971-34980",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Rao_Latent_Diffusion_Inversion_Requires_Understanding_the_Latent_Space_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/shi_intrinsic_concept_extraction_based_on_compositional_interpretability_cvpr_2026_paper.pdf",
+      "filename": "Shi_Intrinsic_Concept_Extraction_Based_on_Compositional_Interpretability_CVPR_2026_paper.pdf",
+      "title": "Intrinsic Concept Extraction Based on Compositional Interpretability",
+      "authors": ["Hanyu Shi", "Hong Tao", "Guoheng Huang", "Jianbin Jiang", "Xuhang Chen", "Chi-Man Pun", "Shanhu Wang", "Pan Pan"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "38969-38978",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Shi_Intrinsic_Concept_Extraction_Based_on_Compositional_Interpretability_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/wang_mocap-2-to-3_multi-view_lifting_for_monocular_motion_recovery_with_2d_pretraining_cvpr_2026_paper.pdf",
+      "filename": "Wang_Mocap-2-to-3_Multi-view_Lifting_for_Monocular_Motion_Recovery_with_2D_Pretraining_CVPR_2026_paper.pdf",
+      "title": "Mocap-2-to-3: Multi-view Lifting for Monocular Motion Recovery with 2D Pretraining",
+      "authors": ["Zhumei Wang", "Zechen Hu", "Ruoxi Guo", "Huaijin Pi", "Ziyong Feng", "Liang Zhang", "Mingtao Pei", "Siyuan Huang"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "42869-42878",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Wang_Mocap-2-to-3_Multi-view_Lifting_for_Monocular_Motion_Recovery_with_2D_Pretraining_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/wu_scan_clusters_not_pixels_a_cluster-centric_paradigm_for_efficient_ultra-high-definition_cvpr_2026_paper.pdf",
+      "filename": "Wu_Scan_Clusters_Not_Pixels_A_Cluster-Centric_Paradigm_for_Efficient_Ultra-high-definition_CVPR_2026_paper.pdf",
+      "title": "Scan Clusters, Not Pixels: A Cluster-Centric Paradigm for Efficient Ultra-high-definition Image Restoration",
+      "authors": ["Chen Wu", "Ling Wang", "Zhuoran Zheng", "Yuning Cui", "Zhixiong Yang", "Xiangyu Chen", "Yue Zhang", "Weidong Jiang", "Jingyuan Xia"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "15528-15537",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Wu_Scan_Clusters_Not_Pixels_A_Cluster-Centric_Paradigm_for_Efficient_Ultra-high-definition_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/xue_single-step_diffusion-based_video_coding_with_semantic-temporal_guidance_cvpr_2026_paper.pdf",
+      "filename": "Xue_Single-step_Diffusion-based_Video_Coding_with_Semantic-Temporal_Guidance_CVPR_2026_paper.pdf",
+      "title": "Single-step Diffusion-based Video Coding with Semantic-Temporal Guidance",
+      "authors": ["Naifu Xue", "Zhaoyang Jia", "Jiahao Li", "Bin Li", "Zihan Zheng", "Yuan Zhang", "Yan Lu"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "9752-9761",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Xue_Single-step_Diffusion-based_Video_Coding_with_Semantic-Temporal_Guidance_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/zhang_worldstereo_bridging_camera-guided_video_generation_and_scene_reconstruction_via_3d_cvpr_2026_paper.pdf",
+      "filename": "Zhang_WorldStereo_Bridging_Camera-Guided_Video_Generation_and_Scene_Reconstruction_via_3D_CVPR_2026_paper.pdf",
+      "title": "WorldStereo: Bridging Camera-Guided Video Generation and Scene Reconstruction via 3D Geometric Memories",
+      "authors": ["Yisu Zhang", "Chenjie Cao", "Tengfei Wang", "Xuhui Zuo", "Junta Wu", "Jianke Zhu", "Chunchao Guo"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "40327-40339",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Zhang_WorldStereo_Bridging_Camera-Guided_Video_Generation_and_Scene_Reconstruction_via_3D_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    },
+    {
+      "source_uri": "file:corpus/zheng_janus_a_lightweight_framework_for_jailbreaking_text-to-image_models_via_distribution_cvpr_2026_paper.pdf",
+      "filename": "Zheng_JANUS_A_Lightweight_Framework_for_Jailbreaking_Text-to-Image_Models_via_Distribution_CVPR_2026_paper.pdf",
+      "title": "JANUS: A Lightweight Framework for Jailbreaking Text-to-Image Models via Distribution Optimization",
+      "authors": ["Haolun Zheng", "Yu He", "Tailun Chen", "Shuo Shao", "Zhixuan Chu", "Hongbin Zhou", "Lan Tao", "Zhan Qin", "Kui Ren"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "15719-15729",
+      "official_url": "https://openaccess.thecvf.com/content/CVPR2026/html/Zheng_JANUS_A_Lightweight_Framework_for_Jailbreaking_Text-to-Image_Models_via_Distribution_CVPR_2026_paper.html",
+      "rights_notice": "Copyright and all rights are retained by the authors or other copyright holders; see the official CVF page."
+    }
+  ]
+}

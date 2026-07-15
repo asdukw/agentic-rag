@@ -15,6 +15,7 @@ from pydantic import SecretStr
 from hybrid_rag.evaluation.testset_contract import (
     RAGAS_TESTSET_SCHEMA_VERSION,
     validate_corpus_content_hash,
+    validate_testset_sources,
 )
 from hybrid_rag.ids import file_source_uri
 from hybrid_rag.ingest.cleaner import clean_document
@@ -132,17 +133,22 @@ def generate_ragas_cases(
 def build_ragas_testset_envelope(
     corpus_content_hash: object,
     cases: Sequence[dict[str, object]],
+    *,
+    sources: object | None = None,
 ) -> dict[str, object]:
     """Build and validate the versioned JSON envelope accepted by ``evaluate``."""
 
     normalized_hash = validate_corpus_content_hash(corpus_content_hash)
     if not cases:
         raise ValueError("Ragas test set requires at least one case")
-    return {
+    envelope: dict[str, object] = {
         "schema_version": RAGAS_TESTSET_SCHEMA_VERSION,
         "corpus_content_hash": normalized_hash,
         "cases": [_validated_case(case, index=index) for index, case in enumerate(cases, start=1)],
     }
+    if sources is not None:
+        envelope["sources"] = validate_testset_sources(sources)
+    return envelope
 
 
 def write_ragas_testset(path: Path, envelope: dict[str, object]) -> Path:
@@ -225,6 +231,7 @@ def _validated_envelope(value: object) -> dict[str, object]:
     return build_ragas_testset_envelope(
         value.get("corpus_content_hash"),
         cast(list[dict[str, object]], cases),
+        sources=value.get("sources"),
     )
 
 
@@ -241,5 +248,6 @@ __all__ = [
     "generate_ragas_cases",
     "load_ragas_documents",
     "validate_corpus_content_hash",
+    "validate_testset_sources",
     "write_ragas_testset",
 ]

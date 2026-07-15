@@ -155,20 +155,21 @@ uv run hrag build-index \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --json
 
-# Ragas 从该 workspace 已上传的文档生成测试集。DEEPSEEK_API_KEY 是必需的。
-uv run scripts/ragas_testset_demo.py \
-  --source-dir storage/workspaces/<workspace-id>/uploads \
-  --corpus-content-hash <build-index输出的corpus_content_hash> \
-  --output artifacts/ragas/my-ragas-testset.json
+# 默认从 data/corpus 的全部文档生成测试集，并写入 artifacts/ragas/ragas-testset.json。
+# DEEPSEEK_API_KEY 是必需的。
+uv run scripts/ragas_testset.py \
+  --corpus-content-hash <build-index输出的corpus_content_hash>
 
-# 完整覆盖该 workspace 的 uploads（递归读取所有受支持文件及其全部段落/页面）。
-# 先用 --dry-run 核对载入量；全量生成会增加模型调用成本。
-uv run scripts/ragas_testset_demo.py \
+# 也可以显式改用 workspace uploads、case 数量和输出文件。
+uv run scripts/ragas_testset.py \
   --source-dir storage/workspaces/<workspace-id>/uploads \
-  --all-documents \
-  --testset-size 20 \
+  --testset-size 40 \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
-  --output artifacts/ragas/full-ragas-testset.json
+  --output artifacts/ragas/workspace-ragas-testset.json
+
+# 低成本冒烟生成：默认只读 2 篇、每篇前 6 个 segment，并生成 6 条 case。
+uv run scripts/ragas_smoke.py \
+  --corpus-content-hash <build-index输出的corpus_content_hash>
 
 # 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
 uv run hrag evaluate \
@@ -189,6 +190,19 @@ uv run hrag evaluate \
 {
   "schema_version": "1",
   "corpus_content_hash": "<64位小写十六进制hash>",
+  "sources": [
+    {
+      "source_uri": "file:corpus/example.pdf",
+      "filename": "example.pdf",
+      "title": "论文标题",
+      "authors": ["作者"],
+      "venue": "CVPR",
+      "year": 2026,
+      "pages": "1-10",
+      "official_url": "https://openaccess.thecvf.com/...",
+      "rights_notice": "Copyright remains with the applicable rights holders."
+    }
+  ],
   "cases": [
     {
       "user_input": "问题",
@@ -199,9 +213,14 @@ uv run hrag evaluate \
 }
 ```
 
-生成脚本复用 ingest 的 loader 与清洗逻辑，递归支持 `.pdf`、`.md`、`.markdown` 与 `.txt`。默认只读取
-2 个文件、每个 6 个 loader segment，便于演示；传入 `--all-documents` 会覆盖指定 workspace 的 `uploads`，也可用
-`--max-documents 0 --max-segments-per-document 0` 单独解除限制。公共 helper 位于
+生成脚本复用 ingest 的 loader 与清洗逻辑，递归支持 `.pdf`、`.md`、`.markdown` 与 `.txt`。默认读取
+`data/corpus` 下的全部文档和 segment，生成 30 条 case，并写入 `artifacts/ragas/ragas-testset.json`；
+正式评测可显式设置 `--testset-size 60` 或更高。可用 `--max-documents` 或
+`--max-segments-per-document` 限制输入范围。`ragas_smoke.py` 复用相同实现，但使用独立的低成本默认值和
+`artifacts/ragas/ragas-smoke-testset.json` 输出。若目标文件已存在，两个入口都会自动追加 `-1`、`-2`
+等序号选择新文件，不覆盖已有评测集。`data/corpus` 中的论文文件仅供本地使用并由 Git 忽略；仓库只提交
+`SOURCES.json`。生成器要求每个实际载入文档都存在对应来源记录，并将这些记录写入公开测试集及评测报告的
+provenance。公共 helper 位于
 `hybrid_rag.evaluation.testset`：`load_ragas_documents`、`generate_ragas_cases`、
 `build_ragas_testset_envelope` 与 `write_ragas_testset` 可供自定义工作流复用。无论选取多少文件，
 `corpus_content_hash` 都必须对应实际用于 `evaluate` 的完整 index profile。语料内容、导入/分块配置或

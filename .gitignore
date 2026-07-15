@@ -13,6 +13,8 @@ wheels/
 .env
 
 # Runtime data and generated artifacts
+data/corpus/*
+!data/corpus/SOURCES.json
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
