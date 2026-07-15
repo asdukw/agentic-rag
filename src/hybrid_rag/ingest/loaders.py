@@ -34,6 +34,10 @@ _PDF_DATE = re.compile(
 _PDF_COPYRIGHT = re.compile(
     r"(?:©|copyright|all rights reserved|版权所有|保留所有权利)", re.IGNORECASE
 )
+_PDF_TERMINAL_SECTION = re.compile(
+    r"^(?:acknowledg(?:e)?ments?|references|bibliography|attention visuali[sz]ations?)$",
+    re.IGNORECASE,
+)
 _PDF_DIGITS = re.compile(r"\d+")
 _PDF_SPACE = re.compile(r"\s+")
 
@@ -152,7 +156,7 @@ class MarkdownLoader(DocumentLoader):
 class PdfLoader(DocumentLoader):
     suffixes = frozenset({".pdf"})
     parser_name = "builtin-pdf-layout"
-    parser_version = "3"
+    parser_version = "4"
 
     def load(self, path: Path, source_uri: str) -> ParsedDocument:
         with pymupdf.open(path) as pdf:
@@ -179,6 +183,7 @@ class PdfLoader(DocumentLoader):
             if not headings:
                 headings = self._visual_headings(content_lines)
                 section_source = "visual" if headings else "none"
+            headings = self._with_terminal_headings(headings, content_lines)
 
             segments = self._segments(content_lines, headings)
             title = str(metadata.get("title") or path.stem)
@@ -244,7 +249,7 @@ class PdfLoader(DocumentLoader):
                 ]
                 if not spans:
                     continue
-                text = "".join(str(span.get("text", "")) for span in spans).strip()
+                text = PdfLoader._join_spans(spans)
                 text = re.sub(r"^(\d+(?:\.\d+){1,5})(?=[^\d\s.])", r"\1 ", text)
                 if not text:
                     continue
@@ -274,6 +279,69 @@ class PdfLoader(DocumentLoader):
                     )
                 )
         return result
+
+    @staticmethod
+    def _join_spans(spans: list[dict[object, object]]) -> str:
+        parts: list[str] = []
+        previous: dict[object, object] | None = None
+        previous_text = ""
+        for span in spans:
+            value = str(span.get("text", ""))
+            if not value.strip():
+                continue
+            if previous is not None and PdfLoader._span_has_word_gap(
+                previous,
+                previous_text,
+                span,
+                value,
+            ):
+                parts.append(" ")
+            parts.append(value)
+            previous = span
+            previous_text = value
+        return "".join(parts).strip()
+
+    @staticmethod
+    def _span_has_word_gap(
+        previous: dict[object, object],
+        previous_text: str,
+        current: dict[object, object],
+        current_text: str,
+    ) -> bool:
+        if (
+            not previous_text
+            or not current_text
+            or previous_text[-1].isspace()
+            or current_text[0].isspace()
+            or current_text[0] in ",.;:!?%)]}，。；：！？、”’"  # noqa: RUF001
+            or previous_text[-1] in "([{（【“‘-‐‑–—/"  # noqa: RUF001
+        ):
+            return False
+        previous_bbox = previous.get("bbox")
+        current_bbox = current.get("bbox")
+        if (
+            not isinstance(previous_bbox, (list, tuple))
+            or len(previous_bbox) != 4
+            or not isinstance(current_bbox, (list, tuple))
+            or len(current_bbox) != 4
+        ):
+            return False
+        previous_x1 = previous_bbox[2]
+        current_x0 = current_bbox[0]
+        if not isinstance(previous_x1, (int, float)) or not isinstance(current_x0, (int, float)):
+            return False
+        gap = float(current_x0) - float(previous_x1)
+        raw_previous_size = previous.get("size", 0.0)
+        raw_current_size = current.get("size", 0.0)
+        previous_size = (
+            float(raw_previous_size) if isinstance(raw_previous_size, (int, float)) else 0.0
+        )
+        current_size = (
+            float(raw_current_size) if isinstance(raw_current_size, (int, float)) else 0.0
+        )
+        sizes = [size for size in (previous_size, current_size) if size > 0]
+        reference_size = min(sizes) if sizes else 1.0
+        return gap >= max(0.75, reference_size * 0.18)
 
     @staticmethod
     def _inside_table(bbox: object, table_rects: list[pymupdf.Rect]) -> bool:
@@ -457,9 +525,7 @@ class PdfLoader(DocumentLoader):
                     spans = line.get("spans", [])
                     if not isinstance(spans, list):
                         continue
-                    value = "".join(
-                        str(span.get("text", "")) for span in spans if isinstance(span, dict)
-                    ).strip()
+                    value = cls._join_spans([span for span in spans if isinstance(span, dict)])
                     if value:
                         parts.append(value)
             nested = block.get("blocks", [])
@@ -513,6 +579,8 @@ class PdfLoader(DocumentLoader):
         ):
             return 0
         numbered = cls._numbered_heading_level(text) is not None
+        if _PDF_TERMINAL_SECTION.fullmatch(text):
+            return 8
         score = 3 if numbered else 0
         if body_size and line.font_size >= body_size * 1.3:
             score += 3
@@ -550,6 +618,32 @@ class PdfLoader(DocumentLoader):
             for line in candidates
         ]
 
+    @classmethod
+    def _with_terminal_headings(
+        cls,
+        headings: list[_PdfHeading],
+        lines: list[_PdfLine],
+    ) -> list[_PdfHeading]:
+        existing = {cls._normalized_heading_text(heading.text) for heading in headings}
+        supplemented = list(headings)
+        for line in lines:
+            text = line.text.strip()
+            normalized = cls._normalized_heading_text(text)
+            if not _PDF_TERMINAL_SECTION.fullmatch(text) or normalized in existing:
+                continue
+            supplemented.append(
+                _PdfHeading(
+                    page=line.page,
+                    y0=line.y0,
+                    y1=line.y1,
+                    level=1,
+                    text=text,
+                    source="visual-semantic",
+                )
+            )
+            existing.add(normalized)
+        return supplemented
+
     @staticmethod
     def _alphabetic_count(text: str) -> int:
         return sum(character.isalpha() for character in text)
@@ -579,6 +673,8 @@ class PdfLoader(DocumentLoader):
 
     @classmethod
     def _heading_level(cls, line: _PdfLine, heading_sizes: list[float]) -> int:
+        if _PDF_TERMINAL_SECTION.fullmatch(line.text.strip()):
+            return 1
         numbered = cls._numbered_heading_level(line.text)
         if numbered is not None:
             return numbered
