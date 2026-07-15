@@ -465,6 +465,7 @@ class RetrievalService:
                         "page_start": chunk.page_start,
                         "page_end": chunk.page_end,
                         "token_count": chunk.token_count,
+                        "quality_class": chunk.quality_class,
                         "text": chunk.contextualized_text,
                     },
                 )

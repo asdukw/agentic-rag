@@ -145,6 +145,7 @@ class SourceChunk:
     contextualized_text: str
     token_count: int
     content_hash: str
+    quality_class: str
     metadata: dict[str, Any]
 
 
@@ -271,7 +272,9 @@ class RetrievalRepository:
         document_records = list(session.scalars(select(DocumentRecord).order_by(DocumentRecord.id)))
         chunk_records = list(
             session.scalars(
-                select(ChunkRecord).order_by(
+                select(ChunkRecord)
+                .where(ChunkRecord.quality_class == "normal")
+                .order_by(
                     ChunkRecord.document_id,
                     ChunkRecord.ordinal,
                     ChunkRecord.id,
@@ -344,6 +347,7 @@ class RetrievalRepository:
                     contextualized_text=record.contextualized_text,
                     token_count=record.token_count,
                     content_hash=record.content_hash,
+                    quality_class=record.quality_class,
                     metadata=dict(record.metadata_json),
                 )
                 for record in chunk_records

@@ -61,7 +61,13 @@ class ChunkRecord(Base):
     __tablename__ = "chunks"
     __table_args__ = (
         UniqueConstraint("document_id", "ordinal", name="uq_chunks_document_ordinal"),
+        CheckConstraint(
+            "quality_class IN ('normal', 'references', 'acknowledgements', 'copyright', "
+            "'author_affiliation', 'visualization_label')",
+            name="ck_chunks_quality_class",
+        ),
         Index("ix_chunks_document_id", "document_id"),
+        Index("ix_chunks_quality_class", "quality_class"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -80,6 +86,9 @@ class ChunkRecord(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     chunker_name: Mapped[str] = mapped_column(String(100), nullable=False)
     chunker_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    quality_class: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="normal", server_default="normal"
+    )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

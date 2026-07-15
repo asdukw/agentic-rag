@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from hybrid_rag.ingest.quality import ChunkQuality
+
 
 class TextSegment(BaseModel):
     text: str
@@ -44,6 +46,7 @@ class ChunkData(BaseModel):
     content_hash: str
     chunker_name: str
     chunker_version: str
+    quality_class: ChunkQuality = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

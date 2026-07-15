@@ -147,5 +147,6 @@ class IngestRepository:
             content_hash=chunk.content_hash,
             chunker_name=chunk.chunker_name,
             chunker_version=chunk.chunker_version,
+            quality_class=chunk.quality_class,
             metadata_json=chunk.metadata,
         )

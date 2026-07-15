@@ -4,11 +4,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from hybrid_rag.ids import canonical_json_hash, sha256_text, stable_id
+from hybrid_rag.ingest.quality import (
+    CHUNK_QUALITY_CLASSIFIER_NAME,
+    CHUNK_QUALITY_CLASSIFIER_VERSION,
+    classify_chunk_quality,
+)
 from hybrid_rag.ingest.tokenizer import TokenCounter
 from hybrid_rag.schemas import ChunkData, ParsedDocument, TextSegment
 
 CHUNKER_NAME = "section-token-chunker"
-CHUNKER_VERSION = "2"
+CHUNKER_VERSION = "3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +48,8 @@ class SectionTokenChunker:
             "tokenizer": self.tokenizer.name,
             "max_tokens": self.max_tokens,
             "overlap_tokens": self.overlap_tokens,
+            "quality_classifier": CHUNK_QUALITY_CLASSIFIER_NAME,
+            "quality_classifier_version": CHUNK_QUALITY_CLASSIFIER_VERSION,
         }
 
     @property
@@ -138,6 +145,12 @@ class SectionTokenChunker:
                     content_hash=content_hash,
                     chunker_name=CHUNKER_NAME,
                     chunker_version=CHUNKER_VERSION,
+                    quality_class=classify_chunk_quality(
+                        section_path=section_path,
+                        text=text,
+                        ordinal=ordinal,
+                        page_start=pages[0],
+                    ),
                     metadata={"tokenizer": self.tokenizer.name},
                 )
             )

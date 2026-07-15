@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -35,34 +34,6 @@ RUN_STATUSES = {
 }
 EXTRACTION_STATUSES = {"pending", "running", "succeeded", "needs_review", "failed"}
 ATTEMPT_STAGES = {"extract", "repair"}
-
-_LOW_VALUE_GRAPH_SECTIONS = {
-    "acknowledgement",
-    "acknowledgements",
-    "acknowledgment",
-    "acknowledgments",
-    "references",
-    "bibliography",
-    "attention visualization",
-    "attention visualizations",
-    "visualization",
-    "visualizations",
-}
-_REFERENCE_ENTRY = re.compile(r"(?:^|\s)\[\d+\]\s+(?=[A-Z])")
-_COPYRIGHT_NOTICE = re.compile(
-    r"(?:©|copyright|all rights reserved|permission to (?:copy|reproduce)|"
-    r"provided proper attribution|版权所有|保留所有权利)",
-    re.IGNORECASE,
-)
-_AUTHOR_AFFILIATION = re.compile(
-    r"(?:\b(?:university|institute|department|laboratory|research lab|equal contribution)\b|"
-    r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b)",
-    re.IGNORECASE,
-)
-_VISUALIZATION_LABEL = re.compile(
-    r"(?:<\s*(?:eos|bos|pad)\s*>|attention visuali[sz]ations?|input[- ]input layer\d*)",
-    re.IGNORECASE,
-)
 
 
 def _nonnegative_optional_int(value: Any) -> int | None:
@@ -1171,43 +1142,21 @@ class GraphRepository:
         *,
         limit: int | None,
     ) -> list[ChunkRecord]:
-        statement = select(ChunkRecord).order_by(
-            ChunkRecord.document_id,
-            ChunkRecord.ordinal,
-            ChunkRecord.id,
+        statement = (
+            select(ChunkRecord)
+            .where(ChunkRecord.quality_class == "normal")
+            .order_by(
+                ChunkRecord.document_id,
+                ChunkRecord.ordinal,
+                ChunkRecord.id,
+            )
         )
         if chunk_ids is not None:
             statement = statement.where(ChunkRecord.id.in_(list(chunk_ids)))
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
-        chunks = [
-            chunk
-            for chunk in session.scalars(statement)
-            if not GraphRepository._is_low_value_chunk(chunk)
-        ]
+        chunks = list(session.scalars(statement))
         return chunks[:limit] if limit is not None else chunks
-
-    @staticmethod
-    def _is_low_value_chunk(chunk: ChunkRecord) -> bool:
-        sections = {
-            re.sub(r"\s+", " ", section).strip().casefold() for section in chunk.section_path_json
-        }
-        if sections & _LOW_VALUE_GRAPH_SECTIONS:
-            return True
-
-        text = chunk.text.strip()
-        if len(_REFERENCE_ENTRY.findall(text)) >= 3:
-            return True
-        if _COPYRIGHT_NOTICE.search(text):
-            return True
-        if (
-            chunk.ordinal <= 1
-            and chunk.page_start in (None, 1)
-            and not sections
-            and len(_AUTHOR_AFFILIATION.findall(text)) >= 2
-        ):
-            return True
-        return bool(_VISUALIZATION_LABEL.search(text))
 
     @staticmethod
     def _run_state(record: GraphBuildRunRecord) -> BuildRunState:
