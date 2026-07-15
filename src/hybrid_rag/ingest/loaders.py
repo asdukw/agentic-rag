@@ -18,6 +18,22 @@ _PDF_DECIMAL_HEADING = re.compile(r"^(\d+(?:\.\d+){0,5})(?:[、.)．]|\s+)")  # 
 _PDF_CHAPTER_HEADING = re.compile(r"^第[一二三四五六七八九十百千万零〇两\d]+([编篇部章节])")
 _PDF_CHINESE_HEADING = re.compile(r"^[一二三四五六七八九十百]+[、.．)]")  # noqa: RUF001
 _PDF_TRAILING_SENTENCE_MARK = re.compile(r"[。！？；.!?;：:]$")  # noqa: RUF001
+_PDF_SECTION_NUMBER_ONLY = re.compile(r"^\d+(?:\.\d+){1,5}[.)．]?$")  # noqa: RUF001
+_PDF_PURE_NUMBER = re.compile(r"^[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)$")
+_PDF_SCIENTIFIC_NUMBER = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)[eE][+-]?\d+$")
+_PDF_ARXIV = re.compile(r"(?:arxiv\s*:\s*)?\b\d{4}\.\d{4,5}(?:v\d+)?\b", re.IGNORECASE)
+_PDF_DATE = re.compile(
+    r"(?:\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|"
+    r"\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b|"
+    r"\d{4}年\d{1,2}月\d{1,2}日|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|"
+    r"dec(?:ember)?)\s+\d{1,2},?\s+\d{4}\b)",
+    re.IGNORECASE,
+)
+_PDF_COPYRIGHT = re.compile(
+    r"(?:©|copyright|all rights reserved|版权所有|保留所有权利)", re.IGNORECASE
+)
 _PDF_DIGITS = re.compile(r"\d+")
 _PDF_SPACE = re.compile(r"\s+")
 
@@ -33,10 +49,21 @@ class _PdfLine:
     y1: float
     font_size: float
     bold: bool
+    in_table: bool
 
     @property
     def position(self) -> float:
         return self.y0 / self.page_height if self.page_height else 0.5
+
+
+@dataclass(frozen=True, slots=True)
+class _PdfHeading:
+    page: int
+    y0: float
+    y1: float
+    level: int
+    text: str
+    source: str
 
 
 class UnsupportedFileError(ValueError):
@@ -125,31 +152,33 @@ class MarkdownLoader(DocumentLoader):
 class PdfLoader(DocumentLoader):
     suffixes = frozenset({".pdf"})
     parser_name = "builtin-pdf-layout"
-    parser_version = "2"
+    parser_version = "3"
 
     def load(self, path: Path, source_uri: str) -> ParsedDocument:
         with pymupdf.open(path) as pdf:
             metadata = pdf.metadata or {}
-            lines = [
-                line
-                for page_number, page in enumerate(pdf, start=1)
-                for line in self._lines(page, page_number)
-            ]
+            lines: list[_PdfLine] = []
+            table_region_count = 0
+            for page_number, page in enumerate(pdf, start=1):
+                table_rects = self._table_rects(page)
+                table_region_count += len(table_rects)
+                lines.extend(self._lines(page, page_number, table_rects))
             repeated_margins = self._repeated_margin_lines(lines, len(pdf))
             content_lines = [
                 line for line in lines if self._margin_key(line) not in repeated_margins
             ]
-            body_size = self._body_font_size(content_lines)
-            heading_sizes = sorted(
-                {
-                    round(line.font_size, 1)
-                    for line in content_lines
-                    if self._is_heading(line, body_size)
-                    and self._numbered_heading_level(line.text) is None
-                },
-                reverse=True,
-            )
-            segments = self._segments(content_lines, body_size, heading_sizes)
+            content_lines = self._merge_numbered_title_lines(content_lines)
+
+            headings = self._outline_headings(pdf, content_lines)
+            section_source = "outline" if headings else ""
+            if not headings:
+                headings = self._tagged_headings(pdf)
+                section_source = "tagged" if headings else ""
+            if not headings:
+                headings = self._visual_headings(content_lines)
+                section_source = "visual" if headings else "none"
+
+            segments = self._segments(content_lines, headings)
             title = str(metadata.get("title") or path.stem)
             safe_metadata = {
                 str(key): str(value) for key, value in metadata.items() if value not in (None, "")
@@ -160,12 +189,27 @@ class PdfLoader(DocumentLoader):
                     "backend": "pymupdf",
                     "backend_version": version("PyMuPDF"),
                     "repeated_margin_lines_removed": len(repeated_margins),
+                    "table_regions_detected": table_region_count,
+                    "section_source": section_source,
+                    "section_heading_count": len(headings),
                 }
             )
         return self._document(path, source_uri, title, segments, safe_metadata)
 
     @staticmethod
-    def _lines(page: pymupdf.Page, page_number: int) -> list[_PdfLine]:
+    def _table_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
+        try:
+            pymupdf.no_recommend_layout()
+            return [pymupdf.Rect(table.bbox) for table in page.find_tables().tables]
+        except (RuntimeError, ValueError):
+            return []
+
+    @staticmethod
+    def _lines(
+        page: pymupdf.Page,
+        page_number: int,
+        table_rects: list[pymupdf.Rect],
+    ) -> list[_PdfLine]:
         result: list[_PdfLine] = []
         page_height = float(page.rect.height)
         data = page.get_text("dict", sort=True)
@@ -177,6 +221,7 @@ class PdfLoader(DocumentLoader):
                 if not spans:
                     continue
                 text = "".join(str(span.get("text", "")) for span in spans).strip()
+                text = re.sub(r"^(\d+(?:\.\d+){1,5})(?=[^\d\s.])", r"\1 ", text)
                 if not text:
                     continue
                 bbox = raw_line.get("bbox") or block.get("bbox")
@@ -202,9 +247,196 @@ class PdfLoader(DocumentLoader):
                         y1=float(bbox[3]),
                         font_size=font_size,
                         bold=bold,
+                        in_table=PdfLoader._inside_table(bbox, table_rects),
                     )
                 )
         return result
+
+    @staticmethod
+    def _inside_table(bbox: object, table_rects: list[pymupdf.Rect]) -> bool:
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return False
+        center = pymupdf.Point(
+            (float(bbox[0]) + float(bbox[2])) / 2,
+            (float(bbox[1]) + float(bbox[3])) / 2,
+        )
+        return any(rect.contains(center) for rect in table_rects)
+
+    @classmethod
+    def _merge_numbered_title_lines(cls, lines: list[_PdfLine]) -> list[_PdfLine]:
+        merged: list[_PdfLine] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if index + 1 >= len(lines) or not _PDF_SECTION_NUMBER_ONLY.fullmatch(line.text):
+                merged.append(line)
+                index += 1
+                continue
+            following = lines[index + 1]
+            font_size = max(line.font_size, following.font_size, 1.0)
+            same_row = (
+                following.page == line.page
+                and abs(following.y0 - line.y0) <= font_size * 0.6
+                and -font_size <= following.x0 - line.x1 <= font_size * 4
+            )
+            next_row = (
+                following.page == line.page
+                and -font_size * 0.3 <= following.y0 - line.y1 <= font_size * 1.2
+                and abs(following.x0 - line.x0) <= font_size * 4
+            )
+            usable_title = (
+                cls._alphabetic_count(following.text) >= 3
+                and not following.in_table
+                and not cls._is_visual_noise(following.text)
+            )
+            if not usable_title or not (same_row or next_row):
+                merged.append(line)
+                index += 1
+                continue
+            merged.append(
+                _PdfLine(
+                    page=line.page,
+                    page_height=line.page_height,
+                    text=f"{line.text.rstrip('.．)')} {following.text.strip()}",  # noqa: RUF001
+                    x0=min(line.x0, following.x0),
+                    y0=min(line.y0, following.y0),
+                    x1=max(line.x1, following.x1),
+                    y1=max(line.y1, following.y1),
+                    font_size=max(line.font_size, following.font_size),
+                    bold=line.bold or following.bold,
+                    in_table=line.in_table or following.in_table,
+                )
+            )
+            index += 2
+        return merged
+
+    @classmethod
+    def _outline_headings(
+        cls,
+        pdf: pymupdf.Document,
+        lines: list[_PdfLine],
+    ) -> list[_PdfHeading]:
+        headings: list[_PdfHeading] = []
+        lines_by_page: dict[int, list[_PdfLine]] = {}
+        for line in lines:
+            lines_by_page.setdefault(line.page, []).append(line)
+        for item in pdf.get_toc(simple=False):
+            if len(item) < 3:
+                continue
+            level, raw_title, page_number = item[:3]
+            title = _PDF_SPACE.sub(" ", str(raw_title)).strip()
+            if (
+                not title
+                or not isinstance(page_number, int)
+                or page_number < 1
+                or page_number > len(pdf)
+            ):
+                continue
+            details = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
+            destination = details.get("to")
+            destination_y = float(getattr(destination, "y", 0.0))
+            matched = cls._matching_title_line(
+                title,
+                lines_by_page.get(page_number, []),
+                destination_y,
+            )
+            headings.append(
+                _PdfHeading(
+                    page=page_number,
+                    y0=matched.y0 if matched else max(0.0, destination_y),
+                    y1=matched.y1 if matched else max(0.0, destination_y),
+                    level=min(6, max(1, int(level))),
+                    text=title,
+                    source="outline",
+                )
+            )
+        return headings
+
+    @classmethod
+    def _matching_title_line(
+        cls,
+        title: str,
+        lines: list[_PdfLine],
+        destination_y: float,
+    ) -> _PdfLine | None:
+        normalized_title = cls._normalized_heading_text(title)
+        candidates = []
+        for line in lines:
+            normalized_line = cls._normalized_heading_text(line.text)
+            shorter = min(len(normalized_title), len(normalized_line))
+            longer = max(len(normalized_title), len(normalized_line), 1)
+            if normalized_title == normalized_line or (
+                shorter >= 4
+                and shorter / longer >= 0.75
+                and (normalized_title in normalized_line or normalized_line in normalized_title)
+            ):
+                candidates.append(line)
+        if not candidates:
+            return None
+        return min(candidates, key=lambda line: abs(line.y0 - destination_y))
+
+    @classmethod
+    def _tagged_headings(cls, pdf: pymupdf.Document) -> list[_PdfHeading]:
+        headings: list[_PdfHeading] = []
+        flags = pymupdf.TEXTFLAGS_DICT | pymupdf.TEXT_COLLECT_STRUCTURE
+        for page_number, page in enumerate(pdf, start=1):
+            data = page.get_text("dict", flags=flags, sort=True)
+            cls._collect_tagged_headings(data.get("blocks", []), page_number, headings)
+        return headings
+
+    @classmethod
+    def _collect_tagged_headings(
+        cls,
+        blocks: list[dict[str, object]],
+        page_number: int,
+        headings: list[_PdfHeading],
+    ) -> None:
+        for block in blocks:
+            nested = block.get("blocks", [])
+            nested_blocks = nested if isinstance(nested, list) else []
+            tag = str(block.get("std") or block.get("raw") or "").upper()
+            if tag in {"H1", "H2", "H3"}:
+                text = cls._structured_text(nested_blocks)
+                bbox = block.get("bbox")
+                if text and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+                    headings.append(
+                        _PdfHeading(
+                            page=page_number,
+                            y0=float(bbox[1]),
+                            y1=float(bbox[3]),
+                            level=int(tag[1]),
+                            text=text,
+                            source="tagged",
+                        )
+                    )
+                continue
+            cls._collect_tagged_headings(nested_blocks, page_number, headings)
+
+    @classmethod
+    def _structured_text(cls, blocks: list[dict[str, object]]) -> str:
+        parts: list[str] = []
+        for block in blocks:
+            lines = block.get("lines", [])
+            if isinstance(lines, list):
+                for line in lines:
+                    if not isinstance(line, dict):
+                        continue
+                    spans = line.get("spans", [])
+                    if not isinstance(spans, list):
+                        continue
+                    value = "".join(
+                        str(span.get("text", ""))
+                        for span in spans
+                        if isinstance(span, dict)
+                    ).strip()
+                    if value:
+                        parts.append(value)
+            nested = block.get("blocks", [])
+            if isinstance(nested, list):
+                nested_text = cls._structured_text(nested)
+                if nested_text:
+                    parts.append(nested_text)
+        return _PDF_SPACE.sub(" ", " ".join(parts)).strip()
 
     @classmethod
     def _repeated_margin_lines(cls, lines: list[_PdfLine], page_count: int) -> set[str]:
@@ -229,7 +461,7 @@ class PdfLoader(DocumentLoader):
     def _body_font_size(lines: list[_PdfLine]) -> float:
         weighted_sizes: Counter[float] = Counter()
         for line in lines:
-            if line.position <= 0.08 or line.position >= 0.92:
+            if line.position <= 0.08 or line.position >= 0.92 or line.in_table:
                 continue
             weighted_sizes[round(line.font_size, 1)] += max(1, len(line.text))
         if not weighted_sizes:
@@ -238,10 +470,17 @@ class PdfLoader(DocumentLoader):
         return weighted_sizes.most_common(1)[0][0] if weighted_sizes else 0.0
 
     @classmethod
-    def _is_heading(cls, line: _PdfLine, body_size: float) -> bool:
+    def _visual_heading_score(cls, line: _PdfLine, body_size: float) -> int:
         text = line.text.strip()
-        if not text or len(text) > 120 or text.count(" ") > 18:
-            return False
+        if (
+            not text
+            or len(text) > 120
+            or text.count(" ") > 18
+            or line.in_table
+            or cls._alphabetic_count(text) < 3
+            or cls._is_visual_noise(text)
+        ):
+            return 0
         numbered = cls._numbered_heading_level(text) is not None
         score = 3 if numbered else 0
         if body_size and line.font_size >= body_size * 1.3:
@@ -254,7 +493,46 @@ class PdfLoader(DocumentLoader):
             score += 1
         if _PDF_TRAILING_SENTENCE_MARK.search(text):
             score -= 2
-        return score >= 3
+        return score
+
+    @classmethod
+    def _visual_headings(cls, lines: list[_PdfLine]) -> list[_PdfHeading]:
+        body_size = cls._body_font_size(lines)
+        candidates = [line for line in lines if cls._visual_heading_score(line, body_size) >= 5]
+        heading_sizes = sorted(
+            {
+                round(line.font_size, 1)
+                for line in candidates
+                if cls._numbered_heading_level(line.text) is None
+            },
+            reverse=True,
+        )
+        return [
+            _PdfHeading(
+                page=line.page,
+                y0=line.y0,
+                y1=line.y1,
+                level=cls._heading_level(line, heading_sizes),
+                text=line.text.strip(),
+                source="visual",
+            )
+            for line in candidates
+        ]
+
+    @staticmethod
+    def _alphabetic_count(text: str) -> int:
+        return sum(character.isalpha() for character in text)
+
+    @staticmethod
+    def _is_visual_noise(text: str) -> bool:
+        value = _PDF_SPACE.sub(" ", text).strip()
+        return bool(
+            _PDF_PURE_NUMBER.fullmatch(value)
+            or _PDF_SCIENTIFIC_NUMBER.fullmatch(value)
+            or _PDF_ARXIV.search(value)
+            or _PDF_DATE.search(value)
+            or _PDF_COPYRIGHT.search(value)
+        )
 
     @staticmethod
     def _numbered_heading_level(text: str) -> int | None:
@@ -283,14 +561,15 @@ class PdfLoader(DocumentLoader):
     def _segments(
         cls,
         lines: list[_PdfLine],
-        body_size: float,
-        heading_sizes: list[float],
+        headings: list[_PdfHeading],
     ) -> list[TextSegment]:
         segments: list[TextSegment] = []
         section_stack: list[str] = []
         buffer: list[str] = []
         buffer_page: int | None = None
         previous: _PdfLine | None = None
+        ordered_headings = sorted(headings, key=lambda heading: (heading.page, heading.y0))
+        heading_index = 0
 
         def flush() -> None:
             nonlocal buffer_page
@@ -307,15 +586,31 @@ class PdfLoader(DocumentLoader):
             buffer.clear()
             buffer_page = None
 
+        def apply_heading(heading: _PdfHeading) -> None:
+            level = min(6, max(1, heading.level))
+            section_stack[level - 1 :] = [heading.text.strip()]
+
         for line in lines:
             if buffer_page is not None and line.page != buffer_page:
                 flush()
                 previous = None
-            if cls._is_heading(line, body_size):
+
+            line_is_heading = False
+            while heading_index < len(ordered_headings):
+                heading = ordered_headings[heading_index]
+                before_line = heading.page < line.page or (
+                    heading.page == line.page
+                    and heading.y0 <= line.y0 + max(1.0, line.font_size * 0.25)
+                )
+                if not before_line:
+                    break
                 flush()
-                level = cls._heading_level(line, heading_sizes)
-                section_stack[level - 1 :] = [line.text.strip()]
+                apply_heading(heading)
+                if cls._line_matches_heading(line, heading):
+                    line_is_heading = True
+                heading_index += 1
                 previous = None
+            if line_is_heading:
                 continue
             if buffer_page is None:
                 buffer_page = line.page
@@ -327,6 +622,32 @@ class PdfLoader(DocumentLoader):
             previous = line
         flush()
         return segments
+
+    @classmethod
+    def _line_matches_heading(cls, line: _PdfLine, heading: _PdfHeading) -> bool:
+        if line.page != heading.page:
+            return False
+        vertically_close = not (
+            line.y1 < heading.y0 - line.font_size * 0.25
+            or line.y0 > heading.y1 + line.font_size * 0.25
+        )
+        if not vertically_close:
+            return False
+        line_text = cls._normalized_heading_text(line.text)
+        heading_text = cls._normalized_heading_text(heading.text)
+        if line_text == heading_text:
+            return True
+        shorter = min(len(line_text), len(heading_text))
+        longer = max(len(line_text), len(heading_text), 1)
+        return (
+            shorter >= 4
+            and shorter / longer >= 0.75
+            and (line_text in heading_text or heading_text in line_text)
+        )
+
+    @staticmethod
+    def _normalized_heading_text(text: str) -> str:
+        return _PDF_SPACE.sub("", text).casefold()
 
 
 class LoaderRegistry:
