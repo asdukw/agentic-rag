@@ -41,7 +41,7 @@ def normalize_predicate(value: str) -> str:
 
 
 def normalize_entities(mentions: Iterable[EntityMention]) -> EntityNormalizationResult:
-    """Union mentions only when a normalized alias overlaps within the same type."""
+    """Union mentions by normalized aliases and deterministically select their type."""
 
     ordered = sorted(mentions, key=lambda item: item.id)
     _reject_duplicate_ids((item.id for item in ordered), "entity mention")
@@ -49,7 +49,7 @@ def normalize_entities(mentions: Iterable[EntityMention]) -> EntityNormalization
         return EntityNormalizationResult(entities=(), mention_to_entity={})
 
     union = _UnionFind(len(ordered))
-    owner_by_alias: dict[tuple[str, str], int] = {}
+    owner_by_alias: dict[str, int] = {}
     for index, mention in enumerate(ordered):
         aliases = {
             normalized
@@ -59,8 +59,7 @@ def normalize_entities(mentions: Iterable[EntityMention]) -> EntityNormalization
         if not aliases:
             raise ValueError(f"entity mention {mention.id} has no usable aliases")
         for alias in sorted(aliases):
-            key = mention.entity_type.value, alias
-            previous = owner_by_alias.setdefault(key, index)
+            previous = owner_by_alias.setdefault(alias, index)
             union.join(index, previous)
 
     groups: dict[int, list[EntityMention]] = defaultdict(list)
@@ -71,13 +70,10 @@ def normalize_entities(mentions: Iterable[EntityMention]) -> EntityNormalization
     mention_to_entity: dict[str, str] = {}
     for members in sorted(groups.values(), key=lambda values: min(item.id for item in values)):
         members.sort(key=lambda item: item.id)
-        entity_type = members[0].entity_type
-        if any(item.entity_type != entity_type for item in members):
-            raise AssertionError("normalizer joined incompatible entity types")
-
+        entity_type = _choose_entity_type(members)
         canonical_name = _choose_canonical_name(members)
         canonical_key = normalize_entity_alias(canonical_name)
-        entity_id = stable_id("ent", entity_type.value, canonical_key)
+        entity_id = stable_id("ent", canonical_key)
         all_names = _unique_text(value for item in members for value in (item.name, *item.aliases))
         aliases = tuple(value for value in all_names if value != canonical_name)
         evidence = _merge_evidence(item.evidence for item in members)
@@ -101,6 +97,11 @@ def normalize_entities(mentions: Iterable[EntityMention]) -> EntityNormalization
         entities=tuple(entities),
         mention_to_entity=dict(sorted(mention_to_entity.items())),
     )
+
+
+def _choose_entity_type(members: list[EntityMention]) -> str:
+    counts = Counter(item.entity_type for item in members)
+    return min(counts, key=lambda value: (-counts[value], value))
 
 
 def merge_relations(

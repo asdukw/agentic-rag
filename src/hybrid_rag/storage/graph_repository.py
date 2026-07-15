@@ -333,13 +333,14 @@ class GraphRepository:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         self._require_run(session, run_id)
-        run_attempt_counts = dict(
-            session.execute(
+        run_attempt_counts = {
+            extraction_id: count
+            for extraction_id, count in session.execute(
                 select(ExtractionAttemptRecord.extraction_id, func.count())
                 .where(ExtractionAttemptRecord.run_id == run_id)
                 .group_by(ExtractionAttemptRecord.extraction_id)
-            ).all()
-        )
+            ).tuples()
+        }
         current = now or datetime.now(UTC)
         eligible = or_(
             (ChunkExtractionRecord.status == "pending")
@@ -794,16 +795,17 @@ class GraphRepository:
             raise GraphRepositoryError("failed graph build cannot replace the current snapshot")
         if min(component_count, largest_component_nodes, isolated_entity_count) < 0:
             raise ValueError("graph metrics cannot be negative")
-        extraction_by_chunk = dict(
-            session.execute(
+        extraction_by_chunk = {
+            chunk_id: extraction_id
+            for chunk_id, extraction_id in session.execute(
                 select(ChunkExtractionRecord.chunk_id, ChunkExtractionRecord.id)
                 .join(
                     GraphBuildItemRecord,
                     GraphBuildItemRecord.extraction_id == ChunkExtractionRecord.id,
                 )
                 .where(GraphBuildItemRecord.run_id == run_id)
-            ).all()
-        )
+            ).tuples()
+        }
 
         session.execute(delete(RelationRecord))
         session.execute(delete(EntityRecord))
@@ -1298,13 +1300,14 @@ class GraphRepository:
             extraction_status == "failed" or review_status == "rejected"
             for extraction_status, review_status in statuses
         )
-        disposition_counts = dict(
-            session.execute(
+        disposition_counts = {
+            disposition: count
+            for disposition, count in session.execute(
                 select(GraphBuildItemRecord.disposition, func.count())
                 .where(GraphBuildItemRecord.run_id == run.id)
                 .group_by(GraphBuildItemRecord.disposition)
-            ).all()
-        )
+            ).tuples()
+        }
         attempt_row = session.execute(
             select(
                 func.count(ExtractionAttemptRecord.id),

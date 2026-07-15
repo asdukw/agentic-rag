@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from enum import StrEnum
+import re
+import unicodedata
 from typing import Annotated
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
@@ -14,13 +16,34 @@ from pydantic import (
 
 from hybrid_rag.ids import canonical_json_hash
 
-EXTRACTION_SCHEMA_VERSION = "2"
+EXTRACTION_SCHEMA_VERSION = "3"
 EXTRACTION_CONFIG_VERSION = "1"
 GRAPH_SCHEMA_VERSION = "1"
-ENTITY_NORMALIZER_VERSION = "1"
+ENTITY_NORMALIZER_VERSION = "2"
 RELATION_MERGER_VERSION = "1"
-EXTRACTION_PROMPT_VERSION = "2"
-REPAIR_PROMPT_VERSION = "2"
+EXTRACTION_PROMPT_VERSION = "3"
+REPAIR_PROMPT_VERSION = "3"
+
+_NON_ENTITY_TYPE = re.compile(r"[^A-Z0-9]+")
+_CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def normalize_entity_type(value: object) -> str:
+    """Normalize an open model-authored type into stable UPPER_SNAKE_CASE."""
+
+    if not isinstance(value, str):
+        raise ValueError("entity_type must be a string")
+    normalized = unicodedata.normalize("NFKC", value).strip()
+    normalized = _CAMEL_CASE_BOUNDARY.sub("_", normalized).upper()
+    normalized = _NON_ENTITY_TYPE.sub("_", normalized).strip("_")
+    if not normalized:
+        raise ValueError("entity_type normalizes to an empty value")
+    if len(normalized) > 64:
+        raise ValueError("normalized entity_type exceeds 64 characters")
+    if not normalized[0].isalpha():
+        raise ValueError("normalized entity_type must start with a letter")
+    return normalized
+
 
 LocalEntityRef = Annotated[
     str,
@@ -40,6 +63,11 @@ PredicateText = Annotated[
     StringConstraints(strip_whitespace=True, pattern=r"^[A-Z][A-Z0-9_]{0,79}$"),
 ]
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
+EntityType = Annotated[
+    str,
+    StringConstraints(max_length=64, pattern=r"^[A-Z][A-Z0-9_]{0,63}$"),
+    BeforeValidator(normalize_entity_type),
+]
 
 
 class _StrictOutputModel(BaseModel):
@@ -57,21 +85,6 @@ class _FrozenDomainModel(BaseModel):
         strict=True,
         str_strip_whitespace=True,
     )
-
-
-class EntityType(StrEnum):
-    PERSON = "PERSON"
-    ORGANIZATION = "ORGANIZATION"
-    PUBLICATION = "PUBLICATION"
-    METHOD = "METHOD"
-    MODEL = "MODEL"
-    DATASET = "DATASET"
-    TASK = "TASK"
-    METRIC = "METRIC"
-    TOOL = "TOOL"
-    CONCEPT = "CONCEPT"
-    SYSTEM = "SYSTEM"
-    OTHER = "OTHER"
 
 
 class EntityCandidate(_StrictOutputModel):

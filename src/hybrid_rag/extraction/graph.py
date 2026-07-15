@@ -48,7 +48,7 @@ def build_networkx_graph(
         graph.add_node(
             entity.id,
             canonical_name=entity.canonical_name,
-            entity_type=entity.entity_type.value,
+            entity_type=entity.entity_type,
             description=entity.description,
             aliases=list(entity.aliases),
             source_chunk_ids=list(entity.source_chunk_ids),
