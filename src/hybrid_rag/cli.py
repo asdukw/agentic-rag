@@ -281,7 +281,7 @@ def _build_extraction_config(
         base_url=base_url.rstrip("/"),
         model=model,
         max_output_tokens=max_output_tokens,
-        repair_max_attempts=max_attempts - 1,
+        repair_max_attempts=min(max_attempts - 1, 1),
     )
 
 

@@ -221,11 +221,11 @@ class GraphBuildService:
             )
 
     def _validate_attempt_budget(self, options: WorkflowOptions) -> None:
-        expected = self.extraction_config.repair_max_attempts + 1
-        if options.max_attempts != expected:
+        minimum = self.extraction_config.repair_max_attempts + 1
+        if options.max_attempts < minimum:
             raise ValueError(
-                "workflow max_attempts must equal extraction repair_max_attempts + 1 "
-                f"({options.max_attempts} != {expected})"
+                "workflow max_attempts must cover the initial extraction and repair budget "
+                f"({options.max_attempts} < {minimum})"
             )
 
     @staticmethod

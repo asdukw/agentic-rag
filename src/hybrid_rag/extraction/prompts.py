@@ -4,7 +4,11 @@ import json
 from collections.abc import Sequence
 from typing import Literal, TypedDict
 
-from hybrid_rag.extraction.schemas import ChunkExtraction
+from hybrid_rag.extraction.schemas import (
+    MAX_EXTRACTION_ENTITIES,
+    MAX_EXTRACTION_RECORDS,
+    ChunkExtraction,
+)
 
 _MAX_INVALID_RESPONSE_CHARS = 16_000
 _MAX_ISSUES = 30
@@ -121,7 +125,10 @@ def _system_prompt() -> str:
         "Predicates are concise UPPER_SNAKE_CASE directed verbs. Do not invent global IDs, chunk "
         "IDs, confidence scores, keywords, or unsupported facts. An irrelevant chunk must return "
         '{"entities":[],"relations":[]}. Every non-empty entity and relation needs at least one '
-        "verbatim evidence quote.\n\n"
+        "verbatim evidence quote. Return exactly one short evidence quote per record and keep each "
+        "description to one concise sentence. Select only high-value facts; do not fill a quota. "
+        f"Return at most {MAX_EXTRACTION_ENTITIES} entities and at most "
+        f"{MAX_EXTRACTION_RECORDS} total entity-plus-relation records.\n\n"
         f"JSON_SCHEMA:\n{schema}\n\n"
         "EXAMPLE_JSON:\n"
         f"{json.dumps(example, ensure_ascii=False, sort_keys=True)}"

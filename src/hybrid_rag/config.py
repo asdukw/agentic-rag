@@ -97,7 +97,7 @@ class GraphSettings(BaseSettings):
 
     checkpoint_path: Path = Path("storage/langgraph.db")
     max_concurrency: int = Field(default=8, ge=1)
-    max_attempts: int = Field(default=3, ge=1)
+    max_attempts: int = Field(default=2, ge=1)
     top_k: int = Field(default=10, ge=1)
 
 

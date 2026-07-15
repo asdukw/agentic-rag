@@ -45,13 +45,13 @@ from hybrid_rag.extraction.validation import ExtractionValidationError, validate
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import ExtractionClaim, GraphRepository
 
-WORKFLOW_VERSION = "1"
+WORKFLOW_VERSION = "2"
 
 
 @dataclass(frozen=True, slots=True)
 class WorkflowOptions:
     max_concurrency: int = 8
-    max_attempts: int = 3
+    max_attempts: int = 2
     limit: int | None = None
     retry_failed: bool = True
     review_required: bool = False
@@ -536,6 +536,8 @@ class GraphBuildWorkflow:
             return "retry" if isinstance(provider_error, RetryableProviderError) else "fail"
         validation_error = state.get("validation_error")
         if validation_error is None:
+            return "fail"
+        if validation_error.repairable and state.get("stage") == "repair":
             return "fail"
         retryable = validation_error.repairable or validation_error.retryable_provider
         return "retry" if retryable else "fail"

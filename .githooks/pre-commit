@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "Running ruff check..."
+uv run --no-sync ruff check .
+
+echo "Running ruff format..."
+uv run --no-sync ruff format .
+
+echo "Running web format..."
+(
+  cd web
+  bun run format
+)

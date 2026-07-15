@@ -16,13 +16,17 @@ from pydantic import (
 
 from hybrid_rag.ids import canonical_json_hash
 
-EXTRACTION_SCHEMA_VERSION = "3"
+EXTRACTION_SCHEMA_VERSION = "4"
 EXTRACTION_CONFIG_VERSION = "1"
 GRAPH_SCHEMA_VERSION = "1"
 ENTITY_NORMALIZER_VERSION = "2"
 RELATION_MERGER_VERSION = "1"
-EXTRACTION_PROMPT_VERSION = "3"
-REPAIR_PROMPT_VERSION = "3"
+EXTRACTION_PROMPT_VERSION = "4"
+REPAIR_PROMPT_VERSION = "4"
+
+MAX_EXTRACTION_ENTITIES = 24
+MAX_EXTRACTION_RECORDS = 64
+MAX_EXTRACTION_RELATIONS = MAX_EXTRACTION_RECORDS
 
 _NON_ENTITY_TYPE = re.compile(r"[^A-Z0-9]+")
 _CAMEL_CASE_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -95,7 +99,7 @@ class EntityCandidate(_StrictOutputModel):
     entity_type: EntityType
     description: DescriptionText
     aliases: list[NameText] = Field(default_factory=list, max_length=12)
-    evidence_quotes: list[EvidenceText] = Field(min_length=1, max_length=5)
+    evidence_quotes: list[EvidenceText] = Field(min_length=1, max_length=1)
 
     @field_validator("aliases", "evidence_quotes")
     @classmethod
@@ -113,7 +117,7 @@ class RelationCandidate(_StrictOutputModel):
     target_ref: LocalEntityRef
     predicate: PredicateText
     description: DescriptionText
-    evidence_quotes: list[EvidenceText] = Field(min_length=1, max_length=5)
+    evidence_quotes: list[EvidenceText] = Field(min_length=1, max_length=1)
 
     @field_validator("evidence_quotes")
     @classmethod
@@ -127,11 +131,15 @@ class RelationCandidate(_StrictOutputModel):
 class ChunkExtraction(_StrictOutputModel):
     """Complete model output. Empty arrays are a valid no-facts result."""
 
-    entities: list[EntityCandidate] = Field(max_length=64)
-    relations: list[RelationCandidate] = Field(max_length=128)
+    entities: list[EntityCandidate] = Field(max_length=MAX_EXTRACTION_ENTITIES)
+    relations: list[RelationCandidate] = Field(max_length=MAX_EXTRACTION_RELATIONS)
 
     @model_validator(mode="after")
     def validate_local_references(self) -> ChunkExtraction:
+        if len(self.entities) + len(self.relations) > MAX_EXTRACTION_RECORDS:
+            raise ValueError(
+                f"entities and relations must total at most {MAX_EXTRACTION_RECORDS} records"
+            )
         refs = [entity.ref for entity in self.entities]
         if len(refs) != len(set(refs)):
             raise ValueError("entity refs must be unique")
@@ -255,7 +263,7 @@ class ExtractionConfig(_FrozenDomainModel):
     schema_version: str = EXTRACTION_SCHEMA_VERSION
     prompt_version: str = EXTRACTION_PROMPT_VERSION
     repair_prompt_version: str = REPAIR_PROMPT_VERSION
-    repair_max_attempts: int = Field(default=2, ge=0)
+    repair_max_attempts: int = Field(default=1, ge=0, le=1)
 
     @property
     def config_hash(self) -> str:
