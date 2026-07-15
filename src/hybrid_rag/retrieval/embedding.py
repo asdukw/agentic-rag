@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from collections import Counter
@@ -14,6 +15,8 @@ BGE_M3_PROVIDER = "flagembedding"
 BGE_M3_MODEL = "BAAI/bge-m3"
 BGE_M3_DIMENSIONS = 1024
 BGE_M3_MAX_LENGTH = 8192
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider(Protocol):
@@ -152,10 +155,24 @@ class BGEM3EmbeddingProvider:
                         "FlagEmbedding is not installed. Run `uv sync` before building an index."
                     ) from error
                 try:
+                    devices, cuda_enabled = _preferred_embedding_devices()
+                    effective_fp16 = self.use_fp16 and cuda_enabled
+                    if cuda_enabled:
+                        logger.warning(
+                            "BGE-M3 embedding selected CUDA devices=%s fp16=%s",
+                            ",".join(devices),
+                            effective_fp16,
+                        )
+                    else:
+                        logger.warning(
+                            "CUDA is unavailable; BGE-M3 embedding is falling back to CPU "
+                            "with fp16 disabled"
+                        )
                     cached = BGEM3FlagModel(
                         self.model,
                         normalize_embeddings=True,
-                        use_fp16=self.use_fp16,
+                        use_fp16=effective_fp16,
+                        devices=devices,
                     )
                 except Exception as error:
                     raise EmbeddingConfigurationError(
@@ -165,6 +182,20 @@ class BGEM3EmbeddingProvider:
                 self._shared_clients[cache_key] = cached
         self._model_client = cached
         return cached
+
+
+def _preferred_embedding_devices() -> tuple[list[str], bool]:
+    """Prefer every visible CUDA device and explicitly fall back to CPU."""
+
+    try:
+        import torch
+    except ImportError as error:
+        raise EmbeddingConfigurationError(
+            "PyTorch is not installed. Run `uv sync` before building an index."
+        ) from error
+    if torch.cuda.is_available() and (device_count := torch.cuda.device_count()) > 0:
+        return [f"cuda:{index}" for index in range(device_count)], True
+    return ["cpu"], False
 
 
 def _dense_vectors(
