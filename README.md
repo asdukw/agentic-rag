@@ -242,9 +242,6 @@ DeepSeek 模型、API 地址和 Ragas 评审模型。
 ## 更多资料
 
 - [架构图](docs/architecture.md)
-- [评测报告模板](docs/evaluation-report.md)
-- [演示脚本](docs/demo-script.md)
-- [实施计划](docs/implementation-plan.md)
 - [ADR 001：自研与复用边界](docs/adr/001-build-vs-reuse.md)
 - [ADR 002：抽取与恢复语义](docs/adr/002-graph-extraction-checkpoints.md)
 - [ADR 003：索引与 trace](docs/adr/003-retrieval-index-and-trace.md)

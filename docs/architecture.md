@@ -1,32 +1,38 @@
 # Hybrid RAG architecture
 
-> Status: this is the implemented Phase 1--4 architecture.  Phase 4 uses the
-> same contracts for evaluation and demonstration; it does not introduce a
-> second retrieval algorithm or an autonomous tool-using agent.
+> Status: implemented architecture. The same persisted corpus, graph snapshot,
+> index profile, and evidence contracts serve the CLI, web workbench, bounded
+> agent loop, and Ragas evaluation.
 
 The project owns the domain contracts and the retrieval decisions.  Third-party
-libraries are confined to adapters: PDF parsing, token counting, SQLAlchemy and
-Alembic persistence, LangGraph checkpointing, NetworkX projection, and the
-opt-in DeepSeek API client.
+libraries are confined to adapters: PyMuPDF parsing, token counting, SQLAlchemy
+and Alembic persistence, LangGraph checkpointing, NetworkX projection,
+FlagEmbedding, and the opt-in DeepSeek API client. The planner may select only
+project-defined, budgeted retrieval tools; it cannot invent tools or bypass the
+evidence boundary.
 
 ## End-to-end data flow
 
 ```mermaid
 flowchart LR
-    subgraph Ingest[Phase 1: reproducible ingestion]
+    subgraph Ingest[Reproducible ingestion]
         Files["PDF / Markdown / TXT"] --> Loaders["LoaderRegistry"]
-        Loaders --> Parsed["ParsedDocument"]
+        Loaders --> PDFSections["PDF sections: outline → tagged H1/H2/H3\n→ visual inference; no OCR"]
+        PDFSections --> Parsed["ParsedDocument"]
+        Loaders --> Parsed
         Parsed --> Clean["Conservative cleaner"]
         Clean --> Chunk["Section-aware, token-bounded chunker"]
-        Chunk --> Corpus[("SQLite: documents + chunks")]
+        Chunk --> Quality["Persist quality class\nnormal / references / acknowledgements /\ncopyright / author affiliation / visualization label"]
+        Quality --> Corpus[("SQLite: all documents + chunks")]
     end
 
-    subgraph Graph[Phase 2: extraction and graph]
-        Corpus --> Pending["Load pending chunks"]
+    subgraph Graph[Extraction and graph]
+        Corpus --> NormalGraph["Select quality_class = normal"]
+        NormalGraph --> Pending["Load pending chunks"]
         Pending --> Orchestrator["LangGraph parent + per-chunk subgraphs"]
-        Orchestrator --> Extract["DeepSeek adapter\nJSON mode; thinking disabled"]
-        Extract --> Validate["Pydantic validation\nempty-output checks"]
-        Validate -->|invalid; bounded| Repair["Repair / retry"]
+        Orchestrator --> Extract["DeepSeek adapter\nopen entity types + controlled JSON;\nthinking disabled"]
+        Extract --> Validate["Local JSON repair + per-record Pydantic validation\nevidence checks; salvage valid records"]
+        Validate -->|whole-response failure; once| Repair["Reason-aware semantic repair"]
         Repair --> Validate
         Validate -->|optional| Review["Human review"]
         Validate --> Normalize["Project-owned normalization"]
@@ -36,15 +42,16 @@ flowchart LR
         GraphStore --> NX["NetworkX MultiDiGraph projection"]
     end
 
-    subgraph Index[Phase 3: independent index partitions]
-        Corpus --> Snapshot["Source snapshot"]
+    subgraph Index[Independent index partitions]
+        Corpus --> NormalIndex["Select quality_class = normal"]
+        NormalIndex --> Snapshot["Source snapshot"]
         GraphStore --> Snapshot
         Snapshot --> Texts["Chunk / entity / relation\nembedding text"]
         Texts --> Embed["Embedding adapter\ndefault: local BGE-M3 (FlagEmbedding)"]
         Embed --> Vectors[("SQLite: embedding profiles\nand vector rows")]
     end
 
-    subgraph Query[Phase 3: bounded retrieval and answer]
+    subgraph Query[Bounded retrieval and answer]
         Question["Question"] --> Keywords["Deterministic keywords\nor bounded DeepSeek keyword extraction"]
         Keywords --> Routes
         Vectors --> Routes
@@ -67,7 +74,40 @@ flowchart LR
         Evidence --> Trace[("SQLite: serializable\nretrieval trace")]
         Answer --> Trace
     end
+
+    subgraph Agent[Optional bounded planner loop]
+        AgentQuestion["Question + pinned profile + budgets"] --> Planner["DeepSeek planner"]
+        Planner --> Tools["search chunks/entities/relations\nexpand graph · read evidence"]
+        Tools --> Planner
+        Planner --> AgentAnswer["answer_from_evidence\ncitations limited to session-read chunks"]
+        AgentAnswer --> Audit[("SSE timeline + JSON audit report")]
+    end
+
+    Vectors --> Tools
+    NX --> Tools
 ```
+
+PDF parsing intentionally targets documents with a text layer. It prefers the
+document outline, otherwise Tagged PDF `H1/H2/H3`, and only then conservative
+visual inference. Visual candidates exclude tables, repeated page margins,
+numeric/scientific labels, dates, arXiv identifiers, copyright notices, and
+low-alphabetic-content text. `Acknowledgements` and `References` receive an
+additional exact semantic-heading pass because many paper outlines omit terminal
+sections. Scanned PDFs require a future OCR-capable adapter.
+
+Ingestion never discards a chunk. The deterministic quality classifier is part
+of the chunking configuration and persists one `quality_class` on every row.
+Graph extraction and chunk embedding consume only `normal` rows, while the full
+document and all chunks remain available for provenance and reclassification.
+
+Graph extraction follows LightRAG's open-type, controlled-format approach.
+Entity types are normalized to `UPPER_SNAKE_CASE` strings rather than a closed
+enum. Malformed JSON is repaired locally where possible; invalid individual
+entities and relations are dropped without paying for another model call. Only
+a whole-response failure can trigger one semantic repair, whose prompt includes
+the invalid response and concrete validation reasons. Canonical entity identity
+does not include type; merged names/aliases choose the most frequent observed
+type, with stable lexical tie-breaking.
 
 `naive`, `local`, and `global` can be selected independently.  `naive` ranks
 chunk candidates with dense vector and deterministic local BM25 lexical scores,
@@ -88,11 +128,13 @@ vector-only naive mode.
 
 | Data | Owner | Why it is persisted |
 | --- | --- | --- |
-| Documents and chunks | ingestion pipeline | Stable source IDs, content hashes, parser/chunker provenance, and transactional replacement. |
+| Workspace metadata and uploads | web workbench | Filesystem isolation gives each workspace its own uploads, business database, and graph checkpoint. |
+| Documents and chunks | ingestion pipeline | Stable source IDs, content hashes, parser/chunker provenance, persisted quality class, and transactional replacement. |
 | Extraction attempts and build items | graph pipeline | Bounded-call accounting, resumability, failed-sample inspection, and review state. |
 | Canonical entities, relations, and evidence | graph pipeline | Source chunk IDs and evidence text remain attached to graph facts. |
 | Embedding profiles and vectors | index builder | Each partition has its own embedding text; the profile binds provider, model, dimension, text schema, and source snapshot. |
 | Retrieval traces | retrieval service | A mode, configuration, scores, paths, selected context, and optional answer can be serialized and replayed. |
+| Agent run reports | agent runner | The bounded planner timeline, tool outcomes, evidence, budgets, and termination reason remain auditable as JSON. |
 
 The active index is valid only for the corpus and graph snapshot named by its
 profile.  Its identity includes the graph build run as well as semantic index
@@ -108,15 +150,19 @@ claim that a changed corpus would produce the same current answer.
 ```mermaid
 flowchart TB
     CLI["Typer CLI\ningest · build-graph · build-index\nretrieve · ask · retrieval replay · evaluate"]
+    Web["Vite workbench + FastAPI\nworkspace upload · pipeline · SSE agent timeline"]
     Domain["Pydantic domain contracts\nIDs, provenance, retrieval result schema"]
-    Services["Ingestion / graph / retrieval services\nproject-owned algorithms"]
+    Services["Ingestion / graph / retrieval / agent services\nproject-owned algorithms"]
     Repositories["SQLAlchemy repositories\ntransactions and constraints"]
-    Adapters["Adapters only\nloaders · tiktoken · DeepSeek API\nLangGraph checkpoint · NetworkX"]
-    SQLite[("SQLite business database")]
+    Adapters["Adapters only\nPyMuPDF · tiktoken · FlagEmbedding · DeepSeek API\nLangGraph checkpoint · NetworkX"]
+    Workspaces["WorkspaceStore\nlocal upload/database/checkpoint paths"]
+    SQLite[("Per-workspace SQLite business database")]
     Checkpoint[("Separate LangGraph checkpoint SQLite")]
     Provider["Optional DeepSeek endpoint"]
 
     CLI --> Services
+    Web --> Workspaces
+    Web --> Services
     Services --> Domain
     Services --> Repositories
     Services --> Adapters
@@ -164,6 +210,15 @@ explicitly use the deterministic hash adapter for speed and repeatability; the
 default local BGE-M3 model still needs a corpus-bound Ragas evaluation before any
 production use.
 
+The optional agent runner adds a planner, not an unrestricted agent runtime. A
+run pins one ready profile and enforces maximum steps, searches, graph
+expansions, hops, evidence reads, evidence chunks, and evidence tokens. Search
+tools may expose candidate IDs; graph expansion and evidence reads accept only
+IDs already discovered in the same session. `answer_from_evidence` can use and
+cite only chunks explicitly read in that session. Duplicate normalized actions
+are rejected, events stream to the web client, and the complete run is written
+as an audit report.
+
 ## Evaluation execution contract
 
 ```mermaid
@@ -190,11 +245,15 @@ embedding API cost.
 
 ## Operational checkpoints
 
-- `ingest` owns file-level isolation and transactional document/chunk updates.
+- Alembic upgrades run before pipeline commands; schema `0006` persists chunk
+  quality without deleting source rows.
+- `ingest` owns file-level isolation, PDF structure recovery, deterministic
+  quality classification, and transactional document/chunk updates.
 - `build-graph` uses the business database as the fact source and a separate
-  LangGraph checkpoint database only for orchestration state.
+  LangGraph checkpoint database only for orchestration state. It schedules only
+  `normal` chunks and limits semantic repair to one model call.
 - `build-index` writes a complete profile and all three vector partitions before
-  activation.
+  activation; its chunk partition includes only `normal` chunks.
 - `retrieve` returns an explainable retrieval result without requiring answer
   generation; `ask` adds an evidence-constrained answer.
 - `retrieval replay` loads a persisted trace for audit.  It should be paired
@@ -202,6 +261,5 @@ embedding API cost.
   in any evaluation report.
 - `evaluate --testset` validates the Ragas envelope against a pinned profile,
   persists an `rtr_` trace for each case/mode, and writes a JSON report.
-
-For the Ragas evaluation protocol and result-reporting template, see
-[evaluation-report.md](evaluation-report.md).
+- The web workbench maps every request to one filesystem-isolated workspace;
+  workspaces do not share uploads, business databases, or graph checkpoints.
