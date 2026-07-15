@@ -9,8 +9,7 @@ Usage::
     uv run scripts/ragas_testset.py --dry-run
 
     # Generate the default 30-case test set for an exact index corpus.
-    uv run scripts/ragas_testset.py \
-      --corpus-content-hash <build-index-corpus-content-hash>
+    uv run scripts/ragas_testset.py --corpus-content-hash <build-index-corpus-content-hash>
 
     # Override the source, total sample count, and output location.
     uv run scripts/ragas_testset.py \
