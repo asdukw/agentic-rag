@@ -159,7 +159,9 @@ class PdfLoader(DocumentLoader):
             metadata = pdf.metadata or {}
             lines: list[_PdfLine] = []
             table_region_count = 0
-            for page_number, page in enumerate(pdf, start=1):
+            for page_index in range(len(pdf)):
+                page_number = page_index + 1
+                page = pdf[page_index]
                 table_rects = self._table_rects(page)
                 table_region_count += len(table_rects)
                 lines.extend(self._lines(page, page_number, table_rects))
@@ -180,7 +182,7 @@ class PdfLoader(DocumentLoader):
 
             segments = self._segments(content_lines, headings)
             title = str(metadata.get("title") or path.stem)
-            safe_metadata = {
+            safe_metadata: dict[str, object] = {
                 str(key): str(value) for key, value in metadata.items() if value not in (None, "")
             }
             safe_metadata.update(
@@ -200,7 +202,10 @@ class PdfLoader(DocumentLoader):
     def _table_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
         try:
             pymupdf.no_recommend_layout()
-            return [pymupdf.Rect(table.bbox) for table in page.find_tables().tables]
+            finder = page.find_tables()
+            if finder is None:
+                return []
+            return [pymupdf.Rect(table.bbox) for table in finder.tables]
         except (RuntimeError, ValueError):
             return []
 
@@ -213,11 +218,30 @@ class PdfLoader(DocumentLoader):
         result: list[_PdfLine] = []
         page_height = float(page.rect.height)
         data = page.get_text("dict", sort=True)
-        for block in data.get("blocks", []):
+        if not isinstance(data, dict):
+            return result
+        blocks = data.get("blocks", [])
+        if not isinstance(blocks, list):
+            return result
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
             if block.get("type") != 0:
                 continue
-            for raw_line in block.get("lines", []):
-                spans = [span for span in raw_line.get("spans", []) if span.get("text", "").strip()]
+            raw_lines = block.get("lines", [])
+            if not isinstance(raw_lines, list):
+                continue
+            for raw_line in raw_lines:
+                if not isinstance(raw_line, dict):
+                    continue
+                raw_spans = raw_line.get("spans", [])
+                if not isinstance(raw_spans, list):
+                    continue
+                spans = [
+                    span
+                    for span in raw_spans
+                    if isinstance(span, dict) and str(span.get("text", "")).strip()
+                ]
                 if not spans:
                     continue
                 text = "".join(str(span.get("text", "")) for span in spans).strip()
@@ -230,8 +254,7 @@ class PdfLoader(DocumentLoader):
                 significant = max(spans, key=lambda span: len(str(span.get("text", "")).strip()))
                 font_size = max(float(span.get("size", 0.0)) for span in spans)
                 bold = any(
-                    int(span.get("flags", 0)) & 16
-                    or "bold" in str(span.get("font", "")).casefold()
+                    int(span.get("flags", 0)) & 16 or "bold" in str(span.get("font", "")).casefold()
                     for span in spans
                 )
                 if font_size <= 0:
@@ -379,19 +402,27 @@ class PdfLoader(DocumentLoader):
     def _tagged_headings(cls, pdf: pymupdf.Document) -> list[_PdfHeading]:
         headings: list[_PdfHeading] = []
         flags = pymupdf.TEXTFLAGS_DICT | pymupdf.TEXT_COLLECT_STRUCTURE
-        for page_number, page in enumerate(pdf, start=1):
+        for page_index in range(len(pdf)):
+            page_number = page_index + 1
+            page = pdf[page_index]
             data = page.get_text("dict", flags=flags, sort=True)
-            cls._collect_tagged_headings(data.get("blocks", []), page_number, headings)
+            if not isinstance(data, dict):
+                continue
+            blocks = data.get("blocks", [])
+            if isinstance(blocks, list):
+                cls._collect_tagged_headings(blocks, page_number, headings)
         return headings
 
     @classmethod
     def _collect_tagged_headings(
         cls,
-        blocks: list[dict[str, object]],
+        blocks: list[object],
         page_number: int,
         headings: list[_PdfHeading],
     ) -> None:
         for block in blocks:
+            if not isinstance(block, dict):
+                continue
             nested = block.get("blocks", [])
             nested_blocks = nested if isinstance(nested, list) else []
             tag = str(block.get("std") or block.get("raw") or "").upper()
@@ -413,9 +444,11 @@ class PdfLoader(DocumentLoader):
             cls._collect_tagged_headings(nested_blocks, page_number, headings)
 
     @classmethod
-    def _structured_text(cls, blocks: list[dict[str, object]]) -> str:
+    def _structured_text(cls, blocks: list[object]) -> str:
         parts: list[str] = []
         for block in blocks:
+            if not isinstance(block, dict):
+                continue
             lines = block.get("lines", [])
             if isinstance(lines, list):
                 for line in lines:
@@ -425,9 +458,7 @@ class PdfLoader(DocumentLoader):
                     if not isinstance(spans, list):
                         continue
                     value = "".join(
-                        str(span.get("text", ""))
-                        for span in spans
-                        if isinstance(span, dict)
+                        str(span.get("text", "")) for span in spans if isinstance(span, dict)
                     ).strip()
                     if value:
                         parts.append(value)
