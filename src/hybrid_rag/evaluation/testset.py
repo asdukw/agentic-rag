@@ -121,7 +121,10 @@ def generate_ragas_cases(
     )
     testset = cast(
         "Testset",
-        generator.generate_with_langchain_docs(
+        # Loader segments are already page/section chunks. Treating them as whole
+        # documents makes Ragas split short and long pages with incompatible
+        # headline assumptions.
+        generator.generate_with_chunks(
             list(documents),
             testset_size=testset_size,
             return_executor=False,
