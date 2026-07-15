@@ -14,7 +14,7 @@ ChunkQuality = Literal[
 ]
 
 CHUNK_QUALITY_CLASSIFIER_NAME = "rule-based-chunk-quality"
-CHUNK_QUALITY_CLASSIFIER_VERSION = "1"
+CHUNK_QUALITY_CLASSIFIER_VERSION = "2"
 CHUNK_QUALITY_CLASSES = frozenset(
     {
         "normal",
@@ -45,7 +45,7 @@ _VISUALIZATION_SECTIONS = {
     "visualization",
     "visualizations",
 }
-_REFERENCE_ENTRY = re.compile(r"(?:^|\s)\[\d+\]\s+(?=[A-Z])")
+_REFERENCE_ENTRY = re.compile(r"^\s*\[\d+\]\s+(?=[A-Z])", re.MULTILINE)
 _COPYRIGHT_NOTICE = re.compile(
     r"(?:©|copyright|all rights reserved|permission to (?:copy|reproduce)|"
     r"provided proper attribution|版权所有|保留所有权利)",
