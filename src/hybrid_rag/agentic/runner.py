@@ -21,6 +21,8 @@ from hybrid_rag.agentic.models import (
     AgentBudget,
     AgentEvent,
     AgentRunReport,
+    ForkSearchArgs,
+    SearchWorkerTask,
     ToolOutcome,
 )
 from hybrid_rag.agentic.planner import AgentPlanner
@@ -136,6 +138,7 @@ class AgentRunner:
                     state=tuple(planner_state[-8:]),
                     available_chunk_ids=tuple(session.discovered_chunk_ids),
                     read_chunk_ids=tuple(session.read_chunk_ids),
+                    remaining_searches=max(request.budget.max_searches - session.searches, 0),
                 )
                 action_event = AgentEvent(
                     event="planner_action",
@@ -151,41 +154,31 @@ class AgentRunner:
                     termination_reason = "planner_finished_without_answer"
                     break
 
-                duplicate_reason = session.claim_action(action)
-                if duplicate_reason:
-                    outcome = ToolOutcome(
-                        tool=action.action,
-                        ok=False,
-                        summary=duplicate_reason,
+                outcomes = await self._execute_action(session, request.question, action)
+                for outcome in outcomes:
+                    outcome_event = AgentEvent(
+                        event="tool_result",
+                        run_id=run_id,
+                        step=step,
+                        data=outcome.model_dump(mode="json"),
                     )
-                elif action.action is AgentActionName.ANSWER_FROM_EVIDENCE:
-                    outcome = await self._answer(session, request.question, action)
-                else:
-                    outcome = await asyncio.to_thread(
-                        self._execute_sync,
-                        session,
-                        request.question,
-                        action,
+                    events.append(outcome_event)
+                    yield outcome_event
+                    planner_state.append(
+                        {
+                            "tool": outcome.tool.value,
+                            "ok": outcome.ok,
+                            "summary": outcome.summary,
+                            "data": outcome.data,
+                        }
                     )
-                outcome_event = AgentEvent(
-                    event="tool_result",
-                    run_id=run_id,
-                    step=step,
-                    data=outcome.model_dump(mode="json"),
-                )
-                events.append(outcome_event)
-                yield outcome_event
-                planner_state.append(
-                    {
-                        "tool": outcome.tool.value,
-                        "ok": outcome.ok,
-                        "summary": outcome.summary,
-                        "data": outcome.data,
-                    }
-                )
 
-                if action.action is AgentActionName.ANSWER_FROM_EVIDENCE and outcome.ok:
-                    final_answer = GroundedAnswer.model_validate(outcome.data["answer"])
+                if (
+                    action.action is AgentActionName.ANSWER_FROM_EVIDENCE
+                    and outcomes
+                    and outcomes[0].ok
+                ):
+                    final_answer = GroundedAnswer.model_validate(outcomes[0].data["answer"])
                     termination_reason = "answer_generated"
                     break
 
@@ -250,6 +243,119 @@ class AgentRunner:
             )
             yield failed
 
+    async def _execute_action(
+        self,
+        session: _AgentSession,
+        question: str,
+        action: AgentAction,
+    ) -> tuple[ToolOutcome, ...]:
+        duplicate_reason = session.claim_action(action)
+        if duplicate_reason:
+            return (
+                ToolOutcome(
+                    tool=action.action,
+                    ok=False,
+                    summary=duplicate_reason,
+                ),
+            )
+        if action.action is AgentActionName.ANSWER_FROM_EVIDENCE:
+            return (await self._answer(session, question, action),)
+        if action.action is AgentActionName.FORK_SEARCH:
+            return await self._fork_search(session, action)
+        return (
+            await asyncio.to_thread(
+                self._execute_sync,
+                session,
+                question,
+                action,
+            ),
+        )
+
+    async def _fork_search(
+        self,
+        session: _AgentSession,
+        action: AgentAction,
+    ) -> tuple[ToolOutcome, ...]:
+        try:
+            fork = ForkSearchArgs.model_validate(action.args)
+        except ValueError as error:
+            return (
+                ToolOutcome(
+                    tool=AgentActionName.FORK_SEARCH,
+                    ok=False,
+                    summary=f"Invalid fork_search tasks: {error}",
+                ),
+            )
+        remaining = session.budget.max_searches - session.searches
+        if len(fork.tasks) > remaining:
+            return (
+                ToolOutcome(
+                    tool=AgentActionName.FORK_SEARCH,
+                    ok=False,
+                    summary=(
+                        f"Parallel search requested {len(fork.tasks)} workers but only "
+                        f"{max(remaining, 0)} search budget remains."
+                    ),
+                ),
+            )
+
+        workers = [self._worker_session(session) for _ in fork.tasks]
+        session.searches += len(fork.tasks)
+        results = await asyncio.gather(
+            *(
+                self._run_search_worker(worker, task)
+                for worker, task in zip(workers, fork.tasks, strict=True)
+            )
+        )
+        for worker in workers:
+            session.discovered_chunk_ids.update(worker.discovered_chunk_ids)
+            session.discovered_entity_ids.update(worker.discovered_entity_ids)
+            session.discovered_relation_ids.update(worker.discovered_relation_ids)
+        return tuple(results)
+
+    def _worker_session(self, parent: _AgentSession) -> _AgentSession:
+        return _AgentSession(
+            service=parent.service,
+            profile_id=parent.profile_id,
+            budget=parent.budget,
+            retrieval_options=parent.retrieval_options,
+        )
+
+    async def _run_search_worker(
+        self,
+        worker: _AgentSession,
+        task: SearchWorkerTask,
+    ) -> ToolOutcome:
+        args: dict[str, Any] = {"query": task.query}
+        if task.top_k is not None:
+            args["top_k"] = task.top_k
+        if task.tool == AgentActionName.SEARCH_CHUNKS.value:
+            args["strategy"] = task.strategy or "hybrid"
+        worker_action = AgentAction(
+            action=AgentActionName(task.tool),
+            args=args,
+            rationale=task.objective,
+        )
+        try:
+            outcome = await asyncio.to_thread(
+                self._execute_sync,
+                worker,
+                task.objective,
+                worker_action,
+            )
+        except Exception as error:
+            outcome = ToolOutcome(
+                tool=worker_action.action,
+                ok=False,
+                summary=f"Worker failed: {type(error).__name__}: {error}",
+            )
+        worker_data = {
+            "task_id": task.task_id,
+            "objective": task.objective,
+            "query": task.query,
+        }
+        return outcome.model_copy(update={"data": {"worker": worker_data, **outcome.data}})
+
     def _execute_sync(
         self,
         session: _AgentSession,
@@ -283,7 +389,7 @@ class AgentRunner:
             mode=RetrievalMode.NAIVE,
             options=options,
             profile_ref=session.profile_id,
-            persist=True,
+            persist=False,
             model_info={"agentic_tool": action.action.value, "strategy": strategy},
         )
         session.searches += 1
@@ -317,7 +423,7 @@ class AgentRunner:
             mode=mode,
             options=_tool_options(session, action.args),
             profile_ref=session.profile_id,
-            persist=True,
+            persist=False,
             model_info={"agentic_tool": action.action.value},
         )
         session.searches += 1

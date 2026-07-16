@@ -18,6 +18,7 @@ class AgentPlanner(Protocol):
         state: Sequence[dict[str, Any]],
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
+        remaining_searches: int,
     ) -> AgentAction: ...
 
 
@@ -31,6 +32,7 @@ class DeterministicAgentPlanner:
         state: Sequence[dict[str, Any]],
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
+        remaining_searches: int,
     ) -> AgentAction:
         if not state:
             return AgentAction(
@@ -69,6 +71,7 @@ class DeepSeekAgentPlanner:
         state: Sequence[dict[str, Any]],
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
+        remaining_searches: int,
     ) -> AgentAction:
         completion = await self.client.complete_messages(
             build_planner_messages(
@@ -76,6 +79,7 @@ class DeepSeekAgentPlanner:
                 state=state,
                 available_chunk_ids=available_chunk_ids,
                 read_chunk_ids=read_chunk_ids,
+                remaining_searches=remaining_searches,
             )
         )
         if not completion.content:

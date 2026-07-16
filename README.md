@@ -73,10 +73,11 @@ bun install
 bun run dev
 ```
 
-浏览器打开 Bun 输出的本地地址即可。Web 默认启用 DeepSeek planner，以严格 JSON action 在每轮选择一个工具；
+浏览器打开 Bun 输出的本地地址即可。Web 默认启用 DeepSeek planner，以严格 JSON action 在每轮选择一个工具，
+或为比较题、跨文档题拆分 2～3 个并行检索 Worker；
 需要离线调试时可取消页面中的 DeepSeek 选项。当前工具为：chunk dense/BM25 检索、实体检索、关系检索、最多两跳的
 图扩展、受 token 预算限制的证据读取，以及只基于已读 chunk 的回答。每次 run 会将完整事件记录写入
-`artifacts/agent-runs/`；每一步检索仍保留现有的 `rtr_` trace。
+`artifacts/agent-runs/`；Agent 中间搜索保持只读，不再为每个 Worker 单独写 `rtr_` trace。
 
 Web UI 不再使用共享的 `storage/app.db` 或项目级语料目录。先在页面创建本地 workspace，再上传 PDF、
 Markdown 或 TXT；每个 workspace 都拥有自己的 `uploads/`、`workspace.db` 和 LangGraph checkpoint，位于
@@ -142,8 +143,9 @@ BM25 召回；`local` 从实体命中扩展图邻居；`global` 从关系命中�
 候选并按 chunk ID 去重，之后统一精排和裁剪。每次检索都会产生可 replay 的 `rtr_` trace；其中保留
 naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次。
 
-`ask` 默认使用 `--mode agentic --deepseek --no-rerank`：Planner 跨查询和工具选择最终 evidence，工具返回结果
-默认保留一阶段顺序；需要提高单次工具候选质量时可加 `--rerank`。固定链路仍可用
+`ask` 默认使用 `--mode agentic --deepseek --no-rerank`：Planner 跨查询和工具选择最终 evidence，并可将独立
+检索任务 fork 给隔离 Worker 并行执行；工具返回结果默认保留一阶段顺序，需要提高单次工具候选质量时可加
+`--rerank`。固定链路仍可用
 `--mode naive|local|global|hybrid|mix`，离线调试可用 `--no-deepseek`。
 
 ### 使用 Ragas 评测

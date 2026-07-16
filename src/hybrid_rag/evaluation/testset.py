@@ -27,7 +27,7 @@ from hybrid_rag.ingest.cleaner import clean_document
 from hybrid_rag.ingest.loaders import LoaderRegistry
 from hybrid_rag.ingest.quality import classify_chunk_quality
 
-GOLDEN_PROMPT_VERSION = "1"
+GOLDEN_PROMPT_VERSION = "3"
 DEFAULT_QUESTION_DISTRIBUTION: Mapping[str, float] = {
     "single_hop": 0.5,
     "summary_reasoning": 1 / 6,
@@ -114,20 +114,18 @@ class GoldenDraft(BaseModel):
     grounding_statements: list[Annotated[str, Field(min_length=2, max_length=1_000)]] = Field(
         max_length=6
     )
-    evidence_quotes: list[Annotated[str, Field(min_length=2, max_length=1_500)]] = Field(
-        max_length=6
-    )
+    evidence_refs: list[Annotated[str, Field(min_length=5, max_length=32)]] = Field(max_length=6)
     insufficient_evidence: bool
 
     @model_validator(mode="after")
     def validate_grounding_shape(self) -> GoldenDraft:
         if self.insufficient_evidence:
-            if self.grounding_statements or self.evidence_quotes:
+            if self.grounding_statements or self.evidence_refs:
                 raise ValueError(
-                    "insufficient-evidence cases must not claim grounding statements or quotes"
+                    "insufficient-evidence cases must not claim grounding statements or evidence"
                 )
-        elif not self.grounding_statements or not self.evidence_quotes:
-            raise ValueError("answerable cases require grounding statements and evidence quotes")
+        elif not self.grounding_statements or not self.evidence_refs:
+            raise ValueError("answerable cases require grounding statements and evidence refs")
         return self
 
 
@@ -304,26 +302,33 @@ async def generate_golden_cases(
 
         async def generate(
             plan: GoldenCasePlan,
-        ) -> tuple[int, QuestionType, tuple[GoldenDraft, tuple[int, ...]]]:
+        ) -> tuple[int, QuestionType, tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]]:
             async with semaphore:
                 result = await _generate_draft(client, plan, max_retries=max_retries)
                 return plan.index, plan.question_type, result
 
-        generated_by_index: dict[int, tuple[GoldenDraft, tuple[int, ...]]] = {}
+        generated_by_index: dict[int, tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]] = {}
         tasks = [asyncio.create_task(generate(plan)) for plan in plans]
-        for completed, task in enumerate(asyncio.as_completed(tasks), start=1):
-            index, question_type, result = await task
-            generated_by_index[index] = result
-            if progress is not None:
-                progress(completed, len(plans), question_type)
+        try:
+            for completed, task in enumerate(asyncio.as_completed(tasks), start=1):
+                index, question_type, result = await task
+                generated_by_index[index] = result
+                if progress is not None:
+                    progress(completed, len(plans), question_type)
+        except BaseException:
+            for pending in tasks:
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         generated = [generated_by_index[plan.index] for plan in plans]
         seen: set[str] = set()
         cases: list[dict[str, object]] = []
-        for plan, (draft, used_contexts) in zip(plans, generated, strict=True):
+        for plan, (draft, used_contexts, evidence_quotes) in zip(plans, generated, strict=True):
             normalized_question = " ".join(draft.user_input.split()).casefold()
             if normalized_question in seen:
                 async with semaphore:
-                    draft, used_contexts = await _generate_draft(
+                    draft, used_contexts, evidence_quotes = await _generate_draft(
                         client,
                         plan,
                         max_retries=max_retries,
@@ -337,7 +342,15 @@ async def generate_golden_cases(
                         f"case {plan.index} still duplicates another generated question"
                     )
             seen.add(normalized_question)
-            cases.append(_case_from_draft(plan, draft, used_contexts, llm_model=llm_model))
+            cases.append(
+                _case_from_draft(
+                    plan,
+                    draft,
+                    used_contexts,
+                    evidence_quotes,
+                    llm_model=llm_model,
+                )
+            )
     return cases
 
 
@@ -381,7 +394,7 @@ async def _generate_draft(
     *,
     max_retries: int,
     extra_issue: str | None = None,
-) -> tuple[GoldenDraft, tuple[int, ...]]:
+) -> tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]:
     previous: str | None = None
     issues = [extra_issue] if extra_issue else []
     for attempt in range(max_retries + 1):
@@ -405,12 +418,16 @@ async def _generate_draft(
                     "insufficient_evidence must be "
                     f"{not plan.answerable} for {plan.question_type.value}"
                 )
-            used_contexts = _used_context_indexes(draft.evidence_quotes, plan.contexts)
+            used_contexts, evidence_quotes = _resolve_evidence_refs(
+                draft.evidence_refs, plan.contexts
+            )
             if plan.answerable and not used_contexts:
-                raise ValueError("no evidence quote is verbatim in the selected contexts")
+                raise ValueError("no evidence refs were selected")
             if plan.question_type is QuestionType.MULTI_CONTEXT and len(used_contexts) < 2:
-                raise ValueError("multi_context cases must quote at least two selected contexts")
-            return draft, used_contexts
+                raise ValueError(
+                    "multi_context cases must reference at least two selected contexts"
+                )
+            return draft, used_contexts, evidence_quotes
         except (ValidationError, ValueError) as error:
             if attempt >= max_retries:
                 raise ValueError(
@@ -430,9 +447,14 @@ def _golden_messages(
     for index, document in enumerate(plan.contexts, start=1):
         location = f"pages {document.page_start}-{document.page_end}"
         section = " > ".join(document.section_path) or "<no section>"
+        units = "\n".join(
+            f"[E{index}.U{unit_index}] {text}"
+            for unit_index, text in enumerate(_evidence_units(document.text), start=1)
+        )
         context_blocks.append(
-            f"[E{index}] document={document.document_title!r}; {location}; section={section!r}\n"
-            f"{document.text}"
+            f"[E{index}_METADATA] document={document.document_title!r}; "
+            f"{location}; section={section!r}\n"
+            f"[E{index}_EVIDENCE_UNITS]\n{units}\n[/E{index}_EVIDENCE_UNITS]"
         )
     task = {
         QuestionType.SINGLE_HOP: (
@@ -454,12 +476,14 @@ def _golden_messages(
     system = (
         "You create auditable RAG evaluation cases from scientific papers. Return JSON only. "
         "Write user_input and reference in Chinese. First derive concise grounding_statements, "
-        "then form the question. evidence_quotes must be short verbatim substrings copied from "
-        "the supplied evidence, never paraphrases. Do not use outside knowledge. "
-        "For unanswerable cases, grounding_statements and evidence_quotes must be empty and "
+        "then form the question. Select evidence_refs only from the exact unit IDs supplied, such "
+        "as E1.U2; never write or paraphrase evidence quotations yourself. Select the smallest set "
+        "of units that fully supports the reference. Document titles, page ranges, section names, "
+        "and block labels are metadata, not evidence. Do not use outside knowledge. "
+        "For unanswerable cases, grounding_statements and evidence_refs must be empty and "
         "insufficient_evidence must be true. For all other cases it must be false.\n"
         'Schema: {"user_input":str,"reference":str,"grounding_statements":[str],'
-        '"evidence_quotes":[str],"insufficient_evidence":bool}.'
+        '"evidence_refs":[str],"insufficient_evidence":bool}.'
     )
     user = f"Question type: {plan.question_type.value}\nTask: {task}\n\n" + "\n\n".join(
         context_blocks
@@ -468,7 +492,9 @@ def _golden_messages(
         rendered_issues = "\n".join(f"- {issue}" for issue in issues)
         user += (
             "\n\nYour previous response was invalid. Correct every issue and return a complete "
-            f"replacement JSON object.\nIssues:\n{rendered_issues}\n"
+            "replacement JSON object. Use only evidence_refs IDs that appear above; do not emit "
+            "evidence_quotes and do not invent unit IDs. "
+            f"\nIssues:\n{rendered_issues}\n"
             f"Previous response:\n{invalid_response or '<empty>'}"
         )
     return (
@@ -477,22 +503,67 @@ def _golden_messages(
     )
 
 
-def _used_context_indexes(
-    quotes: Sequence[str], contexts: Sequence[EvaluationDocument]
-) -> tuple[int, ...]:
+def _resolve_evidence_refs(
+    refs: Sequence[str], contexts: Sequence[EvaluationDocument]
+) -> tuple[tuple[int, ...], tuple[str, ...]]:
+    available = {
+        f"E{context_index}.U{unit_index}": (context_index - 1, text)
+        for context_index, context in enumerate(contexts, start=1)
+        for unit_index, text in enumerate(_evidence_units(context.text), start=1)
+    }
     used: set[int] = set()
-    for quote in quotes:
-        matches = [index for index, context in enumerate(contexts) if quote in context.text]
-        if not matches:
-            raise ValueError(f"evidence quote is not verbatim: {quote!r}")
-        used.add(matches[0])
-    return tuple(sorted(used))
+    quotes: list[str] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if ref in seen:
+            raise ValueError(f"duplicate evidence ref: {ref!r}")
+        seen.add(ref)
+        resolved = available.get(ref)
+        if resolved is None:
+            raise ValueError(
+                f"unknown evidence ref {ref!r}; choose only an E{{context}}.U{{unit}} ID shown "
+                "in the supplied evidence"
+            )
+        context_index, quote = resolved
+        used.add(context_index)
+        quotes.append(quote)
+    return tuple(sorted(used)), tuple(quotes)
+
+
+def _evidence_units(text: str, *, max_chars: int = 700) -> tuple[str, ...]:
+    """Split text into deterministic, exact substrings for model-selected citations."""
+
+    units: list[str] = []
+    cursor = 0
+    while cursor < len(text):
+        while cursor < len(text) and text[cursor].isspace():
+            cursor += 1
+        if cursor >= len(text):
+            break
+        limit = min(cursor + max_chars, len(text))
+        end = limit
+        if limit < len(text):
+            minimum = cursor + max_chars // 2
+            candidates = [
+                text.rfind(boundary, minimum, limit) for boundary in (". ", "? ", "! ", "; ", "\n")
+            ]
+            boundary = max(candidates)
+            if boundary >= minimum:
+                end = boundary + 1
+        unit = text[cursor:end].strip()
+        if unit:
+            units.append(unit)
+        cursor = end
+    if not units:
+        raise ValueError("evidence context must contain non-whitespace text")
+    return tuple(units)
 
 
 def _case_from_draft(
     plan: GoldenCasePlan,
     draft: GoldenDraft,
     used_contexts: Sequence[int],
+    evidence_quotes: Sequence[str],
     *,
     llm_model: str,
 ) -> dict[str, object]:
@@ -509,7 +580,7 @@ def _case_from_draft(
             "document_ids": list(case_documents),
             "question_type": plan.question_type.value,
             "answerable": plan.answerable,
-            "evidence_quotes": list(draft.evidence_quotes),
+            "evidence_quotes": list(evidence_quotes),
             "generator_model": llm_model,
             "prompt_version": GOLDEN_PROMPT_VERSION,
             "review_status": "unreviewed",

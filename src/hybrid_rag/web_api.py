@@ -450,7 +450,7 @@ def _planner(use_deepseek: bool, settings: DeepSeekSettings) -> AgentPlanner:
             api_key=api_key,
             base_url=settings.base_url,
             model=settings.query_model,
-            max_output_tokens=512,
+            max_output_tokens=1_024,
             timeout_seconds=settings.timeout_seconds,
             temperature=0,
         )

@@ -5,10 +5,11 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AgentActionName(StrEnum):
+    FORK_SEARCH = "fork_search"
     SEARCH_CHUNKS = "search_chunks"
     SEARCH_ENTITIES = "search_entities"
     SEARCH_RELATIONS = "search_relations"
@@ -26,6 +27,42 @@ class AgentAction(BaseModel):
     action: AgentActionName
     args: dict[str, Any] = Field(default_factory=dict)
     rationale: str = Field(default="", max_length=500)
+
+
+class SearchWorkerTask(BaseModel):
+    """One isolated, read-only retrieval task emitted by the main planner."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    task_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,32}$")
+    objective: str = Field(min_length=1, max_length=300)
+    tool: Literal["search_chunks", "search_entities", "search_relations"]
+    query: str = Field(min_length=1, max_length=1_000)
+    strategy: Literal["dense", "bm25", "hybrid"] | None = None
+    top_k: int | None = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_strategy(self) -> SearchWorkerTask:
+        if self.tool == "search_chunks":
+            return self
+        if self.strategy is not None:
+            raise ValueError("strategy is only valid for search_chunks workers")
+        return self
+
+
+class ForkSearchArgs(BaseModel):
+    """Bounded fan-out selected by the main planner."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tasks: list[SearchWorkerTask] = Field(min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_task_ids(self) -> ForkSearchArgs:
+        task_ids = [task.task_id for task in self.tasks]
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("fork_search task IDs must be unique")
+        return self
 
 
 class AgentBudget(BaseModel):

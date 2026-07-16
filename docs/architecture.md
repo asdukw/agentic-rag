@@ -9,8 +9,9 @@ libraries are confined to adapters: PyMuPDF parsing, token counting, SQLAlchemy
 and Alembic persistence, LangGraph checkpointing, NetworkX projection,
 FlagEmbedding, and the configurable DeepSeek API client. CLI `ask` and the web
 workbench enable DeepSeek by default. The planner may select only
-project-defined, budgeted retrieval tools; it cannot invent tools or bypass the
-evidence boundary.
+project-defined, budgeted retrieval tools or a bounded fork of two to three
+independent search workers; it cannot invent tools or bypass the evidence
+boundary.
 
 ## End-to-end data flow
 
@@ -78,8 +79,11 @@ flowchart LR
 
     subgraph Agent[Bounded planner loop (CLI/Web default)]
         AgentQuestion["Question + pinned profile + budgets"] --> Planner["DeepSeek planner by default"]
-        Planner --> Tools["search chunks/entities/relations\nexpand graph · read evidence"]
+        Planner --> Fork["optional fork_search\n2-3 isolated workers"]
+        Fork --> Tools["search chunks/entities/relations"]
+        Planner --> Tools2["serial expand graph · read evidence"]
         Tools --> Planner
+        Tools2 --> Planner
         Planner --> AgentAnswer["answer_from_evidence\ncitations limited to session-read chunks"]
         AgentAnswer --> Audit[("SSE timeline + JSON audit report")]
     end
@@ -220,7 +224,12 @@ candidate chunks to the planner. Graph expansion and evidence reads accept only
 IDs already discovered in the same session. `answer_from_evidence` can use and
 cite only chunks explicitly read in that session. Duplicate normalized actions
 are rejected, events stream to the web client, and the complete run is written
-as an audit report.
+as an audit report. For multi-aspect or cross-document questions, `fork_search`
+creates two to three isolated read-only worker sessions that share the pinned
+profile, execute independent chunk/entity/relation searches concurrently, and
+merge candidates into the main session in deterministic task order. Dependent
+graph expansion, evidence reading, and answering remain serial barriers. Agent
+searches use `persist=False`; the run audit is the single durable trajectory.
 
 ## Evaluation execution contract
 
