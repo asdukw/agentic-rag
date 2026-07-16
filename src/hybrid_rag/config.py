@@ -127,7 +127,7 @@ class RetrievalSettings(BaseSettings):
     naive_bm25_weight: float = Field(default=1.0, ge=0)
     bm25_k1: float = Field(default=1.2, gt=0)
     bm25_b: float = Field(default=0.75, ge=0, le=1)
-    reranker_provider: str = Field(default="flagembedding", pattern=r"^(none|flagembedding)$")
+    reranker_provider: str = Field(default="none", pattern=r"^(none|flagembedding)$")
     reranker_model: str = Field(default="BAAI/bge-reranker-v2-m3", min_length=1)
     reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = Field(default=4, ge=1, le=32)

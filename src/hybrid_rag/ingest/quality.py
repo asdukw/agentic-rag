@@ -14,7 +14,7 @@ ChunkQuality = Literal[
 ]
 
 CHUNK_QUALITY_CLASSIFIER_NAME = "rule-based-chunk-quality"
-CHUNK_QUALITY_CLASSIFIER_VERSION = "2"
+CHUNK_QUALITY_CLASSIFIER_VERSION = "3"
 CHUNK_QUALITY_CLASSES = frozenset(
     {
         "normal",
@@ -51,6 +51,11 @@ _COPYRIGHT_NOTICE = re.compile(
     r"provided proper attribution|版权所有|保留所有权利)",
     re.IGNORECASE,
 )
+_PUBLICATION_BOILERPLATE = re.compile(
+    r"(?=.*\bCVPR paper\b)(?=.*\bOpen Access version\b)"
+    r"(?=.*\bComputer Vision Foundation\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 _AUTHOR_AFFILIATION = re.compile(
     r"(?:\b(?:university|institute|department|laboratory|research lab|equal contribution)\b|"
     r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b)",
@@ -82,7 +87,7 @@ def classify_chunk_quality(
     stripped = text.strip()
     if len(_REFERENCE_ENTRY.findall(stripped)) >= 3:
         return "references"
-    if _COPYRIGHT_NOTICE.search(stripped):
+    if _COPYRIGHT_NOTICE.search(stripped) or _PUBLICATION_BOILERPLATE.search(stripped):
         return "copyright"
     if (
         ordinal <= 1

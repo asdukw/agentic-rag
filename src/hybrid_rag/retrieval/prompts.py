@@ -82,6 +82,62 @@ def build_answer_messages(
     )
 
 
+def build_keyword_repair_messages(
+    question: str,
+    *,
+    invalid_response: str | None,
+    issues: Sequence[str],
+) -> tuple[ChatMessage, ChatMessage]:
+    """Request a complete replacement for an invalid keyword response."""
+
+    return _repair_messages(
+        build_keyword_messages(question),
+        invalid_response=invalid_response,
+        issues=issues,
+    )
+
+
+def build_answer_repair_messages(
+    question: str,
+    evidence: Sequence[EvidenceItem],
+    *,
+    invalid_response: str | None,
+    issues: Sequence[str],
+) -> tuple[ChatMessage, ChatMessage]:
+    """Request a complete replacement for an invalid grounded answer."""
+
+    return _repair_messages(
+        build_answer_messages(question, evidence),
+        invalid_response=invalid_response,
+        issues=issues,
+    )
+
+
+def _repair_messages(
+    messages: tuple[ChatMessage, ChatMessage],
+    *,
+    invalid_response: str | None,
+    issues: Sequence[str],
+) -> tuple[ChatMessage, ChatMessage]:
+    system, user = messages
+    repair = {
+        "validation_issues": list(issues),
+        "invalid_response": invalid_response,
+    }
+    return (
+        system,
+        {
+            "role": "user",
+            "content": (
+                f"{user['content']}\n\nThe previous response was invalid. Return a complete "
+                "replacement JSON object that fixes every validation issue. Do not explain the "
+                "repair.\n\nREPAIR_JSON:\n"
+                f"{_json(repair)}"
+            ),
+        },
+    )
+
+
 def _schema_json(model: type[KeywordExtraction] | type[GroundedAnswer]) -> str:
     return json.dumps(
         model.model_json_schema(),

@@ -46,6 +46,14 @@ class RagasCase(TypedDict):
     review_status: NotRequired[str]
 
 
+_SMOKE_CASE_QUOTAS: tuple[tuple[str, int], ...] = (
+    ("single_hop", 3),
+    ("summary_reasoning", 1),
+    ("multi_context", 1),
+    ("unanswerable", 1),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class RagasTestset:
     """A versioned golden test set bound to one corpus content hash."""
@@ -96,6 +104,7 @@ class RagasEvaluationRunner:
         judge_timeout_seconds: float = 180.0,
         query_client_provenance: dict[str, object] | None = None,
         agentic_runner: object | None = None,
+        smoke: bool = False,
     ) -> RagasEvaluationReport:
         if judge_max_output_tokens < 1:
             raise ValueError("Ragas judge_max_output_tokens must be positive")
@@ -109,6 +118,7 @@ class RagasEvaluationRunner:
                 "Ragas test set corpus_content_hash does not match the pinned index profile "
                 f"({testset.corpus_content_hash} != {profile_corpus_content_hash})"
             )
+        case_entries = _evaluation_case_entries(testset.cases, smoke=smoke)
 
         output: dict[str, dict[str, object]] = {}
         cost_observations: list[RetrievalCostObservation] = []
@@ -117,7 +127,7 @@ class RagasEvaluationRunner:
             scored_case_indexes: list[int] = []
             case_details: list[dict[str, object]] = []
             retrieval_scores: list[RetrievalMetricScores] = []
-            for case_index, case in enumerate(testset.cases, start=1):
+            for case_index, case in case_entries:
                 answer = await self.retrieval_service.ask(
                     case["user_input"],
                     query_client=self.query_client,
@@ -209,7 +219,7 @@ class RagasEvaluationRunner:
         if agentic_runner is not None:
             output["agentic"] = await self._run_agentic_mode(
                 agentic_runner,
-                testset,
+                case_entries,
                 profile_id=profile.id,
                 retrieval_options=retrieval_options,
                 judge_model=judge_model,
@@ -230,6 +240,9 @@ class RagasEvaluationRunner:
                 },
                 "profile": _profile_provenance(profile, profile_corpus_content_hash),
                 "runtime": {
+                    "smoke": smoke,
+                    "evaluated_case_count": len(case_entries),
+                    "evaluated_case_indexes": [index for index, _case in case_entries],
                     "modes": [mode.value for mode in modes]
                     + (["agentic"] if agentic_runner is not None else []),
                     "retrieval_options": asdict(retrieval_options),
@@ -251,7 +264,7 @@ class RagasEvaluationRunner:
     async def _run_agentic_mode(
         self,
         runner: object,
-        testset: RagasTestset,
+        case_entries: Sequence[tuple[int, RagasCase]],
         *,
         profile_id: str,
         retrieval_options: RetrievalOptions,
@@ -274,7 +287,7 @@ class RagasEvaluationRunner:
         case_details: list[dict[str, object]] = []
         retrieval_scores: list[RetrievalMetricScores] = []
         agentic_scores = []
-        for case_index, case in enumerate(testset.cases, start=1):
+        for case_index, case in case_entries:
             raw_events = [
                 event
                 async for event in run_method(
@@ -375,6 +388,38 @@ class RagasEvaluationRunner:
         means = cast(dict[str, object], report["means"])
         means.update(cast(dict[str, object], agentic["means"]))
         return report
+
+
+def _evaluation_case_entries(
+    cases: Sequence[RagasCase], *, smoke: bool
+) -> tuple[tuple[int, RagasCase], ...]:
+    entries = tuple(enumerate(cases, start=1))
+    if not smoke:
+        return entries
+
+    target_size = min(sum(quota for _question_type, quota in _SMOKE_CASE_QUOTAS), len(entries))
+    selected: list[tuple[int, RagasCase]] = []
+    selected_indexes: set[int] = set()
+    for question_type, quota in _SMOKE_CASE_QUOTAS:
+        matches = (
+            entry for entry in entries if entry[1].get("question_type", "legacy") == question_type
+        )
+        for entry in matches:
+            if (
+                len([case for case in selected if case[1].get("question_type") == question_type])
+                >= quota
+            ):
+                break
+            selected.append(entry)
+            selected_indexes.add(entry[0])
+
+    for entry in entries:
+        if len(selected) >= target_size:
+            break
+        if entry[0] not in selected_indexes:
+            selected.append(entry)
+            selected_indexes.add(entry[0])
+    return tuple(sorted(selected, key=lambda entry: entry[0]))
 
 
 def _load_testset(path: Path) -> RagasTestset:

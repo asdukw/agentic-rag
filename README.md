@@ -53,9 +53,9 @@ uv run scripts/prepare_corpus.py
 - `hash-token-v1` 仅保留给已有 profile 兼容和快速离线测试，不再作为 CLI 或演示默认值。
 - `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
   直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
-- 融合后的候选默认使用本地 FlagEmbedding cross-encoder
-  `BAAI/bge-reranker-v2-m3` 精排：它批量计算 `[query, passage]` 对的相关性，再决定最终 Top-K。
-  首次检索会下载精排模型；将 `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=none` 可跳过二阶段精排。
+- 融合后的候选默认保留一阶段顺序，不运行二阶段精排。需要更高候选质量时，可显式设置
+  `HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding`，使用本地 cross-encoder
+  `BAAI/bge-reranker-v2-m3` 批量计算 `[query, passage]` 对的相关性，再决定最终 Top-K。
 
 ### Agentic RAG Web 工作台
 
@@ -91,17 +91,18 @@ Markdown 或 TXT；每个 workspace 都拥有自己的 `uploads/`、`workspace.d
 
 ### FlagEmbedding cross-encoder 精排
 
-默认已启用 `BAAI/bge-reranker-v2-m3`。`uv sync` 会安装 FlagEmbedding，首次检索会下载相应权重。
-正常执行检索或问答命令即可：
+默认关闭二阶段精排，以免 CPU 环境下的 cross-encoder 显著拖慢检索。需要时先启用
+`BAAI/bge-reranker-v2-m3`；`uv sync` 会安装 FlagEmbedding，首次检索会下载相应权重：
 
 ```bash
+export HYBRID_RAG_RETRIEVAL_RERANKER_PROVIDER=flagembedding
 uv run hrag retrieve "How does LightRAG use entities?" --mode mix --json
 ```
 
 首次检索会下载模型权重。实现会批量计算 `[query, passage]` 对的交叉编码器分数，并在 trace 中保留
 原始 logit 与 sigmoid 归一化后的 0--1 分数。仅在兼容 CUDA 的 GPU 环境中将
-`HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=true`；CPU 环境保持 `false`。仍可将 provider 设为 `none`，
-跳过所有二阶段精排。
+`HYBRID_RAG_RETRIEVAL_RERANKER_USE_FP16=true`；CPU 环境保持 `false`。将 provider 恢复为 `none`
+即可跳过所有二阶段精排。
 
 ### 构建知识图谱
 
@@ -165,21 +166,23 @@ uv run hrag build-index \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --json
 
-# 默认从 data/corpus 的 normal segment 生成 60 条测试，并写入 artifacts/ragas/ragas-testset.json。
+# 默认按 hash 从配置的 SQLite ready profile 读取实际索引的 normal chunk，生成 60 条测试，
+# 并写入 artifacts/ragas/ragas-testset.json。
 # 分布为 30 single-hop、10 summary/reasoning、10 multi-context、10 unanswerable；
 # 每篇论文至少覆盖 5 条。生成过程不调用 Ragas TestsetGenerator。
 # DEEPSEEK_API_KEY 是必需的。
 uv run scripts/ragas_testset.py \
   --corpus-content-hash <build-index输出的corpus_content_hash>
 
-# 也可以显式改用 workspace uploads、case 数量和输出文件。
+# Workspace 索引需同时指定数据库；source-dir 只提供 SOURCES.json 出处声明。
 uv run scripts/ragas_testset.py \
+  --db storage/workspaces/<workspace-id>/workspace.db \
   --source-dir storage/workspaces/<workspace-id>/uploads \
   --testset-size 60 \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
   --output artifacts/ragas/workspace-ragas-testset.json
 
-# 低成本冒烟生成：默认只读 2 篇、每篇前 6 个 segment，并生成 6 条 case。
+# 低成本冒烟生成：默认只读索引中的 2 篇、每篇前 6 个 normal chunk，并生成 6 条 case。
 uv run scripts/ragas_smoke.py \
   --corpus-content-hash <build-index输出的corpus_content_hash>
 
@@ -187,6 +190,27 @@ uv run scripts/ragas_smoke.py \
 uv run hrag evaluate \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --testset artifacts/ragas/my-ragas-testset.json
+
+# 全量评测前先做六模式冒烟：确定性抽取 3 条 single-hop，以及各 1 条
+# summary/reasoning、multi-context、unanswerable；报告保留原测试集 case index。
+uv run hrag evaluate \
+  --testset artifacts/ragas/ragas-testset-1.json \
+  --modes naive,local,global,hybrid,mix,agentic \
+  --smoke \
+  --output artifacts/evaluations/six-modes-smoke.json
+
+# 推荐用下面两个包装脚本做成对实验。两者默认均为六模式、六条 smoke case；
+# 前者强制关闭所有 rerank，后者为固定模式和 Agentic 工具同时启用 FlagEmbedding。
+uv run scripts/evaluate_no_rerank.py \
+  --testset artifacts/ragas/ragas-testset-1.json
+
+uv run scripts/evaluate_rerank.py \
+  --testset artifacts/ragas/ragas-testset-1.json
+
+# 确认 smoke 正常后，显式添加 --full 才会评测完整测试集。
+uv run scripts/evaluate_no_rerank.py \
+  --testset artifacts/ragas/ragas-testset-1.json \
+  --full
 
 # 可选：在同一测试集和同一索引上比较多个模式。
 uv run hrag evaluate \

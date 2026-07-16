@@ -1,6 +1,7 @@
-r"""Generate a corpus-bound golden test set from local source documents.
+r"""Generate a corpus-bound golden test set from indexed normal chunks.
 
-By default, the script reads every supported document under ``data/corpus`` and
+By default, the script resolves ``--corpus-content-hash`` in the configured
+SQLite database, reads the exact normal chunks backing that ready index, and
 writes 60 stratified cases to ``artifacts/ragas/ragas-testset.json``. Ragas is
 used later for answer scoring; test-set generation is project-native.
 
@@ -12,8 +13,9 @@ Usage::
     # Generate the default 60-case test set for an exact index corpus.
     uv run scripts/ragas_testset.py --corpus-content-hash <build-index-corpus-content-hash>
 
-    # Override the source, total sample count, and output location.
+    # Override the database, citation source, sample count, and output location.
     uv run scripts/ragas_testset.py \
+      --db storage/workspaces/<workspace-id>/workspace.db \
       --source-dir storage/workspaces/<workspace-id>/uploads \
       --testset-size 60 \
       --corpus-content-hash <build-index-corpus-content-hash> \
@@ -34,15 +36,18 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from hybrid_rag.config import Settings, sqlite_url
 from hybrid_rag.evaluation.testset import (
     build_evaluation_testset_envelope,
     generate_golden_cases,
     load_evaluation_documents,
+    load_index_evaluation_documents,
     plan_golden_cases,
     validate_corpus_content_hash,
     validate_testset_sources,
     write_evaluation_testset,
 )
+from hybrid_rag.storage.database import Database
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_PATH = ROOT / "data" / "corpus"
@@ -72,7 +77,16 @@ def parse_args(defaults: ScriptDefaults | None = None) -> argparse.Namespace:
         "--source-dir",
         type=Path,
         default=DEFAULT_SOURCE_PATH,
-        help="Source document directory (default: data/corpus).",
+        help=(
+            "Citation manifest directory, also used for --dry-run without a corpus hash "
+            "(default: data/corpus)."
+        ),
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="SQLite database containing the indexed corpus (default: configured database).",
     )
     parser.add_argument(
         "--output",
@@ -174,11 +188,35 @@ def main(defaults: ScriptDefaults | None = None) -> None:
     if args.max_concurrency < 1 or args.max_retries < 0 or args.timeout_seconds <= 0:
         raise ValueError("generation concurrency, retries, and timeout are invalid")
     max_documents, max_segments = _source_limits(args)
-    documents = load_evaluation_documents(
-        args.source_dir,
-        max_documents=max_documents,
-        max_segments_per_document=max_segments,
+    corpus_hash = (
+        validate_corpus_content_hash(
+            args.corpus_content_hash,
+            field="--corpus-content-hash",
+        )
+        if args.corpus_content_hash is not None
+        else None
     )
+    profile_id: str | None = None
+    database_url: str | None = None
+    if corpus_hash is not None:
+        database_url = sqlite_url(args.db) if args.db is not None else Settings().database_url
+        database = Database(database_url)
+        try:
+            documents, profile = load_index_evaluation_documents(
+                database,
+                corpus_hash,
+                max_documents=max_documents,
+                max_segments_per_document=max_segments,
+            )
+        finally:
+            database.dispose()
+        profile_id = profile.id
+    else:
+        documents = load_evaluation_documents(
+            args.source_dir,
+            max_documents=max_documents,
+            max_segments_per_document=max_segments,
+        )
     document_ids = {document.document_id for document in documents}
     source_uris = {document.source_uri for document in documents}
     plans = plan_golden_cases(
@@ -189,10 +227,16 @@ def main(defaults: ScriptDefaults | None = None) -> None:
     sources_path = args.sources or args.source_dir / "SOURCES.json"
     sources = _load_sources(sources_path, source_uris)
     output_path = _available_output_path(args.output)
-    print(
-        f"Loaded {len(document_ids)} source documents ({len(documents)} normal segments) "
-        f"from {args.source_dir}"
-    )
+    if profile_id is not None:
+        print(
+            f"Loaded {len(document_ids)} indexed documents ({len(documents)} normal chunks) "
+            f"from profile {profile_id} in {database_url}"
+        )
+    else:
+        print(
+            f"Loaded {len(document_ids)} source documents ({len(documents)} normal segments) "
+            f"from {args.source_dir}"
+        )
     print(f"Test-set size: {args.testset_size}; output: {output_path}")
     distribution: dict[str, int] = {}
     coverage: dict[str, int] = {document_id: 0 for document_id in document_ids}
@@ -209,10 +253,8 @@ def main(defaults: ScriptDefaults | None = None) -> None:
     if args.dry_run:
         return
 
-    corpus_hash = validate_corpus_content_hash(
-        args.corpus_content_hash,
-        field="--corpus-content-hash",
-    )
+    if corpus_hash is None:
+        raise ValueError("--corpus-content-hash is required unless --dry-run is used")
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("set DEEPSEEK_API_KEY in .env before generating a golden test set")
@@ -226,7 +268,7 @@ def main(defaults: ScriptDefaults | None = None) -> None:
             max_retries=args.max_retries,
             timeout_seconds=args.timeout_seconds,
             progress=lambda completed, total, question_type: print(
-                f"Generated {completed}/{total}: {question_type.value}"
+                f"Generated draft {completed}/{total}: {question_type.value}"
             ),
         )
     )

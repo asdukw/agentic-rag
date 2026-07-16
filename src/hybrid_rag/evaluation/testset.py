@@ -26,9 +26,12 @@ from hybrid_rag.ids import file_source_uri
 from hybrid_rag.ingest.cleaner import clean_document
 from hybrid_rag.ingest.loaders import LoaderRegistry
 from hybrid_rag.ingest.quality import classify_chunk_quality
+from hybrid_rag.storage.database import Database
+from hybrid_rag.storage.retrieval_repository import RetrievalRepository, StoredIndexProfile
 
-GOLDEN_PROMPT_VERSION = "4"
+GOLDEN_PROMPT_VERSION = "5"
 _CASE_GENERATION_RESTARTS = 1
+_DUPLICATE_REGENERATION_ATTEMPTS = 2
 DEFAULT_QUESTION_DISTRIBUTION: Mapping[str, float] = {
     "single_hop": 0.5,
     "summary_reasoning": 1 / 6,
@@ -190,6 +193,123 @@ def load_evaluation_documents(
     return documents
 
 
+def load_index_evaluation_documents(
+    database: Database,
+    corpus_content_hash: object,
+    *,
+    max_documents: int | None = None,
+    max_segments_per_document: int | None = None,
+    repository: RetrievalRepository | None = None,
+) -> tuple[list[EvaluationDocument], StoredIndexProfile]:
+    """Load the exact normal chunks backing one ready index corpus."""
+
+    _validate_limit(max_documents, field="max_documents")
+    _validate_limit(max_segments_per_document, field="max_segments_per_document")
+    corpus_hash = validate_corpus_content_hash(corpus_content_hash)
+    selected_repository = repository or RetrievalRepository()
+    with database.session_factory() as session:
+        matches = [
+            profile
+            for profile in selected_repository.list_profiles(session)
+            if profile.status == "ready"
+            and profile.metadata.get("corpus_content_hash") == corpus_hash
+        ]
+        if not matches:
+            raise ValueError(
+                "no ready index profile matches the requested corpus-content hash in "
+                f"{database.url}"
+            )
+        profile = next((item for item in matches if item.is_active), matches[0])
+        index = selected_repository.load_index(session, profile.id)
+        snapshot = selected_repository.load_source_snapshot(
+            session,
+            build_run_id=profile.source_graph_run_id,
+        )
+
+    if snapshot.corpus_content_hash != corpus_hash:
+        raise ValueError(
+            "the database's current normal chunks no longer match the selected index corpus; "
+            "run prepare_corpus.py to ingest and rebuild the index"
+        )
+    if snapshot.source_corpus_hash != profile.source_corpus_hash:
+        raise ValueError("the selected index profile no longer matches the database source corpus")
+
+    indexed_chunks = {item.object_id: item for item in index.chunks}
+    chunks = {chunk.id: chunk for chunk in snapshot.chunks if chunk.id in indexed_chunks}
+    missing = sorted(indexed_chunks.keys() - chunks.keys())
+    if missing:
+        raise ValueError(
+            f"selected index references {len(missing)} chunks absent from the current corpus"
+        )
+    for chunk_id, chunk in chunks.items():
+        vector_hash = indexed_chunks[chunk_id].source_content_hash
+        if vector_hash is not None and vector_hash != chunk.content_hash:
+            raise ValueError(f"selected index chunk {chunk_id} has stale source content")
+
+    source_documents = {document.id: document for document in snapshot.documents}
+    indexed_document_ids = {chunk.document_id for chunk in chunks.values()}
+    ordered_document_ids = sorted(
+        indexed_document_ids,
+        key=lambda document_id: (
+            source_documents[document_id].source_uri.casefold(),
+            document_id,
+        ),
+    )
+    if max_documents is not None:
+        ordered_document_ids = ordered_document_ids[:max_documents]
+    selected_document_ids = set(ordered_document_ids)
+    per_document: dict[str, int] = {document_id: 0 for document_id in ordered_document_ids}
+    documents: list[EvaluationDocument] = []
+    for chunk in sorted(
+        chunks.values(), key=lambda item: (item.document_id, item.ordinal, item.id)
+    ):
+        if chunk.document_id not in selected_document_ids:
+            continue
+        if (
+            max_segments_per_document is not None
+            and per_document[chunk.document_id] >= max_segments_per_document
+        ):
+            continue
+        if chunk.quality_class != "normal":
+            raise ValueError(f"selected index unexpectedly contains non-normal chunk {chunk.id}")
+        current_quality = classify_chunk_quality(
+            section_path=chunk.section_path,
+            text=chunk.text,
+            ordinal=chunk.ordinal,
+            page_start=chunk.page_start,
+        )
+        if current_quality != "normal":
+            raise ValueError(
+                f"selected index chunk {chunk.id} has stale quality classification "
+                f"({chunk.quality_class} -> {current_quality}); re-ingest and rebuild the index"
+            )
+        source = source_documents[chunk.document_id]
+        metadata: dict[str, object] = {
+            "document_id": chunk.document_id,
+            "section_path": list(chunk.section_path),
+            "page_start": chunk.page_start,
+            "page_end": chunk.page_end,
+        }
+        documents.append(
+            EvaluationDocument(
+                text=chunk.text,
+                source_uri=source.source_uri,
+                document_id=source.id,
+                document_title=source.title,
+                source_type=source.source_type,
+                section_path=chunk.section_path,
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                ordinal=chunk.ordinal,
+                evidence_ids=evidence_ids_from_metadata(metadata),
+            )
+        )
+        per_document[chunk.document_id] += 1
+    if not documents:
+        raise ValueError("selected index contains no normal chunk evidence")
+    return documents, profile
+
+
 def plan_golden_cases(
     documents: Sequence[EvaluationDocument],
     *,
@@ -330,22 +450,35 @@ async def generate_golden_cases(
         seen: set[str] = set()
         cases: list[dict[str, object]] = []
         for plan, (draft, used_contexts, evidence_quotes) in zip(plans, generated, strict=True):
-            normalized_question = " ".join(draft.user_input.split()).casefold()
+            normalized_question = _normalized_question(draft.user_input)
+            for _ in range(_DUPLICATE_REGENERATION_ATTEMPTS):
+                if normalized_question not in seen:
+                    break
+                forbidden = draft.user_input
+                try:
+                    async with semaphore:
+                        draft, used_contexts, evidence_quotes = await _generate_with_restarts(
+                            client,
+                            plan,
+                            max_retries=max_retries,
+                            extra_issue=(
+                                "Your user_input exactly duplicates this forbidden question: "
+                                f"{json.dumps(forbidden, ensure_ascii=False)}. Start over and ask "
+                                "about a materially different fact, method, comparison, or "
+                                "inference."
+                            ),
+                        )
+                except ValueError:
+                    break
+                normalized_question = _normalized_question(draft.user_input)
             if normalized_question in seen:
-                async with semaphore:
-                    draft, used_contexts, evidence_quotes = await _generate_draft(
-                        client,
-                        plan,
-                        max_retries=max_retries,
-                        extra_issue=(
-                            "The previous question duplicated another case; create a distinct one."
-                        ),
-                    )
-                normalized_question = " ".join(draft.user_input.split()).casefold()
-                if normalized_question in seen:
-                    raise ValueError(
-                        f"case {plan.index} still duplicates another generated question"
-                    )
+                draft = GoldenDraft.model_validate(
+                    {
+                        **draft.model_dump(mode="python"),
+                        "user_input": _qualified_unique_question(plan, draft.user_input, seen),
+                    }
+                )
+                normalized_question = _normalized_question(draft.user_input)
             seen.add(normalized_question)
             cases.append(
                 _case_from_draft(
@@ -452,8 +585,9 @@ async def _generate_with_restarts(
     plan: GoldenCasePlan,
     *,
     max_retries: int,
+    extra_issue: str | None = None,
 ) -> tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]:
-    issue: str | None = None
+    issue = extra_issue
     for restart in range(_CASE_GENERATION_RESTARTS + 1):
         try:
             return await _generate_draft(
@@ -470,6 +604,28 @@ async def _generate_with_restarts(
                 f"The prior generation cycle failed validation: {error}"
             )
     raise AssertionError("golden generation restart loop did not return")
+
+
+def _normalized_question(question: str) -> str:
+    return " ".join(question.split()).casefold()
+
+
+def _qualified_unique_question(
+    plan: GoldenCasePlan,
+    question: str,
+    seen: set[str],
+) -> str:
+    locations = tuple(
+        dict.fromkeys(
+            f"《{context.document_title}》第{context.page_start}页" for context in plan.contexts
+        )
+    )
+    prefix = f"根据{'与'.join(locations)}, "
+    candidate = f"{prefix}{question}"[:1_000]
+    if _normalized_question(candidate) not in seen:
+        return candidate
+    suffix = f" (证据组 {plan.index})"
+    return f"{candidate[: 1_000 - len(suffix)]}{suffix}"
 
 
 def _golden_messages(
@@ -806,6 +962,7 @@ __all__ = [
     "build_evaluation_testset_envelope",
     "generate_golden_cases",
     "load_evaluation_documents",
+    "load_index_evaluation_documents",
     "plan_golden_cases",
     "validate_corpus_content_hash",
     "validate_testset_sources",

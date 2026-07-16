@@ -286,24 +286,42 @@ class OpenAICompatibleQueryClient:
         return aggregate_deepseek_usage(self._usage_records)
 
     async def extract_keywords(self, question: str) -> KeywordExtraction:
-        from hybrid_rag.retrieval.prompts import build_keyword_messages
+        from hybrid_rag.retrieval.prompts import (
+            build_keyword_messages,
+            build_keyword_repair_messages,
+        )
 
         completion = await self._complete(
             operation="keyword",
             model=self.keyword_model,
             messages=build_keyword_messages(question),
         )
-        return validate_keyword_completion(
-            content=completion.content,
-            finish_reason=completion.finish_reason,
-        )
+        try:
+            return validate_keyword_completion(
+                content=completion.content,
+                finish_reason=completion.finish_reason,
+            )
+        except QueryValidationError as error:
+            repaired = await self._complete(
+                operation="keyword_repair",
+                model=self.keyword_model,
+                messages=build_keyword_repair_messages(
+                    question,
+                    invalid_response=completion.content,
+                    issues=tuple(issue.render() for issue in error.issues),
+                ),
+            )
+            return validate_keyword_completion(
+                content=repaired.content,
+                finish_reason=repaired.finish_reason,
+            )
 
     async def answer(
         self,
         question: str,
         evidence: Sequence[EvidenceItem],
     ) -> GroundedAnswer:
-        from hybrid_rag.retrieval.prompts import build_answer_messages
+        from hybrid_rag.retrieval.prompts import build_answer_messages, build_answer_repair_messages
 
         normalized_evidence = _validate_evidence(evidence)
         if not normalized_evidence:
@@ -313,11 +331,29 @@ class OpenAICompatibleQueryClient:
             model=self.answer_model,
             messages=build_answer_messages(question, normalized_evidence),
         )
-        return validate_answer_completion(
-            content=completion.content,
-            finish_reason=completion.finish_reason,
-            allowed_citation_ids=tuple(item.citation_id for item in normalized_evidence),
-        )
+        allowed_citation_ids = tuple(item.citation_id for item in normalized_evidence)
+        try:
+            return validate_answer_completion(
+                content=completion.content,
+                finish_reason=completion.finish_reason,
+                allowed_citation_ids=allowed_citation_ids,
+            )
+        except QueryValidationError as error:
+            repaired = await self._complete(
+                operation="answer_repair",
+                model=self.answer_model,
+                messages=build_answer_repair_messages(
+                    question,
+                    normalized_evidence,
+                    invalid_response=completion.content,
+                    issues=tuple(issue.render() for issue in error.issues),
+                ),
+            )
+            return validate_answer_completion(
+                content=repaired.content,
+                finish_reason=repaired.finish_reason,
+                allowed_citation_ids=allowed_citation_ids,
+            )
 
     async def close(self) -> None:
         if not self._owns_sdk_client or self._sdk_client is None:

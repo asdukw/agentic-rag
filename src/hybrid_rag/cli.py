@@ -1156,6 +1156,16 @@ def evaluate(
             help="Rerank candidates returned by Agentic search tools",
         ),
     ] = False,
+    smoke: Annotated[
+        bool,
+        typer.Option(
+            "--smoke",
+            help=(
+                "Evaluate a deterministic six-case subset: 3 single-hop and one each "
+                "of summary/reasoning, multi-context, and unanswerable"
+            ),
+        ),
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Print the full JSON report")] = False,
 ) -> None:
     """Score a provenance-bound golden test set against this RAG pipeline."""
@@ -1232,6 +1242,7 @@ def evaluate(
                         "timeout_seconds": deepseek_settings.timeout_seconds,
                     },
                     agentic_runner=agentic_runner,
+                    smoke=smoke,
                 )
             finally:
                 await _close_query_client(query_client)
@@ -1244,7 +1255,10 @@ def evaluate(
 
         report = asyncio.run(run())
         payload = report.as_dict()
-        destination = output or (evaluation_settings.output_dir / f"ragas-{testset_path.stem}.json")
+        report_prefix = "ragas-smoke" if smoke else "ragas"
+        destination = output or (
+            evaluation_settings.output_dir / f"{report_prefix}-{testset_path.stem}.json"
+        )
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except (EmbeddingConfigurationError, ImportError, OSError, RuntimeError, ValueError) as error:

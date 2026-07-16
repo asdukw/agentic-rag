@@ -90,15 +90,23 @@ def _active_graph_index(database_url: str) -> StoredIndexProfile | None:
     database = Database(database_url)
     try:
         with database.session_factory() as session:
-            profile = RetrievalRepository().get_profile(session)
+            repository = RetrievalRepository()
+            profile = repository.get_profile(session)
+            snapshot = repository.load_source_snapshot(session) if profile is not None else None
     finally:
         database.dispose()
     if profile is None or profile.source_graph_run_id is None:
         return None
-    validate_corpus_content_hash(
+    profile_corpus_hash = validate_corpus_content_hash(
         profile.metadata.get("corpus_content_hash"),
         field="active index corpus_content_hash",
     )
+    if snapshot is None:
+        return None
+    if profile.source_corpus_hash != snapshot.source_corpus_hash:
+        return None
+    if profile_corpus_hash != snapshot.corpus_content_hash:
+        return None
     return profile
 
 

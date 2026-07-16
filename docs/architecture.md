@@ -251,11 +251,13 @@ flowchart LR
     Agent --> R
 ```
 
-The project generator, rather than Ragas TestsetGenerator, selects only `normal`
-segments, enforces the configured question distribution and per-document
-coverage, and validates verbatim evidence before writing schema v2. Evidence
-IDs use document/page identities so ordinary chunk-size changes do not invalidate
-the golden evidence mapping. Ragas remains the answer-quality judge only.
+The project generator, rather than Ragas TestsetGenerator, resolves the requested
+corpus hash to a ready SQLite profile and reuses the exact `normal` chunks backing
+that index. It enforces the configured question distribution and per-document
+coverage, and validates controlled evidence references before writing schema v2.
+Evidence IDs use document/page identities so ordinary chunk-size changes do not
+invalidate the golden evidence mapping. Ragas remains the answer-quality judge
+only.
 
 The test-set envelope is the only accepted evaluation input: its
 `corpus_content_hash` must exactly equal the selected profile's graph-independent
@@ -285,6 +287,8 @@ embedding API cost.
   in any evaluation report.
 - `evaluate --testset` validates the golden envelope against a pinned profile,
   defaults to `agentic,mix,naive`, persists retrieval and agent traces, and writes
-  deterministic retrieval, Ragas answer, and Agentic trajectory metrics.
+  deterministic retrieval, Ragas answer, and Agentic trajectory metrics. `--smoke`
+  runs the same pipeline over a deterministic six-case stratified subset while
+  preserving the original test-set case indexes in the report.
 - The web workbench maps every request to one filesystem-isolated workspace;
   workspaces do not share uploads, business databases, or graph checkpoints.
