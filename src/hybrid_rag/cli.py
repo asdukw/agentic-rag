@@ -1123,7 +1123,12 @@ def ask(
 def evaluate(
     testset_path: Annotated[
         Path,
-        typer.Option("--testset", exists=True, readable=True, help="Ragas test-set envelope JSON"),
+        typer.Option(
+            "--testset",
+            exists=True,
+            readable=True,
+            help="Golden evaluation test-set envelope JSON",
+        ),
     ],
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
     profile: Annotated[
@@ -1132,29 +1137,39 @@ def evaluate(
     ] = None,
     output: Annotated[
         Path | None,
-        typer.Option("--output", help="JSON file for Ragas scores and per-case details"),
+        typer.Option("--output", help="JSON file for evaluation scores and per-case details"),
     ] = None,
     modes: Annotated[
         str,
-        typer.Option("--modes", help="Comma-separated modes: naive, local, global, hybrid, or mix"),
-    ] = "mix",
+        typer.Option(
+            "--modes",
+            help="Comma-separated modes: agentic, naive, local, global, hybrid, or mix",
+        ),
+    ] = "agentic,mix,naive",
     top: Annotated[int | None, typer.Option("--top", min=1)] = None,
     context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
     graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
+    agentic_rerank: Annotated[
+        bool,
+        typer.Option(
+            "--agentic-rerank/--no-agentic-rerank",
+            help="Rerank candidates returned by Agentic search tools",
+        ),
+    ] = False,
     json_output: Annotated[bool, typer.Option("--json", help="Print the full JSON report")] = False,
 ) -> None:
-    """Score a provenance-bound Ragas test set against this RAG pipeline."""
+    """Score a provenance-bound golden test set against this RAG pipeline."""
 
-    try:
-        selected_modes = tuple(
-            RetrievalMode(value.strip()) for value in modes.split(",") if value.strip()
-        )
-    except ValueError as error:
-        raise typer.BadParameter(
-            "--modes must use naive, local, global, hybrid, and/or mix"
-        ) from error
-    if not selected_modes or len(selected_modes) != len(set(selected_modes)):
+    mode_names = tuple(value.strip() for value in modes.split(",") if value.strip())
+    if not mode_names or len(mode_names) != len(set(mode_names)):
         raise typer.BadParameter("--modes must contain one or more distinct modes")
+    allowed_modes = {"agentic", *(mode.value for mode in RetrievalMode)}
+    if any(value not in allowed_modes for value in mode_names):
+        raise typer.BadParameter(
+            "--modes must use agentic, naive, local, global, hybrid, and/or mix"
+        )
+    selected_modes = tuple(RetrievalMode(value) for value in mode_names if value != "agentic")
+    include_agentic = "agentic" in mode_names
 
     settings = Settings()
     retrieval_settings = RetrievalSettings()
@@ -1168,6 +1183,7 @@ def evaluate(
     url = _database_url(db_path, settings)
     upgrade_database(url)
     database = Database(url)
+    planner: DeepSeekAgentPlanner | DeterministicAgentPlanner | None = None
     try:
         service = RetrievalService(
             database,
@@ -1183,6 +1199,18 @@ def evaluate(
             graph_hops=graph_hops,
         )
         query_client = _deepseek_query_client(required_by="evaluate")
+        agentic_runner: AgentRunner | None = None
+        if include_agentic:
+            planner = _agent_planner(use_deepseek=True, settings=deepseek_settings)
+            agentic_options = (
+                options if agentic_rerank else replace(options, reranker_provider="none")
+            )
+            agentic_runner = AgentRunner(
+                service,
+                planner=planner,
+                answer_client=query_client,
+                retrieval_options=agentic_options,
+            )
 
         async def run():
             try:
@@ -1203,9 +1231,16 @@ def evaluate(
                         "max_output_tokens": max(512, deepseek_settings.answer_max_output_tokens),
                         "timeout_seconds": deepseek_settings.timeout_seconds,
                     },
+                    agentic_runner=agentic_runner,
                 )
             finally:
                 await _close_query_client(query_client)
+                if planner is not None:
+                    close = getattr(planner, "close", None)
+                    if callable(close):
+                        close_result = close()
+                        if inspect.isawaitable(close_result):
+                            await close_result
 
         report = asyncio.run(run())
         payload = report.as_dict()

@@ -226,15 +226,27 @@ as an audit report.
 
 ```mermaid
 flowchart LR
-    T["Ragas test-set envelope\nschema_version + corpus_content_hash + cases"] --> V["Validate envelope and selected profile\ncorpus-content hash"]
+    C["normal loader segments"] --> G["Project golden generator\n30 single-hop + 10 summary/reasoning\n+ 10 multi-context + 10 unanswerable"]
+    G --> T["Golden test-set envelope\nevidence IDs + corpus hash + sources"]
+    T --> V["Validate envelope and selected profile\ncorpus-content hash"]
     P["Active or --profile\nindex profile"] --> V
     V --> Pin["Pin profile ID + graph snapshot\nfor the full execution"]
-    Pin --> Ask["For each selected mode and case:\nask → answer + retrieved contexts\npersist rtr_ trace"]
-    Ask --> Score["Ragas: faithfulness, factual correctness,\ncontext precision, context recall"]
+    Pin --> Ask["For agentic / mix / naive and each case:\nanswer + final evidence\npersist retrieval / agent traces"]
+    Ask --> IR["Deterministic retrieval:\nHit@k, Recall@k, MRR, nDCG"]
+    Ask --> Score["Ragas answer scoring:\nfaithfulness, factual correctness,\ncontext precision, context recall"]
+    Ask --> Agent["Agentic trajectory:\ntool calls, evidence use, citations,\nlatency, refusal accuracy"]
     Key["DEEPSEEK_API_KEY\nanswer and judge models"] --> Ask
     Key --> Score
-    Score --> R["JSON report\nper-case scores and mode means"]
+    IR --> R["JSON report\nper-case scores and mode means"]
+    Score --> R
+    Agent --> R
 ```
+
+The project generator, rather than Ragas TestsetGenerator, selects only `normal`
+segments, enforces the configured question distribution and per-document
+coverage, and validates verbatim evidence before writing schema v2. Evidence
+IDs use document/page identities so ordinary chunk-size changes do not invalidate
+the golden evidence mapping. Ragas remains the answer-quality judge only.
 
 The test-set envelope is the only accepted evaluation input: its
 `corpus_content_hash` must exactly equal the selected profile's graph-independent
@@ -262,7 +274,8 @@ embedding API cost.
 - `retrieval replay` loads a persisted trace for audit.  It should be paired
   with the profile ID, configuration hashes, corpus manifest, and code commit
   in any evaluation report.
-- `evaluate --testset` validates the Ragas envelope against a pinned profile,
-  persists an `rtr_` trace for each case/mode, and writes a JSON report.
+- `evaluate --testset` validates the golden envelope against a pinned profile,
+  defaults to `agentic,mix,naive`, persists retrieval and agent traces, and writes
+  deterministic retrieval, Ragas answer, and Agentic trajectory metrics.
 - The web workbench maps every request to one filesystem-isolated workspace;
   workspaces do not share uploads, business databases, or graph checkpoints.

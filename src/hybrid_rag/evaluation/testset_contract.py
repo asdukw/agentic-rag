@@ -1,11 +1,17 @@
-"""Lightweight JSON contract shared by Ragas test-set generation and evaluation."""
+"""Lightweight JSON contract shared by golden generation and evaluation."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
 
-RAGAS_TESTSET_SCHEMA_VERSION = "1"
+LEGACY_RAGAS_TESTSET_SCHEMA_VERSION = "1"
+EVALUATION_TESTSET_SCHEMA_VERSION = "2"
+SUPPORTED_TESTSET_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_RAGAS_TESTSET_SCHEMA_VERSION, EVALUATION_TESTSET_SCHEMA_VERSION}
+)
+# Compatibility for existing schema-v1 callers. New project-generated sets use v2.
+RAGAS_TESTSET_SCHEMA_VERSION = LEGACY_RAGAS_TESTSET_SCHEMA_VERSION
 _SHA256_HEX = re.compile(r"^[a-f0-9]{64}$")
 
 
@@ -71,7 +77,10 @@ def _required_string(value: Mapping[object, object], field: str, index: int) -> 
 
 
 __all__ = [
+    "EVALUATION_TESTSET_SCHEMA_VERSION",
+    "LEGACY_RAGAS_TESTSET_SCHEMA_VERSION",
     "RAGAS_TESTSET_SCHEMA_VERSION",
+    "SUPPORTED_TESTSET_SCHEMA_VERSIONS",
     "validate_corpus_content_hash",
     "validate_testset_sources",
 ]

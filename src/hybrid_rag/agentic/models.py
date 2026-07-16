@@ -85,3 +85,5 @@ class AgentRunReport(BaseModel):
     events: tuple[AgentEvent, ...]
     status: Literal["completed", "failed"]
     termination_reason: str
+    duration_seconds: float | None = Field(default=None, ge=0.0)
+    metrics: dict[str, Any] = Field(default_factory=dict)

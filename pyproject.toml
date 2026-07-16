@@ -33,7 +33,6 @@ hrag = "hybrid_rag.cli:app"
 dev = [
     "pytest>=8.4,<10",
     "pytest-cov>=6,<8",
-    "langchain-community>=0.3,<0.4",
     "python-dotenv>=1,<2",
     "ragas>=0.4,<1",
     "reportlab>=4.4,<5",

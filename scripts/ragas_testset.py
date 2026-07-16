@@ -1,14 +1,15 @@
-r"""Generate a corpus-bound Ragas test set from local source documents.
+r"""Generate a corpus-bound golden test set from local source documents.
 
 By default, the script reads every supported document under ``data/corpus`` and
-writes the generated envelope to ``artifacts/ragas/ragas-testset.json``.
+writes 60 stratified cases to ``artifacts/ragas/ragas-testset.json``. Ragas is
+used later for answer scoring; test-set generation is project-native.
 
 Usage::
 
     # Inspect the source scope and planned output without calling DeepSeek.
     uv run scripts/ragas_testset.py --dry-run
 
-    # Generate the default 30-case test set for an exact index corpus.
+    # Generate the default 60-case test set for an exact index corpus.
     uv run scripts/ragas_testset.py --corpus-content-hash <build-index-corpus-content-hash>
 
     # Override the source, total sample count, and output location.
@@ -25,6 +26,7 @@ numeric suffixes are selected automatically.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 from dataclasses import dataclass
@@ -33,18 +35,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from hybrid_rag.evaluation.testset import (
-    build_ragas_testset_envelope,
-    generate_ragas_cases,
-    load_ragas_documents,
+    build_evaluation_testset_envelope,
+    generate_golden_cases,
+    load_evaluation_documents,
+    plan_golden_cases,
     validate_corpus_content_hash,
     validate_testset_sources,
-    write_ragas_testset,
+    write_evaluation_testset,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_PATH = ROOT / "data" / "corpus"
 DEFAULT_OUTPUT_PATH = ROOT / "artifacts" / "ragas" / "ragas-testset.json"
-DEFAULT_TESTSET_SIZE = 30
+DEFAULT_TESTSET_SIZE = 60
+DEFAULT_MIN_CASES_PER_DOCUMENT = 5
 load_dotenv(ROOT / ".env")
 
 
@@ -54,6 +58,7 @@ class ScriptDefaults:
     testset_size: int = DEFAULT_TESTSET_SIZE
     max_documents: int = 0
     max_segments_per_document: int = 0
+    min_cases_per_document: int = DEFAULT_MIN_CASES_PER_DOCUMENT
     description: str | None = None
 
 
@@ -96,6 +101,15 @@ def parse_args(defaults: ScriptDefaults | None = None) -> argparse.Namespace:
         help=f"Total number of generated cases (default: {selected.testset_size}).",
     )
     parser.add_argument(
+        "--min-cases-per-document",
+        type=int,
+        default=selected.min_cases_per_document,
+        help=(
+            "Minimum planned cases covering each loaded document "
+            f"(default: {selected.min_cases_per_document})."
+        ),
+    )
+    parser.add_argument(
         "--max-documents",
         type=int,
         default=selected.max_documents,
@@ -129,6 +143,24 @@ def parse_args(defaults: ScriptDefaults | None = None) -> argparse.Namespace:
         default=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         help="DeepSeek's OpenAI-compatible endpoint URL.",
     )
+    parser.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=4,
+        help="Maximum concurrent DeepSeek generation calls (default: 4).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Validation/provider retries per case (default: 2).",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=180.0,
+        help="Timeout for each DeepSeek request (default: 180).",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Load files without calling an API.")
     return parser.parse_args()
 
@@ -137,30 +169,42 @@ def main(defaults: ScriptDefaults | None = None) -> None:
     args = parse_args(defaults)
     if args.testset_size < 1:
         raise ValueError("testset_size must be positive")
+    if args.min_cases_per_document < 1:
+        raise ValueError("min_cases_per_document must be positive")
+    if args.max_concurrency < 1 or args.max_retries < 0 or args.timeout_seconds <= 0:
+        raise ValueError("generation concurrency, retries, and timeout are invalid")
     max_documents, max_segments = _source_limits(args)
-    documents = load_ragas_documents(
+    documents = load_evaluation_documents(
         args.source_dir,
         max_documents=max_documents,
         max_segments_per_document=max_segments,
     )
-    document_ids = {
-        document_id
-        for document in documents
-        if isinstance((document_id := document.metadata.get("document_id")), str) and document_id
-    }
-    source_uris = {
-        source_uri
-        for document in documents
-        if isinstance((source_uri := document.metadata.get("source")), str) and source_uri
-    }
+    document_ids = {document.document_id for document in documents}
+    source_uris = {document.source_uri for document in documents}
+    plans = plan_golden_cases(
+        documents,
+        testset_size=args.testset_size,
+        min_cases_per_document=args.min_cases_per_document,
+    )
     sources_path = args.sources or args.source_dir / "SOURCES.json"
     sources = _load_sources(sources_path, source_uris)
     output_path = _available_output_path(args.output)
     print(
-        f"Loaded {len(document_ids)} source documents ({len(documents)} segments) "
+        f"Loaded {len(document_ids)} source documents ({len(documents)} normal segments) "
         f"from {args.source_dir}"
     )
     print(f"Test-set size: {args.testset_size}; output: {output_path}")
+    distribution: dict[str, int] = {}
+    coverage: dict[str, int] = {document_id: 0 for document_id in document_ids}
+    for plan in plans:
+        distribution[plan.question_type.value] = distribution.get(plan.question_type.value, 0) + 1
+        for document_id in {context.document_id for context in plan.contexts}:
+            coverage[document_id] += 1
+    print(f"Question distribution: {distribution}")
+    print(
+        "Document coverage: "
+        f"min={min(coverage.values())}, max={max(coverage.values())}, documents={len(coverage)}"
+    )
     print(f"Source citations: {len(sources)} from {sources_path}")
     if args.dry_run:
         return
@@ -171,16 +215,23 @@ def main(defaults: ScriptDefaults | None = None) -> None:
     )
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("set DEEPSEEK_API_KEY in .env before generating a Ragas test set")
-    cases = generate_ragas_cases(
-        documents,
-        api_key=api_key,
-        llm_model=args.llm_model,
-        base_url=args.base_url,
-        testset_size=args.testset_size,
+        raise RuntimeError("set DEEPSEEK_API_KEY in .env before generating a golden test set")
+    cases = asyncio.run(
+        generate_golden_cases(
+            plans,
+            api_key=api_key,
+            llm_model=args.llm_model,
+            base_url=args.base_url,
+            max_concurrency=args.max_concurrency,
+            max_retries=args.max_retries,
+            timeout_seconds=args.timeout_seconds,
+            progress=lambda completed, total, question_type: print(
+                f"Generated {completed}/{total}: {question_type.value}"
+            ),
+        )
     )
-    envelope = build_ragas_testset_envelope(corpus_hash, cases, sources=sources)
-    destination = write_ragas_testset(output_path, envelope)
+    envelope = build_evaluation_testset_envelope(corpus_hash, cases, sources=sources)
+    destination = write_evaluation_testset(output_path, envelope)
     print(f"Generated {len(cases)} cases: {destination}")
 
 

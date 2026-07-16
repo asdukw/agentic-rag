@@ -1,4 +1,4 @@
-r"""Generate a small, cost-bounded Ragas test set for pipeline smoke checks.
+r"""Generate a small, cost-bounded golden test set for pipeline smoke checks.
 
 The smoke profile loads at most two documents and six segments per document,
 generates six cases, and writes to
@@ -27,6 +27,7 @@ SMOKE_DEFAULTS = ScriptDefaults(
     testset_size=6,
     max_documents=2,
     max_segments_per_document=6,
+    min_cases_per_document=1,
     description=__doc__,
 )
 

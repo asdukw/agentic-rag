@@ -148,9 +148,10 @@ naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次�
 
 ### 使用 Ragas 评测
 
-`evaluate` 是唯一的评测入口。它读取 Ragas 测试集，对每个 case 调用当前 RAG 的 `ask` 流程取得实际
-回答和召回上下文，再计算 faithfulness、factual correctness、context precision 和 context recall。
-它需要 `DEEPSEEK_API_KEY`：回答与 Ragas 指标评审都会调用 DeepSeek，因而会产生 API 用量和估算成本。
+`evaluate` 是统一评测入口。测试集由项目自己的轻量生成器创建；Ragas 只负责 faithfulness、factual
+correctness、context precision 和 context recall。项目另外计算 Hit@k、Recall@k、MRR、nDCG；
+Agentic 模式还记录工具调用、证据利用、引用有效性、延迟和拒答准确率。回答、测试集生成和 Ragas
+指标评审都会调用 DeepSeek，因此需要 `DEEPSEEK_API_KEY`。
 
 先对待评测语料完成 `ingest` 与 `build-index`。`build-index --json` 会输出当前 index profile 的
 `corpus_content_hash`；将该 64 位小写十六进制值原样传给生成脚本。该值由实际导入的 document/chunk
@@ -162,7 +163,9 @@ uv run hrag build-index \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --json
 
-# 默认从 data/corpus 的全部文档生成测试集，并写入 artifacts/ragas/ragas-testset.json。
+# 默认从 data/corpus 的 normal segment 生成 60 条测试，并写入 artifacts/ragas/ragas-testset.json。
+# 分布为 30 single-hop、10 summary/reasoning、10 multi-context、10 unanswerable；
+# 每篇论文至少覆盖 5 条。生成过程不调用 Ragas TestsetGenerator。
 # DEEPSEEK_API_KEY 是必需的。
 uv run scripts/ragas_testset.py \
   --corpus-content-hash <build-index输出的corpus_content_hash>
@@ -170,7 +173,7 @@ uv run scripts/ragas_testset.py \
 # 也可以显式改用 workspace uploads、case 数量和输出文件。
 uv run scripts/ragas_testset.py \
   --source-dir storage/workspaces/<workspace-id>/uploads \
-  --testset-size 40 \
+  --testset-size 60 \
   --corpus-content-hash <build-index输出的corpus_content_hash> \
   --output artifacts/ragas/workspace-ragas-testset.json
 
@@ -178,7 +181,7 @@ uv run scripts/ragas_testset.py \
 uv run scripts/ragas_smoke.py \
   --corpus-content-hash <build-index输出的corpus_content_hash>
 
-# 评测默认 mix（naive + local + global）。DEEPSEEK_API_KEY 是必需的。
+# 默认在相同测试集与索引上比较 agentic、mix 和 naive。
 uv run hrag evaluate \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --testset artifacts/ragas/my-ragas-testset.json
@@ -187,7 +190,10 @@ uv run hrag evaluate \
 uv run hrag evaluate \
   --db storage/workspaces/<workspace-id>/workspace.db \
   --testset artifacts/ragas/my-ragas-testset.json \
-  --modes naive,mix
+  --modes agentic,mix,naive
+
+# 无需调用模型，检查每篇论文是否至少覆盖 5 条。
+uv run scripts/ragas_coverage.py --strict --min-questions-per-document 5
 
 ```
 
@@ -195,7 +201,7 @@ uv run hrag evaluate \
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "corpus_content_hash": "<64位小写十六进制hash>",
   "sources": [
     {
@@ -214,28 +220,37 @@ uv run hrag evaluate \
     {
       "user_input": "问题",
       "reference": "参考答案",
-      "reference_contexts": ["生成该题时使用的参考上下文"]
+      "reference_contexts": ["生成该题时使用的参考上下文"],
+      "evidence_ids": ["evd_稳定证据ID"],
+      "context_evidence_ids": ["evd_稳定证据ID"],
+      "document_ids": ["doc_文档ID"],
+      "question_type": "single_hop",
+      "answerable": true,
+      "evidence_quotes": ["来自原文的逐字证据"],
+      "generator_model": "deepseek-v4-flash",
+      "prompt_version": "1",
+      "review_status": "unreviewed"
     }
   ]
 }
 ```
 
-生成脚本复用 ingest 的 loader 与清洗逻辑，递归支持 `.pdf`、`.md`、`.markdown` 与 `.txt`。默认读取
-`data/corpus` 下的全部文档和 segment，生成 30 条 case，并写入 `artifacts/ragas/ragas-testset.json`；
-正式评测可显式设置 `--testset-size 60` 或更高。可用 `--max-documents` 或
-`--max-segments-per-document` 限制输入范围。`ragas_smoke.py` 复用相同实现，但使用独立的低成本默认值和
+生成脚本复用 ingest 的 loader、清洗和 chunk 质量分类，只从 `normal` segment 选择证据，递归支持
+`.pdf`、`.md`、`.markdown` 与 `.txt`。默认生成 60 条，并在调用模型前确定题型分布和每篇论文覆盖率；
+可用 `--testset-size`、`--min-cases-per-document`、`--max-documents` 或
+`--max-segments-per-document` 调整范围。模型输出经过严格 JSON、逐字 evidence quote、证据归属和重复问题
+校验；失败原因会写入修复 prompt，默认最多重试两次。`ragas_smoke.py` 复用相同实现，但使用低成本默认值和
 `artifacts/ragas/ragas-smoke-testset.json` 输出。若目标文件已存在，两个入口都会自动追加 `-1`、`-2`
 等序号选择新文件，不覆盖已有评测集。`data/corpus` 中的论文文件仅供本地使用并由 Git 忽略；仓库只提交
 `SOURCES.json`。生成器要求每个实际载入文档都存在对应来源记录，并将这些记录写入公开测试集及评测报告的
 provenance。公共 helper 位于
-`hybrid_rag.evaluation.testset`：`load_ragas_documents`、`generate_ragas_cases`、
-`build_ragas_testset_envelope` 与 `write_ragas_testset` 可供自定义工作流复用。无论选取多少文件，
+`hybrid_rag.evaluation.testset`：`load_evaluation_documents`、`plan_golden_cases`、
+`generate_golden_cases`、`build_evaluation_testset_envelope` 与 `write_evaluation_testset`。无论选取多少文件，
 `corpus_content_hash` 都必须对应实际用于 `evaluate` 的完整 index profile。语料内容、导入/分块配置或
 待评测 profile 改变后，重新执行 `ingest`、`build-index`，取新的 hash 并重新生成测试集。默认结果写入
-`artifacts/evaluations/ragas-<测试集文件名>.json`；默认模式为 `mix`，可用 `--modes naive,mix`
-做显式对比。测试集文件是本地生成物，不是仓库提供的通用测试集；必须评测由自己当前 workspace
-profile 语料 hash 绑定的文件。Agentic RAG Web 工作台可查看工具调用、证据、图路径与 trace，但不替代
-Ragas 评测。评测报告还会记录测试集文件 SHA-256、锁定的 profile、检索参数，以及回答和评审模型的
+`artifacts/evaluations/ragas-<测试集文件名>.json`；默认比较 `agentic,mix,naive`。测试集文件是本地生成物，
+不是仓库提供的通用测试集；必须评测由自己当前 workspace profile 语料 hash 绑定的文件。评测报告还会
+记录 Agentic 工具时间线、证据与引用指标、测试集文件 SHA-256、锁定的 profile、检索参数，以及模型的
 非敏感运行配置，便于区分同一语料上的不同题集或执行条件。
 
 ### 上传用户语料

@@ -856,7 +856,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "langchain-community" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "python-dotenv" },
@@ -891,7 +890,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "langchain-community", specifier = ">=0.3,<0.4" },
     { name = "pytest", specifier = ">=8.4,<10" },
     { name = "pytest-cov", specifier = ">=6,<8" },
     { name = "python-dotenv", specifier = ">=1,<2" },

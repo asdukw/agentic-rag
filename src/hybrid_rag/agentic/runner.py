@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -23,6 +24,7 @@ from hybrid_rag.agentic.models import (
     ToolOutcome,
 )
 from hybrid_rag.agentic.planner import AgentPlanner
+from hybrid_rag.evaluation.agentic_metrics import score_agentic_events
 from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalMode, RetrievalResult
 from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
@@ -93,6 +95,7 @@ class AgentRunner:
         self.audit_dir = audit_dir
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
+        started_clock = perf_counter()
         run_id = f"agr_{uuid4().hex[:16]}"
         profile = await asyncio.to_thread(self.service.resolve_profile, request.profile_id)
         session = _AgentSession(
@@ -201,11 +204,15 @@ class AgentRunner:
             )
             events.append(answer_event)
             yield answer_event
+            duration_seconds = perf_counter() - started_clock
             completed = AgentEvent(
                 event="completed",
                 run_id=run_id,
                 step=len(events),
-                data={"termination_reason": termination_reason},
+                data={
+                    "termination_reason": termination_reason,
+                    "duration_seconds": duration_seconds,
+                },
             )
             events.append(completed)
             self._write_report(
@@ -216,14 +223,19 @@ class AgentRunner:
                 events=events,
                 status="completed",
                 termination_reason=termination_reason,
+                duration_seconds=duration_seconds,
             )
             yield completed
         except Exception as error:
+            duration_seconds = perf_counter() - started_clock
             failed = AgentEvent(
                 event="failed",
                 run_id=run_id,
                 step=len(events),
-                data={"error": f"{type(error).__name__}: {error}"},
+                data={
+                    "error": f"{type(error).__name__}: {error}",
+                    "duration_seconds": duration_seconds,
+                },
             )
             events.append(failed)
             self._write_report(
@@ -234,6 +246,7 @@ class AgentRunner:
                 events=events,
                 status="failed",
                 termination_reason="exception",
+                duration_seconds=duration_seconds,
             )
             yield failed
 
@@ -494,7 +507,12 @@ class AgentRunner:
         events: Sequence[AgentEvent],
         status: Literal["completed", "failed"],
         termination_reason: str,
+        duration_seconds: float,
     ) -> None:
+        metrics = score_agentic_events(
+            events,
+            duration_seconds=duration_seconds,
+        )
         report = AgentRunReport(
             run_id=run_id,
             question=request.question,
@@ -505,6 +523,8 @@ class AgentRunner:
             events=tuple(events),
             status=status,
             termination_reason=termination_reason,
+            duration_seconds=duration_seconds,
+            metrics=metrics.as_dict(),
         )
         self.audit_dir.mkdir(parents=True, exist_ok=True)
         (self.audit_dir / f"{run_id}.json").write_text(
