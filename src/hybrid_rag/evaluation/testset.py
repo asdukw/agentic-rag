@@ -27,7 +27,8 @@ from hybrid_rag.ingest.cleaner import clean_document
 from hybrid_rag.ingest.loaders import LoaderRegistry
 from hybrid_rag.ingest.quality import classify_chunk_quality
 
-GOLDEN_PROMPT_VERSION = "3"
+GOLDEN_PROMPT_VERSION = "4"
+_CASE_GENERATION_RESTARTS = 1
 DEFAULT_QUESTION_DISTRIBUTION: Mapping[str, float] = {
     "single_hop": 0.5,
     "summary_reasoning": 1 / 6,
@@ -304,7 +305,11 @@ async def generate_golden_cases(
             plan: GoldenCasePlan,
         ) -> tuple[int, QuestionType, tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]]:
             async with semaphore:
-                result = await _generate_draft(client, plan, max_retries=max_retries)
+                result = await _generate_with_restarts(
+                    client,
+                    plan,
+                    max_retries=max_retries,
+                )
                 return plan.index, plan.question_type, result
 
         generated_by_index: dict[int, tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]] = {}
@@ -423,9 +428,14 @@ async def _generate_draft(
             )
             if plan.answerable and not used_contexts:
                 raise ValueError("no evidence refs were selected")
-            if plan.question_type is QuestionType.MULTI_CONTEXT and len(used_contexts) < 2:
+            if plan.question_type is QuestionType.MULTI_CONTEXT and not {0, 1}.issubset(
+                used_contexts
+            ):
+                missing = [f"E{index + 1}" for index in (0, 1) if index not in used_contexts]
                 raise ValueError(
-                    "multi_context cases must reference at least two selected contexts"
+                    "multi_context evidence_refs must include at least one unit from both E1 and "
+                    f"E2; missing {', '.join(missing)}. Rewrite the question, reference, and "
+                    "grounding statements so both contexts are necessary"
                 )
             return draft, used_contexts, evidence_quotes
         except (ValidationError, ValueError) as error:
@@ -435,6 +445,31 @@ async def _generate_draft(
                 ) from error
             issues = [f"{type(error).__name__}: {error}"]
     raise AssertionError("golden generation retry loop did not return")
+
+
+async def _generate_with_restarts(
+    client: DeepSeekClient,
+    plan: GoldenCasePlan,
+    *,
+    max_retries: int,
+) -> tuple[GoldenDraft, tuple[int, ...], tuple[str, ...]]:
+    issue: str | None = None
+    for restart in range(_CASE_GENERATION_RESTARTS + 1):
+        try:
+            return await _generate_draft(
+                client,
+                plan,
+                max_retries=max_retries,
+                extra_issue=issue,
+            )
+        except ValueError as error:
+            if restart >= _CASE_GENERATION_RESTARTS:
+                raise
+            issue = (
+                "Start this case over from scratch rather than repairing the previous wording. "
+                f"The prior generation cycle failed validation: {error}"
+            )
+    raise AssertionError("golden generation restart loop did not return")
 
 
 def _golden_messages(
@@ -466,7 +501,8 @@ def _golden_messages(
         ),
         QuestionType.MULTI_CONTEXT: (
             "Create one comparison or synthesis question that genuinely requires at least two "
-            "evidence blocks."
+            "evidence blocks. You must use both E1 and E2: select at least one evidence_refs unit "
+            "from E1 and at least one from E2, and make both necessary to the reference."
         ),
         QuestionType.UNANSWERABLE: (
             "Create one plausible research question whose requested detail is not stated by the "
@@ -480,6 +516,8 @@ def _golden_messages(
         "as E1.U2; never write or paraphrase evidence quotations yourself. Select the smallest set "
         "of units that fully supports the reference. Document titles, page ranges, section names, "
         "and block labels are metadata, not evidence. Do not use outside knowledge. "
+        "For multi_context cases, evidence_refs must contain at least one E1.* ID and one E2.* ID; "
+        "rewrite the whole case if either context is not necessary. "
         "For unanswerable cases, grounding_statements and evidence_refs must be empty and "
         "insufficient_evidence must be true. For all other cases it must be false.\n"
         'Schema: {"user_input":str,"reference":str,"grounding_statements":[str],'
