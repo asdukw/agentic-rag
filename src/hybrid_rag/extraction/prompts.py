@@ -127,6 +127,12 @@ def _system_prompt() -> str:
         '{"entities":[],"relations":[]}. Every non-empty entity and relation needs at least one '
         "verbatim evidence quote. Return exactly one short evidence quote per record and keep each "
         "description to one concise sentence. Select only high-value facts; do not fill a quota. "
+        "For scientific tables, preserve row semantics: bind every selected cell value to its "
+        "row label and column meaning, and extract comparisons, metrics, or complexity claims "
+        "only when the table explicitly supports them. Never treat an isolated number or formula "
+        "as a fact without its row and column context. Relation objects must contain exactly "
+        "source_ref, target_ref, predicate, description, and evidence_quotes; aliases belongs only "
+        "to entity objects. "
         f"Return at most {MAX_EXTRACTION_ENTITIES} entities and at most "
         f"{MAX_EXTRACTION_RECORDS} total entity-plus-relation records.\n\n"
         f"JSON_SCHEMA:\n{schema}\n\n"

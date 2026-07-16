@@ -54,6 +54,17 @@ class GraphSummary(_ReportModel):
     top_entities: tuple[TopEntitySummary, ...] = ()
 
 
+class ExtractionQualitySummary(_ReportModel):
+    raw_entities: int = Field(default=0, ge=0)
+    accepted_entities: int = Field(default=0, ge=0)
+    dropped_entities: int = Field(default=0, ge=0)
+    raw_relations: int = Field(default=0, ge=0)
+    accepted_relations: int = Field(default=0, ge=0)
+    dropped_relations: int = Field(default=0, ge=0)
+    sanitized_relation_records: int = Field(default=0, ge=0)
+    chunks_with_drops: int = Field(default=0, ge=0)
+
+
 class BuildFailure(_ReportModel):
     extraction_id: str
     chunk_id: str
@@ -78,6 +89,7 @@ class GraphBuildReport(_ReportModel):
     attempts: AttemptSummary
     usage: UsageSummary
     deepseek_cost: DeepSeekCostSummary | None = None
+    extraction_quality: ExtractionQualitySummary = ExtractionQualitySummary()
     graph: GraphSummary
     failures: tuple[BuildFailure, ...] = ()
 

@@ -21,8 +21,8 @@ EXTRACTION_CONFIG_VERSION = "1"
 GRAPH_SCHEMA_VERSION = "1"
 ENTITY_NORMALIZER_VERSION = "2"
 RELATION_MERGER_VERSION = "1"
-EXTRACTION_PROMPT_VERSION = "4"
-REPAIR_PROMPT_VERSION = "4"
+EXTRACTION_PROMPT_VERSION = "5"
+REPAIR_PROMPT_VERSION = "5"
 
 MAX_EXTRACTION_ENTITIES = 24
 MAX_EXTRACTION_RECORDS = 64
@@ -208,6 +208,12 @@ class ValidatedChunkExtraction(_FrozenDomainModel):
     source_chunk_id: Identifier
     entities: tuple[EntityMention, ...] = ()
     relations: tuple[RelationMention, ...] = ()
+    raw_entity_count: int = Field(default=0, ge=0)
+    raw_relation_count: int = Field(default=0, ge=0)
+    dropped_entity_count: int = Field(default=0, ge=0)
+    dropped_relation_count: int = Field(default=0, ge=0)
+    sanitized_relation_records: int = Field(default=0, ge=0)
+    validation_warnings: tuple[str, ...] = ()
 
 
 class CanonicalEntity(_FrozenDomainModel):

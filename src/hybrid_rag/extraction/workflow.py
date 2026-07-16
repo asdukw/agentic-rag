@@ -31,6 +31,7 @@ from hybrid_rag.extraction.reports import (
     AttemptSummary,
     BuildFailure,
     ChunkProgress,
+    ExtractionQualitySummary,
     GraphBuildReport,
     GraphSummary,
     TopEntitySummary,
@@ -657,6 +658,7 @@ class GraphBuildWorkflow:
                 isinstance(persisted_report, dict)
                 and persisted_report.get("run_id") == run.id
                 and persisted_report.get("status") == run.status
+                and "extraction_quality" in persisted_report
             ):
                 return GraphBuildReport.model_validate(persisted_report).model_copy(
                     update={"usage": usage, "deepseek_cost": None}
@@ -664,6 +666,7 @@ class GraphBuildWorkflow:
             stats = self.repository.stats(session, run_id=run_id, top_k=top_k)
             inspected = self.repository.inspect(session, run_id) or {}
             failures = self._failure_summaries(session, inspected)
+        extraction_quality = self._extraction_quality(self._validated_results(run_id))
         remaining = max(
             run.total_chunks - run.succeeded_chunks - run.needs_review_chunks - run.failed_chunks,
             0,
@@ -702,6 +705,7 @@ class GraphBuildWorkflow:
                 cache_breakdown_complete=usage.cache_breakdown_complete,
                 by_operation_and_model=usage.by_operation_and_model,
             ),
+            extraction_quality=extraction_quality,
             graph=GraphSummary(
                 nodes=int(stats["nodes"]),
                 edges=int(stats["edges"]),
@@ -713,6 +717,26 @@ class GraphBuildWorkflow:
                 ),
             ),
             failures=failures,
+        )
+
+    @staticmethod
+    def _extraction_quality(
+        extractions: Sequence[ValidatedChunkExtraction],
+    ) -> ExtractionQualitySummary:
+        return ExtractionQualitySummary(
+            raw_entities=sum(item.raw_entity_count or len(item.entities) for item in extractions),
+            accepted_entities=sum(len(item.entities) for item in extractions),
+            dropped_entities=sum(item.dropped_entity_count for item in extractions),
+            raw_relations=sum(
+                item.raw_relation_count or len(item.relations) for item in extractions
+            ),
+            accepted_relations=sum(len(item.relations) for item in extractions),
+            dropped_relations=sum(item.dropped_relation_count for item in extractions),
+            sanitized_relation_records=sum(item.sanitized_relation_records for item in extractions),
+            chunks_with_drops=sum(
+                item.dropped_entity_count > 0 or item.dropped_relation_count > 0
+                for item in extractions
+            ),
         )
 
     @staticmethod

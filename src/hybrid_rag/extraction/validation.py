@@ -138,7 +138,12 @@ def validate_completion(
         warnings.append(f"relations: kept first {relation_limit} of {len(raw_relations)} records")
     relations: list[RelationMention] = []
     relation_keys: set[tuple[str, str, str]] = set()
+    sanitized_relation_records = 0
     for index, raw in enumerate(raw_relations[:relation_limit]):
+        raw, sanitized = _sanitize_relation_record(raw)
+        if sanitized:
+            sanitized_relation_records += 1
+            warnings.append(f"relations.{index}: ignored unsupported aliases field")
         try:
             candidate = RelationCandidate.model_validate(raw)
         except ValidationError as error:
@@ -182,7 +187,7 @@ def validate_completion(
         )
     if warnings:
         logger.warning(
-            "%s: salvaged %d entities and %d relations; dropped records: %s",
+            "%s: salvaged %d entities and %d relations; validation notes: %s",
             extraction_id,
             len(entities),
             len(relations),
@@ -193,7 +198,28 @@ def validate_completion(
         source_chunk_id=source_chunk_id,
         entities=tuple(entities),
         relations=tuple(relations),
+        raw_entity_count=len(raw_entities),
+        raw_relation_count=len(raw_relations),
+        dropped_entity_count=max(len(raw_entities) - len(entities), 0),
+        dropped_relation_count=max(len(raw_relations) - len(relations), 0),
+        sanitized_relation_records=sanitized_relation_records,
+        validation_warnings=tuple(warnings[:50]),
     )
+
+
+def _sanitize_relation_record(raw: object) -> tuple[object, bool]:
+    """Remove the one known harmless entity-field leak without weakening validation.
+
+    Some providers copy ``aliases`` from the entity schema into otherwise valid relation
+    objects.  Relations have no aliases, so the field carries no semantics.  Unknown fields
+    other than this one remain schema errors and the record is still dropped.
+    """
+
+    if not isinstance(raw, Mapping) or "aliases" not in raw:
+        return raw, False
+    sanitized = dict(raw)
+    sanitized.pop("aliases", None)
+    return sanitized, True
 
 
 def _validate_finish_reason(finish_reason: str | None) -> None:

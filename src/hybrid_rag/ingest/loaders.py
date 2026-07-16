@@ -40,6 +40,7 @@ _PDF_TERMINAL_SECTION = re.compile(
 )
 _PDF_DIGITS = re.compile(r"\d+")
 _PDF_SPACE = re.compile(r"\s+")
+_PDF_TABLE_CAPTION = re.compile(r"^Table\s+\d+[.:]", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +157,7 @@ class MarkdownLoader(DocumentLoader):
 class PdfLoader(DocumentLoader):
     suffixes = frozenset({".pdf"})
     parser_name = "builtin-pdf-layout"
-    parser_version = "4"
+    parser_version = "5"
 
     def load(self, path: Path, source_uri: str) -> ParsedDocument:
         with pymupdf.open(path) as pdf:
@@ -184,6 +185,10 @@ class PdfLoader(DocumentLoader):
                 headings = self._visual_headings(content_lines)
                 section_source = "visual" if headings else "none"
             headings = self._with_terminal_headings(headings, content_lines)
+            content_lines, structured_table_count = self._merge_table_blocks(
+                content_lines,
+                headings,
+            )
 
             segments = self._segments(content_lines, headings)
             title = str(metadata.get("title") or path.stem)
@@ -197,11 +202,152 @@ class PdfLoader(DocumentLoader):
                     "backend_version": version("PyMuPDF"),
                     "repeated_margin_lines_removed": len(repeated_margins),
                     "table_regions_detected": table_region_count,
+                    "structured_table_blocks": structured_table_count,
                     "section_source": section_source,
                     "section_heading_count": len(headings),
                 }
             )
         return self._document(path, source_uri, title, segments, safe_metadata)
+
+    @classmethod
+    def _merge_table_blocks(
+        cls,
+        lines: list[_PdfLine],
+        headings: list[_PdfHeading],
+    ) -> tuple[list[_PdfLine], int]:
+        """Keep scientific table captions, row labels, and cells in one evidence block.
+
+        Borderless paper tables are commonly missed by ``find_tables``.  A caption followed
+        by at least one visual multi-column row is therefore treated as a table as well.  The
+        serialized rows use `` | `` between cells so downstream chunking and extraction cannot
+        detach a row label from its values merely because their PDF baselines differ slightly.
+        """
+
+        if not lines:
+            return lines, 0
+        heading_y: dict[int, list[float]] = {}
+        for heading in headings:
+            heading_y.setdefault(heading.page, []).append(heading.y0)
+        for values in heading_y.values():
+            values.sort()
+
+        merged: list[_PdfLine] = []
+        index = 0
+        table_count = 0
+        while index < len(lines):
+            line = lines[index]
+            if _PDF_TABLE_CAPTION.match(line.text.strip()):
+                boundary = min(
+                    (
+                        value
+                        for value in heading_y.get(line.page, [])
+                        if value > line.y0 + line.font_size
+                    ),
+                    default=line.page_height,
+                )
+                candidates: list[_PdfLine] = []
+                cursor = index
+                while cursor < len(lines):
+                    candidate = lines[cursor]
+                    if candidate.page != line.page or candidate.y0 >= boundary:
+                        break
+                    candidates.append(candidate)
+                    cursor += 1
+                groups = cls._visual_rows(candidates)
+                first_row = next(
+                    (
+                        row_index
+                        for row_index, row in enumerate(groups[1:], start=1)
+                        if len(row) >= 2
+                    ),
+                    None,
+                )
+                if first_row is not None:
+                    last_row = first_row
+                    for row_index in range(first_row + 1, len(groups)):
+                        previous = groups[row_index - 1]
+                        current = groups[row_index]
+                        gap = min(item.y0 for item in current) - max(item.y1 for item in previous)
+                        reference = max(item.font_size for item in (*previous, *current))
+                        if gap > reference * 2.5:
+                            break
+                        last_row = row_index
+                    selected = [item for row in groups[: last_row + 1] for item in row]
+                    consumed = index + len(selected)
+                    merged.append(cls._serialized_table_line(groups[: last_row + 1]))
+                    table_count += 1
+                    index = consumed
+                    continue
+            if line.in_table:
+                block: list[_PdfLine] = []
+                cursor = index
+                while cursor < len(lines):
+                    candidate = lines[cursor]
+                    if candidate.page != line.page or not candidate.in_table:
+                        break
+                    block.append(candidate)
+                    cursor += 1
+                if len(block) >= 2:
+                    merged.append(cls._serialized_table_line(cls._visual_rows(block)))
+                    table_count += 1
+                    index = cursor
+                    continue
+            merged.append(line)
+            index += 1
+        return merged, table_count
+
+    @staticmethod
+    def _visual_rows(lines: list[_PdfLine]) -> list[list[_PdfLine]]:
+        rows: list[list[_PdfLine]] = []
+        for line in sorted(lines, key=lambda item: (item.y0, item.x0)):
+            if not rows:
+                rows.append([line])
+                continue
+            row = rows[-1]
+            tolerance = max(line.font_size, *(item.font_size for item in row)) * 0.55
+            if abs(line.y0 - min(item.y0 for item in row)) <= tolerance:
+                row.append(line)
+            else:
+                rows.append([line])
+        return [sorted(row, key=lambda item: item.x0) for row in rows]
+
+    @staticmethod
+    def _serialized_table_line(rows: list[list[_PdfLine]]) -> _PdfLine:
+        rendered: list[list[str]] = []
+        previous_multi_row: list[_PdfLine] | None = None
+        for row in rows:
+            if len(row) == 1 and previous_multi_row is not None and rendered:
+                continuation = row[0]
+                target_index = min(
+                    range(len(previous_multi_row)),
+                    key=lambda index: abs(
+                        (previous_multi_row[index].x0 + previous_multi_row[index].x1)
+                        - (continuation.x0 + continuation.x1)
+                    ),
+                )
+                target = previous_multi_row[target_index]
+                if target.x0 - target.font_size <= continuation.x0 <= target.x1 + target.font_size:
+                    rendered[-1][target_index] = (
+                        f"{rendered[-1][target_index]} {continuation.text.strip()}"
+                    )
+                    continue
+            rendered.append([item.text.strip() for item in row])
+            previous_multi_row = row if len(row) >= 2 else None
+        values = [" | ".join(row) for row in rendered]
+        items = [item for row in rows for item in row]
+        first = items[0]
+        return _PdfLine(
+            page=first.page,
+            page_height=first.page_height,
+            text="\n".join(values),
+            x0=min(item.x0 for item in items),
+            y0=min(item.y0 for item in items),
+            x1=max(item.x1 for item in items),
+            y1=max(item.y1 for item in items),
+            font_size=max(item.font_size for item in items),
+            bold=any(item.bold for item in items),
+            in_table=True,
+        )
 
     @staticmethod
     def _table_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
@@ -451,17 +597,22 @@ class PdfLoader(DocumentLoader):
         destination_y: float,
     ) -> _PdfLine | None:
         normalized_title = cls._normalized_heading_text(title)
-        candidates = []
+        exact_candidates: list[_PdfLine] = []
+        partial_candidates: list[_PdfLine] = []
         for line in lines:
             normalized_line = cls._normalized_heading_text(line.text)
+            if normalized_title == normalized_line:
+                exact_candidates.append(line)
+                continue
             shorter = min(len(normalized_title), len(normalized_line))
             longer = max(len(normalized_title), len(normalized_line), 1)
-            if normalized_title == normalized_line or (
+            if (
                 shorter >= 4
-                and shorter / longer >= 0.75
+                and shorter / longer >= 0.9
                 and (normalized_title in normalized_line or normalized_line in normalized_title)
             ):
-                candidates.append(line)
+                partial_candidates.append(line)
+        candidates = exact_candidates or partial_candidates
         if not candidates:
             return None
         return min(candidates, key=lambda line: abs(line.y0 - destination_y))
@@ -774,7 +925,8 @@ class PdfLoader(DocumentLoader):
 
     @staticmethod
     def _normalized_heading_text(text: str) -> str:
-        return _PDF_SPACE.sub("", text).casefold()
+        without_number = _PDF_DECIMAL_HEADING.sub("", text.strip(), count=1)
+        return _PDF_SPACE.sub("", without_number).casefold()
 
 
 class LoaderRegistry:

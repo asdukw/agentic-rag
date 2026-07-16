@@ -549,6 +549,23 @@ def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -
         str(report.attempts.total),
     )
     console.print(chunks)
+    quality = report.extraction_quality
+    extraction = Table(title="Extraction quality")
+    extraction.add_column("Entities", justify="right")
+    extraction.add_column("Entity drops", justify="right", style="yellow")
+    extraction.add_column("Relations", justify="right")
+    extraction.add_column("Relation drops", justify="right", style="yellow")
+    extraction.add_column("Sanitized", justify="right", style="cyan")
+    extraction.add_column("Chunks with drops", justify="right")
+    extraction.add_row(
+        f"{quality.accepted_entities}/{quality.raw_entities}",
+        str(quality.dropped_entities),
+        f"{quality.accepted_relations}/{quality.raw_relations}",
+        str(quality.dropped_relations),
+        str(quality.sanitized_relation_records),
+        str(quality.chunks_with_drops),
+    )
+    console.print(extraction)
     _render_deepseek_cost(report.deepseek_cost)
     graph = GraphStorageStats(
         run_id=report.run_id,
