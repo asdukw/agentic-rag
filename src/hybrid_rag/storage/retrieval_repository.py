@@ -16,7 +16,7 @@ from math import isfinite
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from hybrid_rag.ids import canonical_json_hash, sha256_text, stable_id
@@ -552,6 +552,31 @@ class RetrievalRepository:
             entities=tuple(rows["entity"]),
             relations=tuple(rows["relation"]),
         )
+
+    def index_kind_counts(
+        self,
+        session: Session,
+        profile_ref: str | None = None,
+    ) -> dict[str, int]:
+        """Return lightweight vector-kind capabilities for one ready profile."""
+
+        record = self._profile_record(session, profile_ref)
+        if record is None:
+            qualifier = profile_ref or "an active profile"
+            raise RetrievalRepositoryError(f"no ready embedding index for {qualifier}")
+        counts = {kind: 0 for kind in INDEX_KINDS}
+        statement = (
+            select(EmbeddingVectorRecord.kind, func.count(EmbeddingVectorRecord.id))
+            .where(EmbeddingVectorRecord.profile_id == record.id)
+            .group_by(EmbeddingVectorRecord.kind)
+        )
+        for kind, count in session.execute(statement):
+            if kind not in counts:
+                raise RetrievalRepositoryError(
+                    f"index {record.id} contains unsupported vector kind {kind!r}"
+                )
+            counts[kind] = int(count)
+        return counts
 
     def save_trace(self, session: Session, trace: RetrievalTrace) -> StoredRetrievalTrace:
         """Persist one replayable retrieval trace and its optional answer output."""

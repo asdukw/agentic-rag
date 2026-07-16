@@ -106,6 +106,10 @@ class AgentRunner:
             budget=request.budget,
             retrieval_options=self.retrieval_options,
         )
+        index_capabilities = await asyncio.to_thread(
+            self._index_capabilities,
+            session.profile_id,
+        )
         events: list[AgentEvent] = []
         planner_state: list[dict[str, Any]] = []
         started = AgentEvent(
@@ -115,6 +119,7 @@ class AgentRunner:
             data={
                 "profile_id": profile.id,
                 "corpus_content_hash": profile.metadata.get("corpus_content_hash"),
+                "index_capabilities": index_capabilities,
                 "budget": request.budget.model_dump(mode="json"),
                 "retrieval": {
                     "top_k": self.retrieval_options.top_k,
@@ -139,6 +144,7 @@ class AgentRunner:
                     available_chunk_ids=tuple(session.discovered_chunk_ids),
                     read_chunk_ids=tuple(session.read_chunk_ids),
                     remaining_searches=max(request.budget.max_searches - session.searches, 0),
+                    index_capabilities=index_capabilities,
                 )
                 action_event = AgentEvent(
                     event="planner_action",
@@ -330,7 +336,7 @@ class AgentRunner:
         if task.top_k is not None:
             args["top_k"] = task.top_k
         if task.tool == AgentActionName.SEARCH_CHUNKS.value:
-            args["strategy"] = task.strategy or "hybrid"
+            args["strategy"] = task.strategy or "dense_bm25"
         worker_action = AgentAction(
             action=AgentActionName(task.tool),
             args=args,
@@ -378,7 +384,14 @@ class AgentRunner:
         if session.searches >= session.budget.max_searches:
             return _budget_outcome(action.action, "search")
         query = _required_string(action.args, "query")
-        strategy = _enum_string(action.args, "strategy", {"dense", "bm25", "hybrid"}, "hybrid")
+        strategy = _enum_string(
+            action.args,
+            "strategy",
+            {"dense", "bm25", "dense_bm25", "hybrid"},
+            "dense_bm25",
+        )
+        if strategy == "hybrid":
+            strategy = "dense_bm25"
         options = _tool_options(session, action.args)
         if strategy == "dense":
             options = replace(options, naive_dense_weight=1.0, naive_bm25_weight=0.0)
@@ -602,6 +615,15 @@ class AgentRunner:
     def _load_index(self, session: _AgentSession) -> LoadedIndex:
         with self.service.database.session_factory() as database_session:
             return self.service.repository.load_index(database_session, session.profile_id)
+
+    def _index_capabilities(self, profile_id: str) -> dict[str, int]:
+        with self.service.database.session_factory() as database_session:
+            counts = self.service.repository.index_kind_counts(database_session, profile_id)
+        return {
+            "chunk_count": counts["chunk"],
+            "entity_count": counts["entity"],
+            "relation_count": counts["relation"],
+        }
 
     def _write_report(
         self,

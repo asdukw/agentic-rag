@@ -8,6 +8,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from threading import Lock
 from typing import Any, ClassVar, Protocol, SupportsFloat, TypeGuard, cast
 
@@ -168,8 +169,9 @@ class BGEM3EmbeddingProvider:
                             "CUDA is unavailable; BGE-M3 embedding is falling back to CPU "
                             "with fp16 disabled"
                         )
+                    model_path = _prefer_cached_huggingface_snapshot(self.model)
                     cached = BGEM3FlagModel(
-                        self.model,
+                        model_path,
                         normalize_embeddings=True,
                         use_fp16=effective_fp16,
                         devices=devices,
@@ -182,6 +184,28 @@ class BGEM3EmbeddingProvider:
                 self._shared_clients[cache_key] = cached
         self._model_client = cached
         return cached
+
+
+def _prefer_cached_huggingface_snapshot(model: str) -> str:
+    """Use an existing local snapshot without making a remote metadata request."""
+
+    if Path(model).expanduser().exists():
+        return model
+    try:
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+    except ImportError:
+        return model
+    try:
+        snapshot = snapshot_download(repo_id=model, local_files_only=True)
+    except (LocalEntryNotFoundError, OSError, ValueError):
+        logger.warning(
+            "Embedding model %s is not cached locally; downloading it from Hugging Face",
+            model,
+        )
+        return model
+    logger.warning("Embedding model %s is loading from local cache %s", model, snapshot)
+    return snapshot
 
 
 def _preferred_embedding_devices() -> tuple[list[str], bool]:

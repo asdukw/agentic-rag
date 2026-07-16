@@ -48,8 +48,9 @@ uv run scripts/prepare_corpus.py
 
 - `ingest`、`build-index` 等命令会自动升级 SQLite schema。
 - 默认 embedding 是 FlagEmbedding 的 `BAAI/bge-m3` dense vector（1024 维、最长 8192 tokens）；
-  它在本机运行，首次使用会下载模型。CPU 环境保持 `EMBEDDING_USE_FP16=false`，有兼容 CUDA GPU 时可
-  设为 `true` 加速。修改 embedding 的模型、维度、最大长度或精度后，必须重新运行 `build-index`。
+  它在本机运行，首次使用会下载模型，后续优先使用本地 Hugging Face snapshot，不再为已缓存模型执行
+  远端元数据检查。CPU 环境保持 `EMBEDDING_USE_FP16=false`，有兼容 CUDA GPU 时可设为 `true` 加速。
+  修改 embedding 的模型、维度、最大长度或精度后，必须重新运行 `build-index`。
 - `hash-token-v1` 仅保留给已有 profile 兼容和快速离线测试，不再作为 CLI 或演示默认值。
 - `naive` 同时使用 chunk 的 dense 向量分数和本地 BM25 词法分数，并分别归一化后融合；BM25
   直接读取已索引的 chunk 文本，不需要额外模型、服务或重建索引。
@@ -148,6 +149,11 @@ naive 的 dense/BM25 分项、路由贡献、reranker 候选池和最终名次�
 检索任务 fork 给隔离 Worker 并行执行；工具返回结果默认保留一阶段顺序，需要提高单次工具候选质量时可加
 `--rerank`。固定链路仍可用
 `--mode naive|local|global|hybrid|mix`，离线调试可用 `--no-deepseek`。
+Agentic 的 `search_chunks` 子策略使用 `dense`、`bm25`、`dense_bm25` 三个名称；其中
+`dense_bm25` 是 chunk 内部的语义与词法融合，不等同于顶层图谱模式 `hybrid`。
+Planner 每轮还会收到当前 profile 的 chunk/entity/relation 数量：关系、组件拓扑、依赖和多跳路径问题在
+图谱可用时可以选择实体/关系检索与图扩展。工具描述提供适用场景，但不强制路由，最终由 Main Agent 根据
+问题、既有结果与当前索引能力自主选择。
 
 ### 使用 Ragas 评测
 

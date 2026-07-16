@@ -282,6 +282,9 @@ embedding API cost.
   activation; its chunk partition includes only `normal` chunks.
 - `retrieve` returns an explainable retrieval result without requiring answer
   generation; `ask` adds an evidence-constrained answer.
+- The Agent planner receives lightweight chunk/entity/relation counts for its pinned
+  profile. Tool descriptions explain their intended evidence shape and prerequisites,
+  while the main planner remains free to select the route from the question and state.
 - `retrieval replay` loads a persisted trace for audit.  It should be paired
   with the profile ID, configuration hashes, corpus manifest, and code commit
   in any evaluation report.
