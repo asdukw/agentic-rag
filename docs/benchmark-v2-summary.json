@@ -1,0 +1,135 @@
+{
+  "schema_version": "1",
+  "benchmark_type": "retrieval_only",
+  "name": "rag-papers-retrieval-v2",
+  "implementation_commit_after_run": "089f5485a36182481bc9a31a04968280e6772596",
+  "report_git_provenance": {
+    "base_commit": "c5e08834160a939e456c5ba68e6e73a8de5f398d",
+    "dirty": true,
+    "note": "The benchmark ran from a dirty working tree that was committed afterward; strict byte-for-byte equivalence to the later commit is not asserted."
+  },
+  "testset": {
+    "case_count": 60,
+    "eligible_answerable_cases": 50,
+    "question_types": {
+      "single_hop": 30,
+      "summary_reasoning": 10,
+      "multi_context": 10,
+      "unanswerable": 10
+    },
+    "reviewed_cases": 60,
+    "curation_actions": {
+      "accept": 21,
+      "rewrite": 39,
+      "drop": 0
+    },
+    "corpus_content_hash": "a809ebc5c4ad960466663cee899ece9c4e016703f94fa5c5d4838ea9998077f4",
+    "file_sha256": "27c53590105d002d1e6fdb2b529242954b5c8423ee1791e005a6ba1efd4663b2",
+    "file_sha256_scope": "Windows CRLF serialization of the local artifact; the JSON was not canonicalized across platforms."
+  },
+  "runtime": {
+    "profile_id": "idx_5e96c37b0d9f624d2d09",
+    "embedding_model": "BAAI/bge-m3",
+    "top_k": 8,
+    "route_candidate_limit": 32,
+    "rerank_candidate_limit": 32,
+    "context_token_budget": 2400,
+    "graph_max_hops": 2,
+    "graph_path_weight": 0.25,
+    "multi_context_weight": 0.5,
+    "semantic_cosine_threshold": 0.75,
+    "external_llm_calls": 0
+  },
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 5070 Laptop GPU",
+    "torch": "2.13.0+cu130",
+    "torch_cuda_build": "13.0",
+    "embedding_precision": "fp32",
+    "reranker_precision": "fp16",
+    "observed_local_model_cache": {
+      "embedding_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+      "reranker_revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+      "locked_by_report": false
+    }
+  },
+  "runs": {
+    "gpu_no_rerank": {
+      "generated_at_utc": "2026-07-20T17:40:04.000360+00:00",
+      "artifact_sha256": "824931f69d4c7378668fb29f4f7d8fe0e19a58c27fe1a899915d4a70d7100316",
+      "modes": {
+        "naive": {
+          "exact_raw_recall_at_8": 0.57,
+          "exact_context_recall_at_8": 0.49,
+          "document_context_recall_at_8": 0.88,
+          "semantic_context_recall": 0.65,
+          "latency_mean_seconds": 1.744166,
+          "latency_p95_seconds": 2.570294
+        },
+        "mix": {
+          "exact_raw_recall_at_8": 0.62,
+          "exact_context_recall_at_8": 0.52,
+          "document_context_recall_at_8": 0.96,
+          "semantic_context_recall": 0.70,
+          "latency_mean_seconds": 2.088347,
+          "latency_p95_seconds": 3.098242
+        }
+      }
+    },
+    "gpu_rerank": {
+      "generated_at_utc": "2026-07-20T17:32:39.147189+00:00",
+      "reranker_model": "BAAI/bge-reranker-v2-m3",
+      "artifact_sha256": "a3d8959bb6b21f555646e1fcc074f5297bc45b7a2ba10ee96c1d71df0f3712ad",
+      "modes": {
+        "naive": {
+          "exact_raw_recall_at_8": 0.73,
+          "exact_context_recall_at_8": 0.70,
+          "document_context_recall_at_8": 0.88,
+          "semantic_context_recall": 0.76,
+          "context_ndcg_at_8": 0.634725,
+          "latency_mean_seconds": 2.950965,
+          "latency_p95_seconds": 3.356643
+        },
+        "mix": {
+          "exact_raw_recall_at_8": 0.72,
+          "exact_context_recall_at_8": 0.71,
+          "document_context_recall_at_8": 0.95,
+          "semantic_context_recall": 0.82,
+          "context_ndcg_at_8": 0.654699,
+          "latency_mean_seconds": 3.343635,
+          "latency_p95_seconds": 3.914216
+        }
+      },
+      "multi_context": {
+        "case_count": 10,
+        "naive": {
+          "exact_raw_recall_at_8": 0.05,
+          "document_context_recall_at_8": 0.60,
+          "semantic_context_recall": 0.30
+        },
+        "mix": {
+          "exact_raw_recall_at_8": 0.15,
+          "document_context_recall_at_8": 0.75,
+          "semantic_context_recall": 0.40
+        }
+      }
+    }
+  },
+  "paired_bootstrap_95_percent_ci": {
+    "source": "offline_secondary_analysis_not_emitted_by_the_main_benchmark_command",
+    "samples": 20000,
+    "seed": 20260721,
+    "mix_minus_naive": {
+      "exact_raw_recall_at_8": [-0.11, 0.08],
+      "document_context_recall_at_8": [0.0, 0.15],
+      "semantic_context_recall": [-0.02, 0.15],
+      "document_context_ndcg_at_8": [0.0218, 0.138]
+    }
+  },
+  "known_provenance_limits": [
+    "The full reports record a dirty base commit; the later commit is not claimed to be byte-for-byte identical.",
+    "The full reports did not lock Hugging Face model revisions.",
+    "The test-set SHA-256 depends on the local newline serialization.",
+    "The full reports used the old package key hybrid-rag, which resolved to null; future runs use hybrid-rag-lab."
+  ],
+  "artifact_policy": "Full test sets and trace-heavy JSON reports remain local and are identified by SHA-256; this file is the committed machine-readable summary."
+}

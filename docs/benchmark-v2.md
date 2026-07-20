@@ -118,6 +118,8 @@ reranker 是本轮 exact-page 提升的主要来源。它也解释了为什么�
 
 ## 复现
 
+以下命令用于作者本机的冻结语料与 profile。论文 PDF、v2 题集、SQLite 和完整 trace 报告未提交到仓库，因此 fresh clone 只能在自有语料上复现流程，不能仅靠公开文件重建本次逐题结果。原始报告还记录了 dirty working tree，且未锁定 Hugging Face revision；公开汇总不会将其表述为字节级可复现。
+
 安装并验证 CUDA：
 
 ```powershell
@@ -159,6 +161,7 @@ uv run python scripts/evaluate_retrieval.py `
 
 ## 产物
 
+- 可公开复核的机器可读汇总：[`benchmark-v2-summary.json`](benchmark-v2-summary.json)。
 - 人工修订题集：`artifacts/ragas/rag-papers-benchmark-v2.json`，SHA-256 `27C53590105D002D1E6FDB2B529242954B5C8423EE1791E005A6BA1EFD4663B2`。
 - 同 GPU 无 rerank 报告：`artifacts/evaluations/rag-papers-retrieval-v2-no-rerank-gpu.json`，SHA-256 `824931F69D4C7378668FB29F4F7D8FE0E19A58C27FE1A899915D4A70D7100316`。
 - 同 GPU rerank 报告：`artifacts/evaluations/rag-papers-retrieval-v2-rerank.json`，SHA-256 `A3D8959BB6B21F555646E1FCC074F5297BC45B7A2BA10EE96C1D71DF0F3712AD`。

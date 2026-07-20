@@ -62,15 +62,15 @@ flowchart LR
         Routes --> Naive["naive: chunk dense + BM25"]
         Routes --> Local["local: entity vectors + graph"]
         Routes --> Global["global: relation vectors + graph"]
-        Routes --> Hybrid["hybrid: local + global\nround-robin fusion"]
-        Routes --> Mix["mix: naive + local + global\nround-robin fusion (fixed-route default)"]
-        Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication and graph expansion"]
+        Routes --> Hybrid["hybrid: local + global\nweighted score fusion"]
+        Routes --> Mix["mix: naive + local + global\nweighted score fusion (fixed-route default)"]
+        Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication, graph-path injection\nand multi-context coverage"]
         Local --> Fusion
         Global --> Fusion
         Hybrid --> Fusion
         Mix --> Fusion
         Fusion --> Rerank["Optional post-fusion reranker\nTop-M → final Top-K"]
-        Rerank --> Context["Token-budget context selection"]
+        Rerank --> Context["Coverage-first token-budget\ncontext selection"]
         Context --> Evidence["Cited context + graph paths"]
         Evidence --> Answer["Deterministic answer or bounded\nDeepSeek answer from supplied evidence only"]
         Evidence --> Trace[("SQLite: serializable\nretrieval trace")]
@@ -114,20 +114,23 @@ the invalid response and concrete validation reasons. Canonical entity identity
 does not include type; merged names/aliases choose the most frequent observed
 type, with stable lexical tie-breaking.
 
-`naive`, `local`, and `global` can be selected independently.  `naive` ranks
+`naive`, `local`, and `global` can be selected independently. `naive` ranks
 chunk candidates with dense vector and deterministic local BM25 lexical scores,
 normalizes each subscore independently, and records its raw/normalized/weighted
-components in the trace. After a selected mode's route fusion, the default
-`BAAI/bge-reranker-v2-m3` reranker runs a local FlagEmbedding cross-encoder over
-each `[query, passage]` pair and records its raw logit plus sigmoid-normalized
-score. Set its provider to `none` to retain first-stage order.
+components in the trace. After a selected mode's route fusion, the optional
+`BAAI/bge-reranker-v2-m3` reranker can run a local FlagEmbedding cross-encoder
+over each `[query, passage]` pair and record its raw logit plus
+sigmoid-normalized score. Its provider defaults to `none`, retaining first-stage
+order unless explicitly enabled.
 `hybrid` is not a fourth opaque vector store: it runs only the `local` and
-`global` graph routes in parallel, then interleaves their chunk candidates and
-deduplicates by chunk ID. `mix` is the default fixed-route LightRAG-aligned composite mode:
-it adds the project's `naive` chunk route and interleaves naive/local/global
-candidates before the same rerank and context-selection rules. The project's
-`naive` route retains local BM25 as an explicit extension beyond LightRAG's
-vector-only naive mode.
+`global` graph routes, normalizes each route independently, and ranks chunks by
+their explicit weighted fused score. `mix` is the default fixed-route
+LightRAG-aligned composite mode: it adds the project's `naive` route to the same
+fusion contract. Positive paths of at least two hops may inject a bounded number
+of source chunks. Explicit comparison queries are split into aspect subqueries;
+distinct-document anchors survive optional reranking and receive priority during
+token-budget context assembly. The project's `naive` route retains local BM25
+as an explicit extension beyond LightRAG's vector-only naive mode.
 
 ## Persistent ownership and invalidation
 
@@ -241,12 +244,14 @@ flowchart LR
     P["Active or --profile\nindex profile"] --> V
     V --> Pin["Pin profile ID + graph snapshot\nfor the full execution"]
     Pin --> Ask["For agentic / mix / naive and each case:\nanswer + final evidence\npersist retrieval / agent traces"]
-    Ask --> IR["Deterministic retrieval:\nHit@k, Recall@k, MRR, nDCG"]
+    Ask --> IR["Deterministic retrieval:\nexact-page + document-level\nHit@k, Recall@k, MRR, nDCG"]
+    Ask --> Semantic["Semantic evidence:\nreference-context cosine coverage"]
     Ask --> Score["Ragas answer scoring:\nfaithfulness, factual correctness,\ncontext precision, context recall"]
     Ask --> Agent["Agentic trajectory:\ntool calls, evidence use, citations,\nlatency, refusal accuracy"]
     Key["DEEPSEEK_API_KEY\nanswer and judge models"] --> Ask
     Key --> Score
-    IR --> R["JSON report\nper-case scores and mode means"]
+    IR --> R["JSON report\nper-case scores, paired comparison,\nlatency and environment provenance"]
+    Semantic --> R
     Score --> R
     Agent --> R
 ```
@@ -258,6 +263,13 @@ coverage, and validates controlled evidence references before writing schema v2.
 Evidence IDs use document/page identities so ordinary chunk-size changes do not
 invalidate the golden evidence mapping. Ragas remains the answer-quality judge
 only.
+
+Benchmark v2 also has a model-free answer path through
+`scripts/evaluate_retrieval.py`. It skips answer generation and Ragas, alternates
+the compared retrieval modes per case, and reports exact-page, document-level,
+and semantic-evidence metrics for both raw Top-K candidates and the context that
+survives token-budget assembly. The report also records paired comparisons,
+latency, package versions, and accelerator provenance.
 
 The test-set envelope is the only accepted evaluation input: its
 `corpus_content_hash` must exactly equal the selected profile's graph-independent
@@ -293,5 +305,8 @@ embedding API cost.
   deterministic retrieval, Ragas answer, and Agentic trajectory metrics. `--smoke`
   runs the same pipeline over a deterministic six-case stratified subset while
   preserving the original test-set case indexes in the report.
+- `scripts/evaluate_retrieval.py` is the retrieval-only benchmark entry point. It
+  does not require an answer or judge model and records exact-page, document,
+  semantic-evidence, latency, and environment results for a pinned profile.
 - The web workbench maps every request to one filesystem-isolated workspace;
   workspaces do not share uploads, business databases, or graph checkpoints.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-07-12; amended — 2026-07-13, 2026-07-14.
+Accepted — 2026-07-12; amended — 2026-07-13, 2026-07-14, 2026-07-21.
 
 ## Context
 
@@ -26,14 +26,18 @@ offline-testable adapter for CI.
   deterministic adapter for CI and historical profile compatibility.
 - Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
   graph expansion, per-route min-max normalization, weighted route scores,
-  NetworkX path expansion, a post-fusion local FlagEmbedding cross-encoder
-  rerank, and token-budget context clipping in project code. `hybrid` combines
-  only `local + global`; default `mix` adds `naive`. Composite modes interleave
-  route candidates in source order and de-duplicate chunk IDs before optional
-  reranking and clipping. The naive trace retains raw, normalized, and weighted
-  dense/BM25 contributions; the rerank trace retains its candidate pool,
-  component scores, and final rank. Setting the reranker provider to `none`
-  leaves the first-stage order unchanged.
+  NetworkX path expansion, an optional post-fusion local FlagEmbedding
+  cross-encoder rerank, and token-budget context clipping in project code.
+  `hybrid` combines only `local + global`; default `mix` adds `naive`.
+  Composite modes normalize route scores independently, sum their explicit
+  weighted contributions, de-duplicate by chunk ID, and rank by the resulting
+  fused score. Positive multi-hop paths may inject a bounded set of source
+  chunks. Explicit comparison queries add deterministic subquery recall and
+  cross-document coverage anchors that survive optional reranking and receive
+  priority during context selection. The naive trace retains raw, normalized,
+  and weighted dense/BM25 contributions; the rerank trace retains its candidate
+  pool, component scores, and final rank. Setting the reranker provider to
+  `none` leaves the fused first-stage order unchanged.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.

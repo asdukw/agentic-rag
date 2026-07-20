@@ -1,5 +1,7 @@
 # Benchmark v1（2026-07-20）
 
+> 历史基线，已由 [Benchmark v2](benchmark-v2.md) 取代。本文保留当时的失败现象和诊断过程；其中 round-robin、未人工审校题集和无 reranker 等条件不代表当前实现。
+
 ## 结论
 
 当前应把 `naive` 作为默认检索基线，不应把 `mix` 或 `agentic` 宣传为已验证的升级方案。
