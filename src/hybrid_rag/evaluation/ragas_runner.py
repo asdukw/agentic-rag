@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -252,7 +253,7 @@ class RagasEvaluationRunner:
                         "base_url": judge_base_url,
                         "max_output_tokens": judge_max_output_tokens,
                         "timeout_seconds": judge_timeout_seconds,
-                        "max_retries": 0,
+                        "max_retries": 2,
                         "temperature": 0.0,
                     },
                 },
@@ -308,11 +309,14 @@ class RagasEvaluationRunner:
             )
             if answer_event is None:
                 raise RuntimeError(f"agentic evaluation case {case_index} produced no answer")
-            answer = GroundedAnswer.model_validate(answer_event.data.get("answer"))
+            # Agent events cross a JSON boundary, where tuples are represented as
+            # arrays. Keep the domain models strict elsewhere, but allow JSON-style
+            # containers while reconstructing their typed values for evaluation.
+            answer = GroundedAnswer.model_validate(answer_event.data.get("answer"), strict=False)
             raw_evidence = answer_event.data.get("evidence", [])
             if not isinstance(raw_evidence, list):
                 raise RuntimeError(f"agentic evaluation case {case_index} has invalid evidence")
-            evidence = [ContextItem.model_validate(item) for item in raw_evidence]
+            evidence = [ContextItem.model_validate(item, strict=False) for item in raw_evidence]
             duration = _agent_duration(events)
             metrics = score_agentic_events(
                 events,
@@ -747,11 +751,8 @@ def _evaluate(
     judge_max_output_tokens: int,
     judge_timeout_seconds: float,
 ) -> dict[str, object]:
-    from openai import OpenAI
-    from ragas import EvaluationDataset, evaluate
-    from ragas.dataset_schema import EvaluationResult
+    from openai import AsyncOpenAI
     from ragas.llms import llm_factory
-    from ragas.metrics.base import Metric
     from ragas.metrics.collections import (
         ContextPrecision,
         ContextRecall,
@@ -762,35 +763,82 @@ def _evaluate(
     judge_llm = llm_factory(
         judge_model,
         provider="openai",
-        client=OpenAI(
+        client=AsyncOpenAI(
             api_key=judge_api_key,
             base_url=judge_base_url,
             timeout=judge_timeout_seconds,
-            max_retries=0,
+            max_retries=2,
         ),
         max_tokens=judge_max_output_tokens,
         temperature=0.0,
     )
-    metrics = cast(
-        Sequence[Metric],
-        [
+    metrics = (
+        (
+            "faithfulness",
             Faithfulness(llm=judge_llm),
+            ("user_input", "response", "retrieved_contexts"),
+        ),
+        (
+            "factual_correctness",
             FactualCorrectness(llm=judge_llm),
+            ("response", "reference"),
+        ),
+        (
+            "context_precision",
             ContextPrecision(llm=judge_llm),
+            ("user_input", "reference", "retrieved_contexts"),
+        ),
+        (
+            "context_recall",
             ContextRecall(llm=judge_llm),
-        ],
-    )
-    result = cast(
-        EvaluationResult,
-        evaluate(
-            dataset=EvaluationDataset(samples=samples),  # type: ignore[arg-type]
-            metrics=metrics,
-            show_progress=True,
-            raise_exceptions=True,
-            return_executor=False,
+            ("user_input", "retrieved_contexts", "reference"),
         ),
     )
-    scores = result.scores
+    sample_rows: list[dict[str, Any]] = []
+    for sample in samples:
+        dump = getattr(sample, "model_dump", None)
+        if not callable(dump):
+            raise TypeError("Ragas samples must expose model_dump()")
+        sample_rows.append(cast(dict[str, Any], dump()))
+
+    async def score_samples() -> list[dict[str, float]]:
+        # Collection metrics are the Ragas 0.4 API paired with llm_factory's
+        # InstructorLLM. They no longer inherit the legacy Metric class accepted
+        # by ragas.evaluate(), so call their async scoring contract directly.
+        semaphore = asyncio.Semaphore(4)
+
+        async def score_one(
+            index: int,
+            name: str,
+            metric: object,
+            fields: tuple[str, ...],
+        ) -> tuple[int, str, float]:
+            values = {field: sample_rows[index][field] for field in fields}
+            if "retrieved_contexts" in values and not values["retrieved_contexts"]:
+                # An answerable case with no retrieved evidence is a quality
+                # failure, not a reason to abort the entire benchmark.
+                return index, name, 0.0
+            ascore = getattr(metric, "ascore", None)
+            if not callable(ascore):
+                raise TypeError(f"Ragas collection metric {name!r} must expose ascore()")
+            async with semaphore:
+                result = await ascore(**values)
+            value = getattr(result, "value", None)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"Ragas collection metric {name!r} returned a non-numeric score")
+            return index, name, float(value)
+
+        jobs = [
+            score_one(index, name, metric, fields)
+            for index in range(len(sample_rows))
+            for name, metric, fields in metrics
+        ]
+        scores: list[dict[str, float]] = [{} for _ in sample_rows]
+        for index, name, value in await asyncio.gather(*jobs):
+            scores[index][name] = value
+        return scores
+
+    scores = asyncio.run(score_samples())
     return {"scores": scores, "means": _means(scores)}
 
 
@@ -798,6 +846,10 @@ def _means(scores: list[dict[str, Any]]) -> dict[str, float]:
     values: dict[str, list[float]] = {}
     for row in scores:
         for key, value in row.items():
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            ):
                 values.setdefault(key, []).append(float(value))
     return {key: sum(items) / len(items) for key, items in values.items() if items}

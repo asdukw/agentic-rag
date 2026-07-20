@@ -11,7 +11,7 @@ from hybrid_rag.deepseek_costs import DeepSeekCostSummary
 from hybrid_rag.ids import canonical_json_hash
 
 RETRIEVAL_SCHEMA_VERSION = "3"
-RETRIEVAL_MODE_SEMANTICS_VERSION = "lightrag-v1"
+RETRIEVAL_MODE_SEMANTICS_VERSION = "lightrag-v2"
 INDEX_TEXT_SCHEMA_VERSION = "1"
 
 

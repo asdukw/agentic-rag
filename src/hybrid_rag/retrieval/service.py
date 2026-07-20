@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -97,6 +98,9 @@ class RetrievalOptions:
     reranker_model: str = FLAG_EMBEDDING_RERANKER_MODEL
     reranker_use_fp16: bool = False
     rerank_candidate_multiplier: int = 4
+    graph_path_weight: float = 0.25
+    graph_path_candidate_multiplier: int = 2
+    multi_context_weight: float = 0.5
 
     def __post_init__(self) -> None:
         if self.top_k < 1:
@@ -113,9 +117,15 @@ class RetrievalOptions:
             self.global_weight,
             self.naive_dense_weight,
             self.naive_bm25_weight,
+            self.graph_path_weight,
+            self.multi_context_weight,
         )
         if any(not math.isfinite(weight) or weight < 0.0 for weight in weights):
             raise ValueError("fusion weights must not be negative")
+        if self.graph_path_weight > 1.0:
+            raise ValueError("graph_path_weight must not exceed 1")
+        if self.multi_context_weight > 1.0:
+            raise ValueError("multi_context_weight must not exceed 1")
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one fusion weight must be positive")
         if self.naive_dense_weight + self.naive_bm25_weight <= 0:
@@ -129,6 +139,8 @@ class RetrievalOptions:
             raise TypeError("reranker_use_fp16 must be a boolean")
         if self.rerank_candidate_multiplier < 1:
             raise ValueError("rerank_candidate_multiplier must be positive")
+        if self.graph_path_candidate_multiplier < 1:
+            raise ValueError("graph_path_candidate_multiplier must be positive")
 
     @property
     def config_hash(self) -> str:
@@ -161,6 +173,14 @@ class RetrievalOptions:
     def rerank_candidate_limit(self) -> int:
         return self.top_k * self.rerank_candidate_multiplier
 
+    @property
+    def candidate_limit(self) -> int:
+        return self.top_k * self.candidate_multiplier
+
+    @property
+    def graph_path_candidate_limit(self) -> int:
+        return self.top_k * self.graph_path_candidate_multiplier
+
 
 class AnswerResult(BaseModel):
     """A retrieval result plus an answer validated against its citation allowlist."""
@@ -180,6 +200,12 @@ class _RouteResult:
     relation_scores: dict[str, float]
     chunk_score_components: dict[str, dict[str, ScoreComponent]]
     paths: tuple[GraphPath, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PathInjection:
+    path: GraphPath
+    chunk_ids: tuple[str, ...]
 
 
 class RetrievalService:
@@ -581,7 +607,10 @@ class RetrievalService:
         mode: RetrievalMode,
         options: RetrievalOptions,
     ) -> RetrievalResult:
-        candidate_limit = options.top_k * options.candidate_multiplier
+        route_candidate_limit = max(
+            options.candidate_limit,
+            options.rerank_candidate_limit if options.rerank_enabled else options.top_k,
+        )
         composite_routes = tuple(
             route
             for route in _composite_routes(mode)
@@ -601,7 +630,7 @@ class RetrievalService:
                             index,
                             query_vector,
                             expanded_query,
-                            candidate_limit,
+                            route_candidate_limit,
                             options,
                         )
                         if route is RetrievalMode.NAIVE
@@ -612,7 +641,7 @@ class RetrievalService:
                             }[route],
                             index,
                             query_vector,
-                            candidate_limit,
+                            route_candidate_limit,
                         )
                     )
                     for route in composite_routes
@@ -627,37 +656,96 @@ class RetrievalService:
             route_traces = {
                 route.value: self._route_trace(result, index) for route, result in routes.items()
             }
-            merged_chunk_ids = _round_robin_chunk_ids(
-                routes,
-                route_order=composite_routes,
-                limit=(options.rerank_candidate_limit if options.rerank_enabled else options.top_k),
-            )
         else:
             if mode is RetrievalMode.NAIVE:
                 route = self._naive_route(
                     index,
                     query_vector,
                     expanded_query,
-                    candidate_limit,
+                    route_candidate_limit,
                     options,
                 )
             else:
                 route = {
                     RetrievalMode.LOCAL: self._local_route,
                     RetrievalMode.GLOBAL: self._global_route,
-                }[mode](index, query_vector, candidate_limit)
+                }[mode](index, query_vector, route_candidate_limit)
             routes = {mode: route}
             fused_scores = dict(route.chunk_scores)
             components = {chunk_id: {mode.value: score} for chunk_id, score in fused_scores.items()}
             raw_scores = dict(route.chunk_raw_scores)
             paths = route.paths
             route_traces = {mode.value: self._route_trace(route, index)}
-            merged_chunk_ids = rank_ids(
-                fused_scores,
-                limit=(options.rerank_candidate_limit if options.rerank_enabled else options.top_k),
-            )
 
         chunks = {item.object_id: item for item in index.chunks}
+        path_raw_scores, path_injections = (
+            _bounded_graph_path_scores(
+                paths,
+                valid_chunk_ids=chunks,
+                path_limit=options.graph_path_candidate_limit,
+            )
+            if options.graph_path_weight > 0.0
+            else ({}, ())
+        )
+        if path_raw_scores:
+            path_scores, path_components = weighted_fusion(
+                {"graph_path": path_raw_scores},
+                {"graph_path": options.graph_path_weight},
+            )
+            _merge_fused_scores(fused_scores, components, path_scores, path_components)
+            raw_scores = _max_scores((raw_scores, path_raw_scores))
+
+        multi_context_subqueries = (
+            _multi_context_subqueries(query)
+            if composite_routes and options.multi_context_weight > 0.0
+            else ()
+        )
+        subquery_rankings: tuple[tuple[str, ...], ...] = ()
+        if multi_context_subqueries:
+            subquery_vectors = self.embedding_provider.embed(multi_context_subqueries)
+            if len(subquery_vectors) != len(multi_context_subqueries):
+                raise RuntimeError("embedding provider returned a different number of vectors")
+            subquery_routes = tuple(
+                self._naive_route(
+                    index,
+                    vector,
+                    subquery,
+                    route_candidate_limit,
+                    options,
+                )
+                for subquery, vector in zip(
+                    multi_context_subqueries,
+                    subquery_vectors,
+                    strict=True,
+                )
+            )
+            labels = tuple(
+                f"multi_context_{position}" for position in range(1, len(subquery_routes) + 1)
+            )
+            subquery_weight = options.multi_context_weight / len(subquery_routes)
+            subquery_scores, subquery_components = weighted_fusion(
+                {
+                    label: route.chunk_scores
+                    for label, route in zip(labels, subquery_routes, strict=True)
+                },
+                {label: subquery_weight for label in labels},
+            )
+            _merge_fused_scores(
+                fused_scores,
+                components,
+                subquery_scores,
+                subquery_components,
+            )
+            raw_scores = _max_scores(
+                (raw_scores, *(route.chunk_raw_scores for route in subquery_routes))
+            )
+            subquery_rankings = tuple(
+                rank_ids(route.chunk_scores, limit=route_candidate_limit)
+                for route in subquery_routes
+            )
+
+        pre_rerank_coverage_ids: tuple[str, ...] = ()
+        final_coverage_ids: tuple[str, ...] = ()
         rerank_trace: RerankTrace | None = None
         if options.rerank_enabled:
             if self.reranker is None:
@@ -665,24 +753,63 @@ class RetrievalService:
                     "reranking was requested but no reranker is configured; "
                     "set reranker_provider=none or provide a FlagEmbedding reranker"
                 )
+            candidate_ids, pre_rerank_coverage_ids = _select_fused_candidates(
+                fused_scores,
+                chunks,
+                limit=options.rerank_candidate_limit,
+                subquery_rankings=subquery_rankings,
+                anchor_depth=options.top_k,
+            )
             ordered_reranked_ids, final_scores, rerank_trace = self._rerank(
                 query=query,
-                candidate_ids=merged_chunk_ids,
+                candidate_ids=candidate_ids,
                 chunks=chunks,
                 fused_scores=fused_scores,
                 options=options,
             )
-            ordered_chunk_ids = ordered_reranked_ids[: options.top_k]
+            reranked_scores = {
+                chunk_id: final_scores[chunk_id] for chunk_id in ordered_reranked_ids
+            }
+            ordered_chunk_ids, final_coverage_ids = _select_scored_candidates_with_anchors(
+                reranked_scores,
+                limit=options.top_k,
+                anchors=pre_rerank_coverage_ids,
+            )
         else:
             final_scores = dict(fused_scores)
-            ordered_chunk_ids = merged_chunk_ids
+            ordered_chunk_ids, final_coverage_ids = _select_fused_candidates(
+                fused_scores,
+                chunks,
+                limit=options.top_k,
+                subquery_rankings=subquery_rankings,
+                anchor_depth=options.top_k,
+            )
+        context_candidate_ids = (
+            tuple(dict.fromkeys((*final_coverage_ids, *ordered_chunk_ids)))
+            if multi_context_subqueries
+            else ordered_chunk_ids
+        )
         selected_context = self._context_items(
-            ordered_chunk_ids,
+            context_candidate_ids,
             chunks,
             final_scores,
             components,
             routes,
             budget=options.context_token_budget,
+        )
+        delivered_context_ids = {item.chunk_id for item in selected_context}
+        delivered_coverage_ids = tuple(
+            chunk_id for chunk_id in final_coverage_ids if chunk_id in delivered_context_ids
+        )
+        requested_coverage_document_ids = tuple(
+            dict.fromkeys(
+                str(chunks[chunk_id].metadata["document_id"]) for chunk_id in final_coverage_ids
+            )
+        )
+        delivered_coverage_document_ids = tuple(
+            dict.fromkeys(
+                str(chunks[chunk_id].metadata["document_id"]) for chunk_id in delivered_coverage_ids
+            )
         )
         context = "\n\n".join(_render_context(item) for item in selected_context)
         context_tokens = sum(item.token_count for item in selected_context)
@@ -732,6 +859,82 @@ class RetrievalService:
                 "naive_lexical_scorer": BM25_SCORER_VERSION,
                 "naive_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
                 "mode_semantics_version": RETRIEVAL_MODE_SEMANTICS_VERSION,
+                "candidate_selection_strategy": (
+                    "fused_score_with_document_coverage"
+                    if multi_context_subqueries
+                    else "fused_score"
+                ),
+                "context_selection_strategy": (
+                    "coverage_first_token_budget"
+                    if multi_context_subqueries
+                    else "score_order_token_budget"
+                ),
+                "route_candidate_limit": route_candidate_limit,
+                "fused_candidate_count": len(fused_scores),
+                "graph_path_injection": {
+                    "enabled": options.graph_path_weight > 0.0,
+                    "component": "graph_path",
+                    "score_formula": (
+                        "min_max(max_positive_path_score_per_chunk) * graph_path_weight"
+                    ),
+                    "path_limit": options.graph_path_candidate_limit,
+                    "selected_path_count": len(path_injections),
+                    "paths": [
+                        {
+                            "node_ids": list(injection.path.node_ids),
+                            "relation_ids": list(injection.path.relation_ids),
+                            "source_chunk_ids": list(injection.chunk_ids),
+                            "raw_score": injection.path.score,
+                        }
+                        for injection in path_injections
+                    ],
+                    "chunk_count": len(path_raw_scores),
+                    "chunk_ids": list(rank_ids(path_raw_scores, limit=len(path_raw_scores))),
+                    "raw_chunk_scores": {
+                        chunk_id: path_raw_scores[chunk_id]
+                        for chunk_id in rank_ids(
+                            path_raw_scores,
+                            limit=len(path_raw_scores),
+                        )
+                    },
+                },
+                "multi_context": {
+                    "enabled": options.multi_context_weight > 0.0,
+                    "detected": bool(multi_context_subqueries),
+                    "detector_version": "explicit-compare-v1",
+                    "coverage_anchor_source": (
+                        "pre_rerank_subquery_fusion"
+                        if options.rerank_enabled and multi_context_subqueries
+                        else "final_subquery_fusion"
+                        if multi_context_subqueries
+                        else "none"
+                    ),
+                    "score_formula": (
+                        "sum(min_max(subquery_naive_score) * multi_context_weight / subquery_count)"
+                    ),
+                    "requested_document_count": min(
+                        len(multi_context_subqueries),
+                        options.top_k,
+                    ),
+                    "anchor_depth": options.top_k,
+                    "subqueries": list(multi_context_subqueries),
+                    "pre_rerank_coverage_chunk_ids": list(pre_rerank_coverage_ids),
+                    "final_coverage_chunk_ids": list(final_coverage_ids),
+                    "requested_context_coverage_chunk_ids": list(final_coverage_ids),
+                    "delivered_context_coverage_chunk_ids": list(delivered_coverage_ids),
+                    "requested_context_coverage_document_ids": list(
+                        requested_coverage_document_ids
+                    ),
+                    "delivered_context_coverage_document_ids": list(
+                        delivered_coverage_document_ids
+                    ),
+                    "selected_document_ids": list(
+                        dict.fromkeys(
+                            str(chunks[chunk_id].metadata["document_id"])
+                            for chunk_id in ordered_chunk_ids
+                        )
+                    ),
+                },
                 "rerank_enabled": options.rerank_enabled,
                 "reranker_provider": options.reranker_provider,
                 "reranker_model": options.reranker_model,
@@ -1157,6 +1360,127 @@ def _max_scores(score_maps: Iterable[Mapping[str, float]]) -> dict[str, float]:
     return output
 
 
+def _merge_fused_scores(
+    scores: dict[str, float],
+    components: dict[str, dict[str, float]],
+    supplemental_scores: Mapping[str, float],
+    supplemental_components: Mapping[str, Mapping[str, float]],
+) -> None:
+    """Add one bounded recall signal while retaining per-hit provenance."""
+
+    for object_id, score in supplemental_scores.items():
+        scores[object_id] = scores.get(object_id, 0.0) + float(score)
+        target = components.setdefault(object_id, {})
+        for name, component in supplemental_components.get(object_id, {}).items():
+            target[name] = target.get(name, 0.0) + float(component)
+
+
+def _bounded_graph_path_scores(
+    paths: Sequence[GraphPath],
+    *,
+    valid_chunk_ids: Mapping[str, IndexItem],
+    path_limit: int,
+) -> tuple[dict[str, float], tuple[_PathInjection, ...]]:
+    """Map positive multi-hop paths to a bounded number of source chunks."""
+
+    eligible = sorted(
+        (
+            path
+            for path in paths
+            if len(path.relation_ids) >= 2 and path.score > 0.0 and path.source_chunk_ids
+        ),
+        key=lambda path: (
+            -path.score,
+            path.node_ids,
+            path.relation_ids,
+            path.source_chunk_ids,
+        ),
+    )
+    scores: dict[str, float] = {}
+    injections: list[_PathInjection] = []
+    for path in eligible:
+        if len(injections) >= path_limit or len(scores) >= path_limit:
+            break
+        injected_chunk_ids: list[str] = []
+        for chunk_id in path.source_chunk_ids:
+            if chunk_id not in valid_chunk_ids or chunk_id in scores:
+                continue
+            scores[chunk_id] = path.score
+            injected_chunk_ids.append(chunk_id)
+            if len(scores) >= path_limit:
+                break
+        if injected_chunk_ids:
+            injections.append(_PathInjection(path=path, chunk_ids=tuple(injected_chunk_ids)))
+    return scores, tuple(injections)
+
+
+def _select_scored_candidates_with_anchors(
+    scores: Mapping[str, float],
+    *,
+    limit: int,
+    anchors: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Keep established aspect anchors, fill by score, then restore score order."""
+
+    retained_anchors = tuple(dict.fromkeys(chunk_id for chunk_id in anchors if chunk_id in scores))[
+        :limit
+    ]
+    selected = list(retained_anchors)
+    for chunk_id in rank_ids(scores, limit=len(scores)):
+        if chunk_id not in selected:
+            selected.append(chunk_id)
+        if len(selected) == limit:
+            break
+    selected_scores = {chunk_id: scores[chunk_id] for chunk_id in selected}
+    return rank_ids(selected_scores, limit=limit), retained_anchors
+
+
+def _select_fused_candidates(
+    scores: Mapping[str, float],
+    chunks: Mapping[str, IndexItem],
+    *,
+    limit: int,
+    subquery_rankings: Sequence[Sequence[str]] = (),
+    anchor_depth: int = 1,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Rank by score, with a narrow cross-document constraint for explicit comparisons."""
+
+    if anchor_depth < 1:
+        raise ValueError("anchor_depth must be positive")
+    ranked = rank_ids(scores, limit=len(scores))
+    if not subquery_rankings:
+        return ranked[:limit], ()
+
+    available = set(scores).intersection(chunks)
+    anchors: list[str] = []
+    covered_documents: set[str] = set()
+    for subquery_ranking in subquery_rankings:
+        eligible = [
+            (rank, chunk_id)
+            for rank, chunk_id in enumerate(subquery_ranking[:anchor_depth], start=1)
+            if chunk_id in available
+            and str(chunks[chunk_id].metadata["document_id"]) not in covered_documents
+        ]
+        if eligible:
+            _, anchor_id = min(
+                eligible,
+                key=lambda value: (-scores[value[1]], value[0], value[1]),
+            )
+            anchors.append(anchor_id)
+            covered_documents.add(str(chunks[anchor_id].metadata["document_id"]))
+        if len(anchors) == limit:
+            break
+
+    selected = list(dict.fromkeys(anchors))
+    for chunk_id in ranked:
+        if chunk_id not in selected:
+            selected.append(chunk_id)
+        if len(selected) == limit:
+            break
+    selected_scores = {chunk_id: scores[chunk_id] for chunk_id in selected}
+    return rank_ids(selected_scores, limit=limit), tuple(anchors)
+
+
 def _direct_path(relation: IndexItem, score: float) -> GraphPath:
     return GraphPath(
         node_ids=(
@@ -1241,35 +1565,72 @@ def _composite_routes(mode: RetrievalMode) -> tuple[RetrievalMode, ...]:
     return ()
 
 
-def _round_robin_chunk_ids(
-    routes: Mapping[RetrievalMode, _RouteResult],
-    *,
-    route_order: Sequence[RetrievalMode],
-    limit: int,
-) -> tuple[str, ...]:
-    """Interleave route candidates in source order and deduplicate chunk IDs."""
+_ONE_ANOTHER_CONTEXT = re.compile(
+    r"一种(?P<left>[^\uFF0C\u3002\uFF1B;]{2,120})"
+    r"[\uFF0C\uFF1B;]\s*另一种(?P<right>[^\uFF0C\u3002\uFF1B;]{2,120})"
+)
+_CHINESE_COMPARE_CONTEXT = re.compile(
+    r"(?:比较|对比)(?P<left>[^\uFF0C\u3002\uFF01\uFF1F\uFF1B;\uFF1A:]{1,80}?)"
+    r"(?:以及|和|与|及)(?P<right>[^\uFF0C\u3002\uFF01\uFF1F\uFF1B;]{1,80}?)"
+    r"(?=(?:两种|两类|二者|两者|在|如何|各自|分别|之间|\uFF0C|\u3002|\uFF1B|;|$))"
+)
+_ENGLISH_COMPARE_CONTEXT = re.compile(
+    r"\b(?:compare|contrast)\s+(?P<left>[^,;?.]{1,80}?)\s+"
+    r"(?:and|with|versus|vs\.?)\s+(?P<right>[^,;?.]{1,80}?)"
+    r"(?=\s+(?:in|on|for|by|across|when|while|regarding|to)\b|[,;?.]|$)",
+    re.IGNORECASE,
+)
+_ADDITIONAL_CHINESE_CONTEXT = re.compile(
+    r"(?:并(?:且)?|同时|还)(?:说明|分析|讨论|比较)?\s*"
+    r"(?P<subject>[A-Za-z][A-Za-z0-9._-]{1,40})"
+    r"(?P<tail>(?:如何|在|通过|采用)[^\uFF0C\u3002\uFF01\uFF1F]{2,120})"
+)
+_QUERY_EDGE_PUNCTUATION = " \uff0c,\uff1b;\uff1a:\u3002"
 
-    if limit < 1:
-        raise ValueError("limit must be positive")
-    candidates = [iter(rank_ids(routes[route].chunk_scores, limit=limit)) for route in route_order]
-    output: list[str] = []
-    seen: set[str] = set()
-    exhausted = [False] * len(candidates)
-    while len(output) < limit and not all(exhausted):
-        for index, values in enumerate(candidates):
-            if exhausted[index]:
-                continue
-            try:
-                chunk_id = next(values)
-            except StopIteration:
-                exhausted[index] = True
-                continue
-            if chunk_id not in seen:
-                seen.add(chunk_id)
-                output.append(chunk_id)
-                if len(output) == limit:
-                    break
-    return tuple(output)
+
+def _multi_context_subqueries(question: str) -> tuple[str, ...]:
+    """Split only explicit comparison forms; ordinary conjunctions stay untouched."""
+
+    match = _ONE_ANOTHER_CONTEXT.search(question)
+    if match is None:
+        match = _CHINESE_COMPARE_CONTEXT.search(question)
+        if match is not None and not all(
+            _has_explicit_method_identifier(match.group(name)) for name in ("left", "right")
+        ):
+            match = None
+    if match is None:
+        match = _ENGLISH_COMPARE_CONTEXT.search(question)
+    if match is None:
+        return ()
+
+    tail = question[match.end() :].strip(_QUERY_EDGE_PUNCTUATION)
+    values = [
+        _compose_subquery(match.group("left"), tail),
+        _compose_subquery(match.group("right"), tail),
+    ]
+    additional = _ADDITIONAL_CHINESE_CONTEXT.search(question)
+    if additional is not None:
+        values.append(
+            _compose_subquery(
+                additional.group("subject"),
+                additional.group("tail"),
+            )
+        )
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _has_explicit_method_identifier(value: str) -> bool:
+    return re.search(r"[A-Za-z0-9][A-Za-z0-9._+-]*", value) is not None
+
+
+def _compose_subquery(subject: str, shared_tail: str) -> str:
+    normalized_subject = " ".join(subject.split()).strip(_QUERY_EDGE_PUNCTUATION)
+    normalized_tail = " ".join(shared_tail.split()).strip(_QUERY_EDGE_PUNCTUATION)
+    if not normalized_subject:
+        return ""
+    if not normalized_tail:
+        return normalized_subject
+    return f"{normalized_subject} {normalized_tail}"
 
 
 def _question(value: str) -> str:
@@ -1393,6 +1754,9 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "reranker_use_fp16",
             "reranker_version",
             "rerank_candidate_multiplier",
+            "graph_path_weight",
+            "graph_path_candidate_multiplier",
+            "multi_context_weight",
         }
     }
     return canonical_json_hash(values)
