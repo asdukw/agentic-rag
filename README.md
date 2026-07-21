@@ -6,7 +6,7 @@
 
 > 定位：方法论与工程实践作品，不是生产级通用知识库。
 
-[Benchmark v2](docs/benchmark-v2.md) · [完整架构](docs/architecture.md) · [设计边界](docs/adr/001-build-vs-reuse.md)
+[Benchmark v2](docs/benchmark-v2.md) · [Benchmark v3 预注册方案](docs/benchmark-v3-plan.md) · [完整架构](docs/architecture.md) · [设计边界](docs/adr/001-build-vs-reuse.md)
 
 ## 结果先看
 
@@ -169,6 +169,7 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 
 评测入口和复现配置见：
 
+- [Benchmark v3 预注册方案：实验矩阵、指标口径与判定规则](docs/benchmark-v3-plan.md)
 - [Benchmark v2：GPU、rerank、指标、结果与局限](docs/benchmark-v2.md)
 - [机器可读结果摘要](docs/benchmark-v2-summary.json)
 - [`scripts/evaluate_retrieval.py`](scripts/evaluate_retrieval.py)：无需外部 LLM 的 retrieval-only 配对评测
