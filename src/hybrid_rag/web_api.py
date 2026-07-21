@@ -29,7 +29,6 @@ from hybrid_rag.config import (
     Settings,
     sqlite_url,
 )
-from hybrid_rag.demo import DemoRuntime, create_query_client, create_service
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.schemas import ExtractionConfig, GraphConfig
 from hybrid_rag.extraction.service import GraphBuildService
@@ -39,6 +38,7 @@ from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.ingest.tokenizer import TiktokenCounter
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions
+from hybrid_rag.runtime import ApplicationRuntime, create_query_client, create_service
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import GraphRepository
 from hybrid_rag.storage.migrations import upgrade_database
@@ -403,7 +403,7 @@ def _runtime(
     reranker_enabled: bool,
     rerank_candidate_multiplier: int | None,
     use_deepseek: bool,
-) -> tuple[DemoRuntime, Settings, RetrievalSettings, DeepSeekSettings]:
+) -> tuple[ApplicationRuntime, Settings, RetrievalSettings, DeepSeekSettings]:
     settings = Settings()
     retrieval = RetrievalSettings()
     deepseek = DeepSeekSettings()
@@ -412,11 +412,11 @@ def _runtime(
         candidate_multiplier=retrieval.candidate_multiplier,
         context_token_budget=context_token_budget or retrieval.context_token_budget,
         graph_max_hops=graph_hops or min(retrieval.graph_max_hops, 2),
-        naive_weight=retrieval.hybrid_weight,
-        local_weight=retrieval.graph_local_weight,
-        global_weight=retrieval.graph_global_weight,
-        naive_dense_weight=retrieval.hybrid_dense_weight,
-        naive_bm25_weight=retrieval.hybrid_bm25_weight,
+        hybrid_weight=retrieval.hybrid_weight,
+        graph_local_weight=retrieval.graph_local_weight,
+        graph_global_weight=retrieval.graph_global_weight,
+        hybrid_dense_weight=retrieval.hybrid_dense_weight,
+        hybrid_bm25_weight=retrieval.hybrid_bm25_weight,
         bm25_k1=retrieval.bm25_k1,
         bm25_b=retrieval.bm25_b,
         reranker_provider=retrieval.reranker_provider if reranker_enabled else "none",
@@ -428,7 +428,7 @@ def _runtime(
     selected_database = (database_url or "").strip()
     if selected_database and "://" not in selected_database:
         selected_database = sqlite_url(Path(selected_database))
-    runtime = DemoRuntime(
+    runtime = ApplicationRuntime(
         database_url=selected_database or settings.database_url,
         embedding_provider=embedding_provider or retrieval.embedding_provider,
         embedding_model=(embedding_model or retrieval.embedding_model).strip(),

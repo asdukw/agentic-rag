@@ -112,7 +112,7 @@ class FlagEmbeddingReranker:
     Importing and constructing ``FlagReranker`` is deliberately deferred until
     the first rerank call, so configuration and index-building do not download
     model weights. Loaded models are shared by model ID and precision mode within
-    a process so repeated Streamlit actions do not reload the same weights.
+    a process so repeated API requests do not reload the same weights.
     """
 
     provider = FLAG_EMBEDDING_RERANKER_PROVIDER

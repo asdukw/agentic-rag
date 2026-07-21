@@ -87,11 +87,11 @@ class RetrievalOptions:
     candidate_multiplier: int = 4
     context_token_budget: int = 2400
     graph_max_hops: int = 2
-    naive_weight: float = 1.0
-    local_weight: float = 1.0
-    global_weight: float = 1.0
-    naive_dense_weight: float = 1.0
-    naive_bm25_weight: float = 1.0
+    hybrid_weight: float = 1.0
+    graph_local_weight: float = 1.0
+    graph_global_weight: float = 1.0
+    hybrid_dense_weight: float = 1.0
+    hybrid_bm25_weight: float = 1.0
     bm25_k1: float = DEFAULT_BM25_K1
     bm25_b: float = DEFAULT_BM25_B
     reranker_provider: str = "none"
@@ -112,11 +112,11 @@ class RetrievalOptions:
         if not 1 <= self.graph_max_hops <= 4:
             raise ValueError("graph_max_hops must be between 1 and 4")
         weights = (
-            self.naive_weight,
-            self.local_weight,
-            self.global_weight,
-            self.naive_dense_weight,
-            self.naive_bm25_weight,
+            self.hybrid_weight,
+            self.graph_local_weight,
+            self.graph_global_weight,
+            self.hybrid_dense_weight,
+            self.hybrid_bm25_weight,
             self.graph_path_weight,
             self.multi_context_weight,
         )
@@ -126,9 +126,9 @@ class RetrievalOptions:
             raise ValueError("graph_path_weight must not exceed 1")
         if self.multi_context_weight > 1.0:
             raise ValueError("multi_context_weight must not exceed 1")
-        if self.naive_weight + self.local_weight + self.global_weight <= 0:
+        if self.hybrid_weight + self.graph_local_weight + self.graph_global_weight <= 0:
             raise ValueError("at least one fusion weight must be positive")
-        if self.naive_dense_weight + self.naive_bm25_weight <= 0:
+        if self.hybrid_dense_weight + self.hybrid_bm25_weight <= 0:
             raise ValueError("at least one hybrid-search subroute weight must be positive")
         BM25Config(k1=self.bm25_k1, b=self.bm25_b)
         if not self.reranker_provider.strip():
@@ -149,23 +149,17 @@ class RetrievalOptions:
     @property
     def weights(self) -> dict[str, float]:
         return {
-            RetrievalStrategy.HYBRID.value: self.naive_weight,
-            RetrievalStrategy.GRAPH_LOCAL.value: self.local_weight,
-            RetrievalStrategy.GRAPH_GLOBAL.value: self.global_weight,
+            RetrievalStrategy.HYBRID.value: self.hybrid_weight,
+            RetrievalStrategy.GRAPH_LOCAL.value: self.graph_local_weight,
+            RetrievalStrategy.GRAPH_GLOBAL.value: self.graph_global_weight,
         }
 
     @property
     def hybrid_subroute_weights(self) -> dict[str, float]:
         return {
-            "dense": self.naive_dense_weight,
-            "bm25": self.naive_bm25_weight,
+            "dense": self.hybrid_dense_weight,
+            "bm25": self.hybrid_bm25_weight,
         }
-
-    @property
-    def naive_subroute_weights(self) -> dict[str, float]:
-        """Return the legacy property name for callers replaying older options."""
-
-        return self.hybrid_subroute_weights
 
     @property
     def bm25_config(self) -> BM25Config:
@@ -1089,8 +1083,8 @@ class RetrievalService:
         elif route is RetrievalStrategy.BM25:
             dense_weight, bm25_weight = 0.0, 1.0
         elif route is RetrievalStrategy.HYBRID:
-            dense_weight = options.naive_dense_weight
-            bm25_weight = options.naive_bm25_weight
+            dense_weight = options.hybrid_dense_weight
+            bm25_weight = options.hybrid_bm25_weight
         else:
             raise ValueError(f"unsupported chunk retrieval route: {route.value}")
         dense_scores = (
@@ -1811,11 +1805,11 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "candidate_multiplier",
             "context_token_budget",
             "graph_max_hops",
-            "naive_weight",
-            "local_weight",
-            "global_weight",
-            "naive_dense_weight",
-            "naive_bm25_weight",
+            "hybrid_weight",
+            "graph_local_weight",
+            "graph_global_weight",
+            "hybrid_dense_weight",
+            "hybrid_bm25_weight",
             "bm25_k1",
             "bm25_b",
             "hybrid_lexical_scorer",

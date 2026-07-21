@@ -140,29 +140,6 @@ class RetrievalSettings(BaseSettings):
             raise ValueError("at least one hybrid-search subroute weight must be positive")
         return self
 
-    # The deprecated Streamlit module still reads these attributes while its
-    # shared service factory is used by the TypeScript workbench API.
-    @property
-    def naive_weight(self) -> float:
-        return self.hybrid_weight
-
-    @property
-    def local_weight(self) -> float:
-        return self.graph_local_weight
-
-    @property
-    def global_weight(self) -> float:
-        return self.graph_global_weight
-
-    @property
-    def naive_dense_weight(self) -> float:
-        return self.hybrid_dense_weight
-
-    @property
-    def naive_bm25_weight(self) -> float:
-        return self.hybrid_bm25_weight
-
-
 class EvaluationSettings(BaseSettings):
     """Output defaults for provenance-bound Ragas evaluations."""
 

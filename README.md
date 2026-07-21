@@ -186,10 +186,12 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 src/hybrid_rag/
 ├── ingest/       # loader、清洗、章节感知分块与稳定 ID
 ├── extraction/   # 图谱抽取、校验、修复与规范化
-├── retrieval/    # 三路召回、融合、图路径、rerank 与 trace
+├── retrieval/    # Dense、BM25、图谱召回、融合、rerank 与 trace
 ├── agentic/      # 有界 Planner、worker、工具与审计事件
 ├── evaluation/   # evidence contract、retrieval metrics 与 Ragas
-└── storage/      # SQLite repository 与 migrations
+├── storage/      # SQLite repository 与 migrations
+├── runtime.py    # FastAPI 工作台共享的模型与服务工厂
+└── web_api.py    # React/TypeScript 工作台的 HTTP + SSE 边界
 
 web/              # React + TypeScript + Vite 工作台
 scripts/          # 语料准备、题集审计和 benchmark 入口

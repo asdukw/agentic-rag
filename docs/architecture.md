@@ -286,8 +286,8 @@ embedding API cost.
 
 ## Operational checkpoints
 
-- Alembic upgrades run before pipeline commands; schema `0007` adds the
-  industry-aligned retrieval strategy names without deleting historical traces.
+- Alembic upgrades run before pipeline commands; schema `0007` rewrites historical
+  trace names and payload keys once, then enforces only the current strategy names.
 - `ingest` owns file-level isolation, PDF structure recovery, deterministic
   quality classification, and transactional document/chunk updates.
 - `build-graph` uses the business database as the fact source and a separate

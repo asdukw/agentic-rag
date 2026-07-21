@@ -43,6 +43,8 @@ offline-testable adapter for CI.
 - Persist every retrieval as an `rtr_` trace containing input, index identity,
   route candidates, fusion components, graph paths, final context and optional
   answer. Replay reads that stored result without re-embedding or re-ranking.
+  Migration `0007` rewrites legacy mode names and nested trace keys once; runtime
+  parsers and the final database constraint accept only the current taxonomy.
 - When ingestion replaces a document's chunks, deactivate every profile that
   contains those source chunks before deletion. The stale vectors and historical
   traces remain auditable, but only a rebuilt `ready` profile can be queried.

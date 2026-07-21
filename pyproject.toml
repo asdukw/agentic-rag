@@ -38,7 +38,6 @@ dev = [
     "ragas>=0.4,<1",
     "reportlab>=4.4,<5",
     "ruff>=0.12,<1",
-    "streamlit>=1.58,<2",
 ]
 
 [build-system]

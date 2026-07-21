@@ -76,7 +76,7 @@ class BGEM3EmbeddingProvider:
 
     Model construction is lazy so commands that only inspect existing data do not
     download or initialize model weights. Loaded models are shared by model ID and
-    precision mode within a process, which keeps repeated Streamlit actions cheap.
+    precision mode within a process, which keeps repeated API requests cheap.
     """
 
     provider = BGE_M3_PROVIDER

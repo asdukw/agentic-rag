@@ -15,16 +15,6 @@ RETRIEVAL_MODE_SEMANTICS_VERSION = "hybrid-search-v3"
 INDEX_TEXT_SCHEMA_VERSION = "1"
 
 
-class RetrievalMode(StrEnum):
-    """Deprecated Streamlit-only names retained until that UI is removed."""
-
-    NAIVE = "naive"
-    LOCAL = "local"
-    GLOBAL = "global"
-    HYBRID = "hybrid"
-    MIX = "mix"
-
-
 class RetrievalStrategy(StrEnum):
     """Public retrieval names aligned with common hybrid-search terminology."""
 
