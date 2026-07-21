@@ -13,8 +13,9 @@
 1. 第一阶段使用普通 Python 服务编排确定性 ETL，不引入 Agent。
 2. PDF 解析、Pydantic 校验、SQLAlchemy/Alembic、CLI 和 tokenizer 采用成熟库。
 3. 第二阶段起使用 LangGraph 作为薄编排层；DeepSeek 通过项目自己的 client 调用。
-4. 实体归一、关系合并、图谱、索引文本构造、naive/local/global 基础检索，以及
-   `hybrid`（local + global）和默认 `mix`（naive + local + global）复合检索、融合评分、
+4. 实体归一、关系合并、图谱、索引文本构造、`dense`/`bm25`/`hybrid` 基础检索，以及
+   `graph_local`/`graph_global`/`graph_hybrid` 图谱检索和默认
+   `mix`（hybrid + graph_local + graph_global）复合检索、融合评分、
    上下文预算和引用追踪必须由项目实现。
 5. 所有第三方实现放在 adapter 后，领域 schema 不暴露框架类型。
 

@@ -10,9 +10,9 @@
 
 ## 结果先看
 
-在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA reranker 配置下，`mix` 与 `naive` 的配对结果如下。相关性指标只聚合其中 50 道可回答题。
+在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA reranker 配置下，`mix` 与旧版 `naive` 的配对结果如下。旧版 `naive` 等价于现在的行业标准 `hybrid`（Dense + BM25）；相关性指标只聚合其中 50 道可回答题。该 benchmark 将按新命名重新运行，表中保留原始报告标签以避免篡改历史产物。
 
-| 指标 | naive | mix | mix - naive |
+| 指标 | hybrid（旧报告：naive） | mix | mix - hybrid |
 |---|---:|---:|---:|
 | Exact-page Raw Recall@8 | 0.730 | 0.720 | -0.010 |
 | Exact-page Context Recall@8 | 0.700 | 0.710 | +0.010 |
@@ -23,7 +23,7 @@
 
 在 10 道 multi-context 题上，`mix` 的优势更集中：
 
-| 指标 | naive | mix |
+| 指标 | hybrid（旧报告：naive） | mix |
 |---|---:|---:|
 | Exact-page Raw Recall@8 | 0.050 | **0.150** |
 | Document Context Recall@8 | 0.600 | **0.750** |
@@ -35,8 +35,8 @@
 
 ## 我在这个项目中解决了什么
 
-- **三路可解释检索**：`naive` 使用 chunk dense + BM25，`local` 从实体进入图谱，`global` 从关系和主题进入图谱；每一路都保留原始分、归一化分和加权贡献。
-- **真正的融合排序**：组合模式按归一化后的显式权重合并候选，不再使用 round-robin；`mix = naive + local + global`。
+- **七种清晰检索策略**：`dense`、`bm25` 与行业标准 `hybrid = dense + bm25` 可以直接消融；`graph_local`、`graph_global`、`graph_hybrid` 明确限定为图谱检索。
+- **真正的融合排序**：组合模式按归一化后的显式权重合并候选，不再使用 round-robin；`mix = hybrid + graph_local + graph_global`。
 - **复杂问题证据覆盖**：多跳路径可在有界范围内补充来源 chunk；显式比较问题会拆分子查询，并用跨文档 anchors 和 coverage-first context 避免第二侧证据被挤出。
 - **本地模型链路**：BGE-M3 建立 chunk / entity / relation 三个索引分区，可选 bge-reranker-v2-m3 将 32 个候选精排为 Top-8；CUDA 可用时自动选择 GPU。
 - **证据是一等数据**：回答只能引用实际读入 token budget 的原始 chunk；稳定 evidence ID、索引 profile、语料 hash 和 retrieval trace 支持审计与 replay。
@@ -65,7 +65,7 @@ flowchart LR
     end
 
     subgraph Online["在线检索"]
-        Question["Question"] --> Recall["Naive / Local / Global<br/>Dense+BM25 · Entity · Relation"]
+        Question["Question"] --> Recall["Dense / BM25 / Hybrid / Graph<br/>Chunk · Entity · Relation"]
         Profile --> Recall
         Recall --> Fusion["归一化加权融合<br/>多跳补证 · 多上下文覆盖"]
         Fusion --> Rerank["Optional BGE Reranker<br/>Top-32 → Top-8"]
@@ -87,11 +87,13 @@ flowchart LR
 
 | 模式 | 召回入口 | 适合问题 |
 |---|---|---|
-| `naive` | chunk dense + BM25 | 明确事实、关键词与语义混合查询 |
-| `local` | entity vector → graph neighbors → source chunks | 实体、方法、数据集或局部关系 |
-| `global` | relation vector → graph paths → source chunks | 主题、关系、总结和全局问题 |
-| `hybrid` | local + global 加权融合 | 只使用图谱侧的组合检索 |
-| `mix` | naive + local + global 加权融合 | 固定链路下的通用默认组合 |
+| `dense` | chunk dense vector | 纯语义检索基线 |
+| `bm25` | deterministic BM25 | 纯关键词检索基线 |
+| `hybrid` | dense + BM25 加权融合 | 行业标准 Hybrid Search |
+| `graph_local` | entity vector → graph neighbors → source chunks | 实体、方法、数据集或局部关系 |
+| `graph_global` | relation vector → graph paths → source chunks | 主题、关系、总结和全局问题 |
+| `graph_hybrid` | graph_local + graph_global 加权融合 | 只使用图谱侧的组合检索 |
+| `mix` | hybrid + graph_local + graph_global 加权融合 | 固定链路下的通用默认组合 |
 | `agentic` | 有界 Planner 动态选择上述只读工具 | 需要分解、跨文档或迭代取证的问题 |
 
 实体、关系和图路径只作为检索线索，最终 citation 必须回到原始 chunk。
@@ -107,7 +109,7 @@ uv run hrag ingest tests/fixtures/corpus --db storage/portfolio-demo.db
 
 uv run hrag build-index --db storage/portfolio-demo.db
 
-uv run hrag retrieve "How does mix retrieval differ from hybrid retrieval?" --db storage/portfolio-demo.db --mode naive --json
+uv run hrag retrieve "How does dense retrieval differ from hybrid search?" --db storage/portfolio-demo.db --mode hybrid --json
 ```
 
 首次建立索引会下载本地 `BAAI/bge-m3` 权重，不需要 embedding API key。Windows/Linux 默认安装 PyTorch CUDA 13.0 build；检测到兼容 GPU 时使用 CUDA，否则回退 CPU。macOS 使用普通 PyTorch build。
@@ -158,6 +160,8 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 3. **Semantic-evidence**：检索上下文是否在语义上覆盖参考证据。
 
 每层又区分 Raw Top-K 与 token budget 后真正交给回答器的 Delivered Context。60 题适合工程回归和学习项目展示，但不足以支持“全面显著领先”的强结论。
+
+模式名称本身就是可配对的实验条件：`--modes dense,hybrid` 直接测量加入 BM25 的增量，`--modes hybrid,mix` 测量继续加入图谱路由后的增量；两组都可统一选择是否启用 reranker。
 
 评测入口和复现配置见：
 

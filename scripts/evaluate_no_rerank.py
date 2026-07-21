@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import sys
 
-DEFAULT_MODES = "naive,local,global,hybrid,mix,agentic"
+DEFAULT_MODES = "dense,bm25,hybrid,graph_local,graph_global,graph_hybrid,mix,agentic"
 DEFAULT_SMOKE_OUTPUT = "artifacts/evaluations/six-modes-smoke-no-rerank.json"
 DEFAULT_FULL_OUTPUT = "artifacts/evaluations/six-modes-no-rerank.json"
 

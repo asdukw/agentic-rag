@@ -27,7 +27,7 @@ from hybrid_rag.agentic.models import (
 )
 from hybrid_rag.agentic.planner import AgentPlanner
 from hybrid_rag.evaluation.agentic_metrics import score_agentic_events
-from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalResult, RetrievalStrategy
 from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import IndexItem, LoadedIndex
@@ -371,9 +371,19 @@ class AgentRunner:
         if action.action is AgentActionName.SEARCH_CHUNKS:
             return self._search_chunks(session, action)
         if action.action is AgentActionName.SEARCH_ENTITIES:
-            return self._search_graph(session, action, RetrievalMode.LOCAL, "entity")
+            return self._search_graph(
+                session,
+                action,
+                RetrievalStrategy.GRAPH_LOCAL,
+                "entity",
+            )
         if action.action is AgentActionName.SEARCH_RELATIONS:
-            return self._search_graph(session, action, RetrievalMode.GLOBAL, "relation")
+            return self._search_graph(
+                session,
+                action,
+                RetrievalStrategy.GRAPH_GLOBAL,
+                "relation",
+            )
         if action.action is AgentActionName.EXPAND_GRAPH:
             return self._expand_graph(session, action)
         if action.action is AgentActionName.READ_EVIDENCE:
@@ -393,13 +403,14 @@ class AgentRunner:
         if strategy == "hybrid":
             strategy = "dense_bm25"
         options = _tool_options(session, action.args)
-        if strategy == "dense":
-            options = replace(options, naive_dense_weight=1.0, naive_bm25_weight=0.0)
-        elif strategy == "bm25":
-            options = replace(options, naive_dense_weight=0.0, naive_bm25_weight=1.0)
+        retrieval_strategy = {
+            "dense": RetrievalStrategy.DENSE,
+            "bm25": RetrievalStrategy.BM25,
+            "dense_bm25": RetrievalStrategy.HYBRID,
+        }[strategy]
         result = session.service.retrieve(
             query,
-            mode=RetrievalMode.NAIVE,
+            mode=retrieval_strategy,
             options=options,
             profile_ref=session.profile_id,
             persist=False,
@@ -425,7 +436,7 @@ class AgentRunner:
         self,
         session: _AgentSession,
         action: AgentAction,
-        mode: RetrievalMode,
+        mode: RetrievalStrategy,
         expected_kind: Literal["entity", "relation"],
     ) -> ToolOutcome:
         if session.searches >= session.budget.max_searches:

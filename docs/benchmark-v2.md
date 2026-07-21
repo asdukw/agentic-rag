@@ -1,5 +1,9 @@
 # Benchmark v2（2026-07-21）
 
+> 这是命名修正前的历史报告。报告中的 `naive` 等价于当前 `hybrid`
+>（Dense + BM25）；当时的 `hybrid` 已更名为 `graph_hybrid`。指标与原始 JSON
+> 标签保持不变，下一轮 benchmark 将直接使用新命名重新生成。
+
 ## 结论
 
 本轮已经完成融合排序、扩大候选池、multi-hop 补证、multi-context 覆盖约束、题集人工修订、reranker 与多口径指标评测。
@@ -136,7 +140,7 @@ uv run python scripts/evaluate_retrieval.py `
   --testset artifacts/ragas/rag-papers-benchmark-v2.json `
   --db storage/app.db `
   --profile idx_5e96c37b0d9f624d2d09 `
-  --modes naive,mix `
+  --modes hybrid,mix `
   --top 8 `
   --semantic-threshold 0.75 `
   --output artifacts/evaluations/rag-papers-retrieval-v2-no-rerank-gpu.json
@@ -152,7 +156,7 @@ uv run python scripts/evaluate_retrieval.py `
   --testset artifacts/ragas/rag-papers-benchmark-v2.json `
   --db storage/app.db `
   --profile idx_5e96c37b0d9f624d2d09 `
-  --modes naive,mix `
+  --modes hybrid,mix `
   --top 8 `
   --rerank `
   --semantic-threshold 0.75 `

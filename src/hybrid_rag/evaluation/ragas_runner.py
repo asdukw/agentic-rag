@@ -26,7 +26,7 @@ from hybrid_rag.evaluation.testset_contract import (
     validate_corpus_content_hash,
     validate_testset_sources,
 )
-from hybrid_rag.retrieval.models import RetrievalMode
+from hybrid_rag.retrieval.models import RetrievalStrategy
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import StoredIndexProfile
@@ -95,7 +95,7 @@ class RagasEvaluationRunner:
         self,
         testset_path: Path,
         *,
-        modes: Sequence[RetrievalMode],
+        modes: Sequence[RetrievalStrategy],
         retrieval_options: RetrievalOptions,
         profile_ref: str | None,
         judge_model: str,

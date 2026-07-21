@@ -52,7 +52,7 @@ from hybrid_rag.retrieval.embedding import (
     EmbeddingConfigurationError,
     HashEmbeddingProvider,
 )
-from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.models import IndexBuildReport, RetrievalResult, RetrievalStrategy
 from hybrid_rag.retrieval.query import DeepSeekQueryClient, DeterministicQueryClient, QueryClient
 from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import AnswerResult, RetrievalOptions, RetrievalService
@@ -142,11 +142,11 @@ def _retrieval_options(
         candidate_multiplier=settings.candidate_multiplier,
         context_token_budget=context_tokens or settings.context_token_budget,
         graph_max_hops=graph_hops or settings.graph_max_hops,
-        naive_weight=settings.naive_weight,
-        local_weight=settings.local_weight,
-        global_weight=settings.global_weight,
-        naive_dense_weight=settings.naive_dense_weight,
-        naive_bm25_weight=settings.naive_bm25_weight,
+        naive_weight=settings.hybrid_weight,
+        local_weight=settings.graph_local_weight,
+        global_weight=settings.graph_global_weight,
+        naive_dense_weight=settings.hybrid_dense_weight,
+        naive_bm25_weight=settings.hybrid_bm25_weight,
         bm25_k1=settings.bm25_k1,
         bm25_b=settings.bm25_b,
         reranker_provider=settings.reranker_provider,
@@ -936,7 +936,10 @@ def retrieve(
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
     mode: Annotated[
         str,
-        typer.Option("--mode", help="naive, local, global, hybrid, or mix"),
+        typer.Option(
+            "--mode",
+            help="dense, bm25, hybrid, graph_local, graph_global, graph_hybrid, or mix",
+        ),
     ] = "mix",
     profile: Annotated[
         str | None,
@@ -955,9 +958,12 @@ def retrieve(
     ] = False,
 ) -> None:
     try:
-        selected_mode = RetrievalMode(mode)
+        selected_mode = RetrievalStrategy(mode)
     except ValueError as error:
-        raise typer.BadParameter("--mode must be naive, local, global, hybrid, or mix") from error
+        raise typer.BadParameter(
+            "--mode must be dense, bm25, hybrid, graph_local, graph_global, "
+            "graph_hybrid, or mix"
+        ) from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
     deepseek_settings = DeepSeekSettings()
@@ -1008,7 +1014,13 @@ def ask(
     db_path: Annotated[Path | None, typer.Option("--db", help="SQLite file")] = None,
     mode: Annotated[
         str,
-        typer.Option("--mode", help="agentic, naive, local, global, hybrid, or mix"),
+        typer.Option(
+            "--mode",
+            help=(
+                "agentic, dense, bm25, hybrid, graph_local, graph_global, "
+                "graph_hybrid, or mix"
+            ),
+        ),
     ] = "agentic",
     profile: Annotated[
         str | None,
@@ -1036,13 +1048,14 @@ def ask(
         typer.Option("--json", help="Print JSON answer, evidence, and trace"),
     ] = False,
 ) -> None:
-    selected_mode: RetrievalMode | None = None
+    selected_mode: RetrievalStrategy | None = None
     if mode != "agentic":
         try:
-            selected_mode = RetrievalMode(mode)
+            selected_mode = RetrievalStrategy(mode)
         except ValueError as error:
             raise typer.BadParameter(
-                "--mode must be agentic, naive, local, global, hybrid, or mix"
+                "--mode must be agentic, dense, bm25, hybrid, graph_local, "
+                "graph_global, graph_hybrid, or mix"
             ) from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
@@ -1160,9 +1173,12 @@ def evaluate(
         str,
         typer.Option(
             "--modes",
-            help="Comma-separated modes: agentic, naive, local, global, hybrid, or mix",
+            help=(
+                "Comma-separated modes: agentic, dense, bm25, hybrid, graph_local, "
+                "graph_global, graph_hybrid, or mix"
+            ),
         ),
-    ] = "agentic,mix,naive",
+    ] = "agentic,mix,hybrid",
     top: Annotated[int | None, typer.Option("--top", min=1)] = None,
     context_tokens: Annotated[int | None, typer.Option("--context-tokens", min=1)] = None,
     graph_hops: Annotated[int | None, typer.Option("--graph-hops", min=1, max=4)] = None,
@@ -1190,12 +1206,15 @@ def evaluate(
     mode_names = tuple(value.strip() for value in modes.split(",") if value.strip())
     if not mode_names or len(mode_names) != len(set(mode_names)):
         raise typer.BadParameter("--modes must contain one or more distinct modes")
-    allowed_modes = {"agentic", *(mode.value for mode in RetrievalMode)}
+    allowed_modes = {"agentic", *(mode.value for mode in RetrievalStrategy)}
     if any(value not in allowed_modes for value in mode_names):
         raise typer.BadParameter(
-            "--modes must use agentic, naive, local, global, hybrid, and/or mix"
+            "--modes must use agentic, dense, bm25, hybrid, graph_local, "
+            "graph_global, graph_hybrid, and/or mix"
         )
-    selected_modes = tuple(RetrievalMode(value) for value in mode_names if value != "agentic")
+    selected_modes = tuple(
+        RetrievalStrategy(value) for value in mode_names if value != "agentic"
+    )
     include_agentic = "agentic" in mode_names
 
     settings = Settings()

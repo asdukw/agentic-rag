@@ -44,8 +44,8 @@ from hybrid_rag.retrieval.models import (
     RerankComponentTrace,
     RerankTrace,
     RerankTraceHit,
-    RetrievalMode,
     RetrievalResult,
+    RetrievalStrategy,
     RetrievalTrace,
     RouteTrace,
     ScoreComponent,
@@ -129,7 +129,7 @@ class RetrievalOptions:
         if self.naive_weight + self.local_weight + self.global_weight <= 0:
             raise ValueError("at least one fusion weight must be positive")
         if self.naive_dense_weight + self.naive_bm25_weight <= 0:
-            raise ValueError("at least one naive subroute weight must be positive")
+            raise ValueError("at least one hybrid-search subroute weight must be positive")
         BM25Config(k1=self.bm25_k1, b=self.bm25_b)
         if not self.reranker_provider.strip():
             raise ValueError("reranker_provider must not be empty")
@@ -149,17 +149,23 @@ class RetrievalOptions:
     @property
     def weights(self) -> dict[str, float]:
         return {
-            RetrievalMode.NAIVE.value: self.naive_weight,
-            RetrievalMode.LOCAL.value: self.local_weight,
-            RetrievalMode.GLOBAL.value: self.global_weight,
+            RetrievalStrategy.HYBRID.value: self.naive_weight,
+            RetrievalStrategy.GRAPH_LOCAL.value: self.local_weight,
+            RetrievalStrategy.GRAPH_GLOBAL.value: self.global_weight,
         }
 
     @property
-    def naive_subroute_weights(self) -> dict[str, float]:
+    def hybrid_subroute_weights(self) -> dict[str, float]:
         return {
             "dense": self.naive_dense_weight,
             "bm25": self.naive_bm25_weight,
         }
+
+    @property
+    def naive_subroute_weights(self) -> dict[str, float]:
+        """Return the legacy property name for callers replaying older options."""
+
+        return self.hybrid_subroute_weights
 
     @property
     def bm25_config(self) -> BM25Config:
@@ -193,7 +199,7 @@ class AnswerResult(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class _RouteResult:
-    route: RetrievalMode
+    route: RetrievalStrategy
     chunk_scores: dict[str, float]
     chunk_raw_scores: dict[str, float]
     entity_scores: dict[str, float]
@@ -322,24 +328,26 @@ class RetrievalService:
         self,
         question: str,
         *,
-        mode: RetrievalMode | str = RetrievalMode.MIX,
+        mode: RetrievalStrategy | str = RetrievalStrategy.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
         keywords: Sequence[str] = (),
         persist: bool = True,
         model_info: Mapping[str, Any] | None = None,
     ) -> RetrievalResult:
-        """Run one of naive/local/global/hybrid/mix retrieval and optionally save its trace."""
+        """Run one named retrieval strategy and optionally save its trace."""
 
         normalized_question = _question(question)
-        selected_mode = RetrievalMode(mode)
+        selected_mode = resolve_retrieval_strategy(mode)
         effective = options or RetrievalOptions()
         normalized_keywords = _keywords(keywords)
         expanded_query = _expanded_query(normalized_question, normalized_keywords)
         with self.database.session_factory() as session:
             index = self.repository.load_index(session, profile_ref)
-        self._validate_query_provider(index.profile)
-        query_vector = self.embedding_provider.embed((expanded_query,))[0]
+        query_vector: Sequence[float] | None = None
+        if selected_mode is not RetrievalStrategy.BM25:
+            self._validate_query_provider(index.profile)
+            query_vector = self.embedding_provider.embed((expanded_query,))[0]
         result = self._execute(
             index,
             query=normalized_question,
@@ -358,7 +366,7 @@ class RetrievalService:
         question: str,
         *,
         keyword_extractor: KeywordExtractor | None = None,
-        mode: RetrievalMode | str = RetrievalMode.MIX,
+        mode: RetrievalStrategy | str = RetrievalStrategy.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
         persist: bool = True,
@@ -386,7 +394,7 @@ class RetrievalService:
         question: str,
         *,
         query_client: QueryClient | None = None,
-        mode: RetrievalMode | str = RetrievalMode.MIX,
+        mode: RetrievalStrategy | str = RetrievalStrategy.MIX,
         options: RetrievalOptions | None = None,
         profile_ref: str | None = None,
     ) -> AnswerResult:
@@ -603,8 +611,8 @@ class RetrievalService:
         query: str,
         expanded_query: str,
         keywords: tuple[str, ...],
-        query_vector: Sequence[float],
-        mode: RetrievalMode,
+        query_vector: Sequence[float] | None,
+        mode: RetrievalStrategy,
         options: RetrievalOptions,
     ) -> RetrievalResult:
         route_candidate_limit = max(
@@ -616,7 +624,7 @@ class RetrievalService:
             for route in _composite_routes(mode)
             if options.weights.get(route.value, 0.0) > 0.0
         )
-        if mode in {RetrievalMode.HYBRID, RetrievalMode.MIX} and not composite_routes:
+        if mode in {RetrievalStrategy.GRAPH_HYBRID, RetrievalStrategy.MIX} and not composite_routes:
             raise ValueError(f"{mode.value} requires at least one positive route weight")
         if composite_routes:
             with ThreadPoolExecutor(
@@ -626,21 +634,22 @@ class RetrievalService:
                 futures = {
                     route: (
                         executor.submit(
-                            self._naive_route,
+                            self._hybrid_route,
                             index,
                             query_vector,
                             expanded_query,
                             route_candidate_limit,
                             options,
+                            route=route,
                         )
-                        if route is RetrievalMode.NAIVE
+                        if route is RetrievalStrategy.HYBRID
                         else executor.submit(
                             {
-                                RetrievalMode.LOCAL: self._local_route,
-                                RetrievalMode.GLOBAL: self._global_route,
+                                RetrievalStrategy.GRAPH_LOCAL: self._local_route,
+                                RetrievalStrategy.GRAPH_GLOBAL: self._global_route,
                             }[route],
                             index,
-                            query_vector,
+                            _required_query_vector(query_vector, route),
                             route_candidate_limit,
                         )
                     )
@@ -657,19 +666,28 @@ class RetrievalService:
                 route.value: self._route_trace(result, index) for route, result in routes.items()
             }
         else:
-            if mode is RetrievalMode.NAIVE:
-                route = self._naive_route(
+            if mode in {
+                RetrievalStrategy.DENSE,
+                RetrievalStrategy.BM25,
+                RetrievalStrategy.HYBRID,
+            }:
+                route = self._hybrid_route(
                     index,
                     query_vector,
                     expanded_query,
                     route_candidate_limit,
                     options,
+                    route=mode,
                 )
             else:
                 route = {
-                    RetrievalMode.LOCAL: self._local_route,
-                    RetrievalMode.GLOBAL: self._global_route,
-                }[mode](index, query_vector, route_candidate_limit)
+                    RetrievalStrategy.GRAPH_LOCAL: self._local_route,
+                    RetrievalStrategy.GRAPH_GLOBAL: self._global_route,
+                }[mode](
+                    index,
+                    _required_query_vector(query_vector, mode),
+                    route_candidate_limit,
+                )
             routes = {mode: route}
             fused_scores = dict(route.chunk_scores)
             components = {chunk_id: {mode.value: score} for chunk_id, score in fused_scores.items()}
@@ -706,12 +724,13 @@ class RetrievalService:
             if len(subquery_vectors) != len(multi_context_subqueries):
                 raise RuntimeError("embedding provider returned a different number of vectors")
             subquery_routes = tuple(
-                self._naive_route(
+                self._hybrid_route(
                     index,
                     vector,
                     subquery,
                     route_candidate_limit,
                     options,
+                    route=RetrievalStrategy.HYBRID,
                 )
                 for subquery, vector in zip(
                     multi_context_subqueries,
@@ -813,6 +832,18 @@ class RetrievalService:
         )
         context = "\n\n".join(_render_context(item) for item in selected_context)
         context_tokens = sum(item.token_count for item in selected_context)
+        chunk_route = next(
+            (
+                routes[strategy]
+                for strategy in (
+                    RetrievalStrategy.DENSE,
+                    RetrievalStrategy.BM25,
+                    RetrievalStrategy.HYBRID,
+                )
+                if strategy in routes
+            ),
+            None,
+        )
         hit_values = tuple(
             CandidateHit(
                 object_id=chunk_id,
@@ -827,8 +858,8 @@ class RetrievalService:
                     for route, score in sorted(components.get(chunk_id, {}).items())
                 },
                 score_components=(
-                    routes[RetrievalMode.NAIVE].chunk_score_components.get(chunk_id, {})
-                    if RetrievalMode.NAIVE in routes
+                    chunk_route.chunk_score_components.get(chunk_id, {})
+                    if chunk_route is not None
                     else {}
                 ),
                 source_chunk_ids=(chunk_id,),
@@ -856,8 +887,8 @@ class RetrievalService:
                 "embedding_model": index.profile.model,
                 "embedding_dimensions": index.profile.dimensions,
                 "tokenizer": self.token_counter.name,
-                "naive_lexical_scorer": BM25_SCORER_VERSION,
-                "naive_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
+                "hybrid_lexical_scorer": BM25_SCORER_VERSION,
+                "hybrid_lexical_tokenizer": LEXICAL_TOKENIZER_VERSION,
                 "mode_semantics_version": RETRIEVAL_MODE_SEMANTICS_VERSION,
                 "candidate_selection_strategy": (
                     "fused_score_with_document_coverage"
@@ -910,7 +941,8 @@ class RetrievalService:
                         else "none"
                     ),
                     "score_formula": (
-                        "sum(min_max(subquery_naive_score) * multi_context_weight / subquery_count)"
+                        "sum(min_max(subquery_hybrid_score) * "
+                        "multi_context_weight / subquery_count)"
                     ),
                     "requested_document_count": min(
                         len(multi_context_subqueries),
@@ -1042,17 +1074,35 @@ class RetrievalService:
             ),
         )
 
-    def _naive_route(
+    def _hybrid_route(
         self,
         index: LoadedIndex,
-        query_vector: Sequence[float],
+        query_vector: Sequence[float] | None,
         lexical_query: str,
         limit: int,
         options: RetrievalOptions,
+        *,
+        route: RetrievalStrategy,
     ) -> _RouteResult:
+        if route is RetrievalStrategy.DENSE:
+            dense_weight, bm25_weight = 1.0, 0.0
+        elif route is RetrievalStrategy.BM25:
+            dense_weight, bm25_weight = 0.0, 1.0
+        elif route is RetrievalStrategy.HYBRID:
+            dense_weight = options.naive_dense_weight
+            bm25_weight = options.naive_bm25_weight
+        else:
+            raise ValueError(f"unsupported chunk retrieval route: {route.value}")
         dense_scores = (
-            {item.object_id: score for item, score in _score(index.chunks, query_vector, limit)}
-            if options.naive_dense_weight > 0.0
+            {
+                item.object_id: score
+                for item, score in _score(
+                    index.chunks,
+                    _required_query_vector(query_vector, route),
+                    limit,
+                )
+            }
+            if dense_weight > 0.0
             else {}
         )
         bm25_scores = (
@@ -1063,15 +1113,15 @@ class RetrievalService:
                     limit=limit,
                 )
             }
-            if options.naive_bm25_weight > 0.0
+            if bm25_weight > 0.0
             else {}
         )
         scores, score_components = weighted_average_fusion(
             {"dense": dense_scores, "bm25": bm25_scores},
-            options.naive_subroute_weights,
+            {"dense": dense_weight, "bm25": bm25_weight},
         )
         return _RouteResult(
-            route=RetrievalMode.NAIVE,
+            route=route,
             chunk_scores=scores,
             chunk_raw_scores=dict(scores),
             entity_scores={},
@@ -1107,7 +1157,7 @@ class RetrievalService:
                 paths.append(_direct_path(relation, expanded_score))
         entity_scores = {item.object_id: score for item, score in entity_scored}
         return _RouteResult(
-            route=RetrievalMode.LOCAL,
+            route=RetrievalStrategy.GRAPH_LOCAL,
             chunk_scores=chunk_scores,
             chunk_raw_scores=dict(chunk_scores),
             entity_scores=entity_scores,
@@ -1135,7 +1185,7 @@ class RetrievalService:
             paths.append(_direct_path(relation, score))
         relation_scores = {item.object_id: score for item, score in relation_scored}
         return _RouteResult(
-            route=RetrievalMode.GLOBAL,
+            route=RetrievalStrategy.GRAPH_GLOBAL,
             chunk_scores=chunk_scores,
             chunk_raw_scores=dict(chunk_scores),
             entity_scores=entity_scores,
@@ -1179,7 +1229,7 @@ class RetrievalService:
     def _expand_graph_paths(
         self,
         index: LoadedIndex,
-        routes: Mapping[RetrievalMode, _RouteResult],
+        routes: Mapping[RetrievalStrategy, _RouteResult],
         max_hops: int,
     ) -> tuple[GraphPath, ...]:
         paths = [path for route in routes.values() for path in route.paths]
@@ -1225,7 +1275,7 @@ class RetrievalService:
         chunks: Mapping[str, IndexItem],
         scores: Mapping[str, float],
         components: Mapping[str, Mapping[str, float]],
-        routes: Mapping[RetrievalMode, _RouteResult],
+        routes: Mapping[RetrievalStrategy, _RouteResult],
         *,
         budget: int,
     ) -> tuple[ContextItem, ...]:
@@ -1555,13 +1605,36 @@ def _relation_content_hash(relation: SourceRelation) -> str:
     )
 
 
-def _composite_routes(mode: RetrievalMode) -> tuple[RetrievalMode, ...]:
-    """Return the LightRAG-aligned source order for composite modes."""
+def resolve_retrieval_strategy(
+    mode: RetrievalStrategy | str,
+) -> RetrievalStrategy:
+    """Normalize one public retrieval name to the current taxonomy."""
 
-    if mode is RetrievalMode.HYBRID:
-        return (RetrievalMode.LOCAL, RetrievalMode.GLOBAL)
-    if mode is RetrievalMode.MIX:
-        return (RetrievalMode.NAIVE, RetrievalMode.LOCAL, RetrievalMode.GLOBAL)
+    if isinstance(mode, RetrievalStrategy):
+        return mode
+    return RetrievalStrategy(mode)
+
+
+def _required_query_vector(
+    query_vector: Sequence[float] | None,
+    mode: RetrievalStrategy,
+) -> Sequence[float]:
+    if query_vector is None:
+        raise ValueError(f"{mode.value} retrieval requires a query embedding")
+    return query_vector
+
+
+def _composite_routes(mode: RetrievalStrategy) -> tuple[RetrievalStrategy, ...]:
+    """Return the stable source order for composite retrieval strategies."""
+
+    if mode is RetrievalStrategy.GRAPH_HYBRID:
+        return (RetrievalStrategy.GRAPH_LOCAL, RetrievalStrategy.GRAPH_GLOBAL)
+    if mode is RetrievalStrategy.MIX:
+        return (
+            RetrievalStrategy.HYBRID,
+            RetrievalStrategy.GRAPH_LOCAL,
+            RetrievalStrategy.GRAPH_GLOBAL,
+        )
     return ()
 
 
@@ -1745,8 +1818,8 @@ def _options_hash_from_trace(trace: RetrievalTrace) -> str:
             "naive_bm25_weight",
             "bm25_k1",
             "bm25_b",
-            "naive_lexical_scorer",
-            "naive_lexical_tokenizer",
+            "hybrid_lexical_scorer",
+            "hybrid_lexical_tokenizer",
             "mode_semantics_version",
             "rerank_enabled",
             "reranker_provider",

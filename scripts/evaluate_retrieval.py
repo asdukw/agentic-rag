@@ -35,7 +35,7 @@ from hybrid_rag.retrieval.embedding import (
     HashEmbeddingProvider,
     cosine_similarity,
 )
-from hybrid_rag.retrieval.models import RetrievalMode
+from hybrid_rag.retrieval.models import RetrievalStrategy
 from hybrid_rag.retrieval.query import deterministic_keywords
 from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
@@ -155,7 +155,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--testset", type=Path, required=True)
     parser.add_argument("--db", type=Path, default=Path("storage/app.db"))
     parser.add_argument("--profile")
-    parser.add_argument("--modes", default="naive,mix")
+    parser.add_argument("--modes", default="hybrid,mix")
     parser.add_argument("--top", type=int)
     parser.add_argument(
         "--rerank",
@@ -181,12 +181,12 @@ def _arguments() -> argparse.Namespace:
     return args
 
 
-def _modes(raw: str) -> tuple[RetrievalMode, ...]:
+def _modes(raw: str) -> tuple[RetrievalStrategy, ...]:
     names = tuple(part.strip() for part in raw.split(",") if part.strip())
     if not names or len(names) != len(set(names)):
         raise ValueError("--modes must contain one or more distinct retrieval modes")
     try:
-        return tuple(RetrievalMode(name) for name in names)
+        return tuple(RetrievalStrategy(name) for name in names)
     except ValueError as error:
         raise ValueError("--modes contains an unsupported retrieval mode") from error
 
@@ -242,11 +242,11 @@ def _retrieval_options(
         candidate_multiplier=settings.candidate_multiplier,
         context_token_budget=settings.context_token_budget,
         graph_max_hops=settings.graph_max_hops,
-        naive_weight=settings.naive_weight,
-        local_weight=settings.local_weight,
-        global_weight=settings.global_weight,
-        naive_dense_weight=settings.naive_dense_weight,
-        naive_bm25_weight=settings.naive_bm25_weight,
+        naive_weight=settings.hybrid_weight,
+        local_weight=settings.graph_local_weight,
+        global_weight=settings.graph_global_weight,
+        naive_dense_weight=settings.hybrid_dense_weight,
+        naive_bm25_weight=settings.hybrid_bm25_weight,
         bm25_k1=settings.bm25_k1,
         bm25_b=settings.bm25_b,
         reranker_provider="flagembedding" if rerank else "none",
@@ -278,7 +278,7 @@ class _SemanticInputs:
 
 def _evaluate_modes(
     service: RetrievalService,
-    modes: tuple[RetrievalMode, ...],
+    modes: tuple[RetrievalStrategy, ...],
     *,
     cases: list[dict[str, Any]],
     profile_id: str,
@@ -330,7 +330,7 @@ def _evaluate_modes(
 
 def _evaluate_case(
     service: RetrievalService,
-    mode: RetrievalMode,
+    mode: RetrievalStrategy,
     *,
     case: dict[str, Any],
     case_index: int,
@@ -487,7 +487,7 @@ def _mode_report(state: _ModeState) -> dict[str, Any]:
 
 
 def _attach_semantic_scores(
-    states: dict[RetrievalMode, _ModeState],
+    states: dict[RetrievalStrategy, _ModeState],
     *,
     embedding_provider: BGEM3EmbeddingProvider | HashEmbeddingProvider,
     threshold: float,
@@ -640,7 +640,7 @@ def _value_counts(cases: list[dict[str, Any]], field_name: str) -> dict[str, int
 
 
 def _paired_comparison(
-    reports: dict[str, dict[str, Any]], modes: tuple[RetrievalMode, ...]
+    reports: dict[str, dict[str, Any]], modes: tuple[RetrievalStrategy, ...]
 ) -> dict[str, Any]:
     if len(modes) != 2:
         return {"status": "not_applicable", "reason": "comparison requires exactly two modes"}

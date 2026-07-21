@@ -34,7 +34,17 @@ from hybrid_rag.storage.models import (
 )
 
 INDEX_KINDS = frozenset({"chunk", "entity", "relation"})
-RETRIEVAL_MODES = frozenset({"naive", "local", "global", "hybrid", "mix"})
+RETRIEVAL_MODES = frozenset(
+    {
+        "dense",
+        "bm25",
+        "hybrid",
+        "graph_local",
+        "graph_global",
+        "graph_hybrid",
+        "mix",
+    }
+)
 
 
 class RetrievalRepositoryError(RuntimeError):
@@ -264,7 +274,7 @@ class RetrievalRepository:
         """Load immutable source rows for chunk/entity/relation embedding texts.
 
         With no explicit run, the currently persisted graph snapshot is used.
-        Chunks are always loaded from the current corpus so naive retrieval can
+        Chunks are always loaded from the current corpus so chunk retrieval can
         work before a graph exists; entity/relation rows are empty in that case.
         """
 

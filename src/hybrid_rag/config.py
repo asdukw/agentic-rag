@@ -120,11 +120,11 @@ class RetrievalSettings(BaseSettings):
     candidate_multiplier: int = Field(default=4, ge=1, le=32)
     context_token_budget: int = Field(default=2400, ge=128)
     graph_max_hops: int = Field(default=2, ge=1, le=4)
-    naive_weight: float = Field(default=1.0, ge=0)
-    local_weight: float = Field(default=1.0, ge=0)
-    global_weight: float = Field(default=1.0, ge=0)
-    naive_dense_weight: float = Field(default=1.0, ge=0)
-    naive_bm25_weight: float = Field(default=1.0, ge=0)
+    hybrid_weight: float = Field(default=1.0, ge=0)
+    graph_local_weight: float = Field(default=1.0, ge=0)
+    graph_global_weight: float = Field(default=1.0, ge=0)
+    hybrid_dense_weight: float = Field(default=1.0, ge=0)
+    hybrid_bm25_weight: float = Field(default=1.0, ge=0)
     bm25_k1: float = Field(default=1.2, gt=0)
     bm25_b: float = Field(default=0.75, ge=0, le=1)
     reranker_provider: str = Field(default="none", pattern=r"^(none|flagembedding)$")
@@ -134,11 +134,33 @@ class RetrievalSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_fusion_weights(self) -> RetrievalSettings:
-        if self.naive_weight + self.local_weight + self.global_weight <= 0:
+        if self.hybrid_weight + self.graph_local_weight + self.graph_global_weight <= 0:
             raise ValueError("at least one retrieval fusion weight must be positive")
-        if self.naive_dense_weight + self.naive_bm25_weight <= 0:
-            raise ValueError("at least one naive subroute weight must be positive")
+        if self.hybrid_dense_weight + self.hybrid_bm25_weight <= 0:
+            raise ValueError("at least one hybrid-search subroute weight must be positive")
         return self
+
+    # The deprecated Streamlit module still reads these attributes while its
+    # shared service factory is used by the TypeScript workbench API.
+    @property
+    def naive_weight(self) -> float:
+        return self.hybrid_weight
+
+    @property
+    def local_weight(self) -> float:
+        return self.graph_local_weight
+
+    @property
+    def global_weight(self) -> float:
+        return self.graph_global_weight
+
+    @property
+    def naive_dense_weight(self) -> float:
+        return self.hybrid_dense_weight
+
+    @property
+    def naive_bm25_weight(self) -> float:
+        return self.hybrid_bm25_weight
 
 
 class EvaluationSettings(BaseSettings):

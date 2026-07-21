@@ -1,6 +1,6 @@
 # Benchmark v1（2026-07-20）
 
-> 历史基线，已由 [Benchmark v2](benchmark-v2.md) 取代。本文保留当时的失败现象和诊断过程；其中 round-robin、未人工审校题集和无 reranker 等条件不代表当前实现。
+> 历史基线，已由 [Benchmark v2](benchmark-v2.md) 取代。本文保留当时的失败现象和诊断过程；其中 round-robin、未人工审校题集和无 reranker 等条件不代表当前实现。报告中的 `naive` 等价于当前 `hybrid`（Dense + BM25），当时的 `hybrid` 已更名为 `graph_hybrid`。
 
 ## 结论
 
@@ -98,7 +98,7 @@ uv run scripts/evaluate_retrieval.py `
   --db storage/app.db `
   --profile idx_5e96c37b0d9f624d2d09 `
   --testset artifacts/ragas/rag-papers-benchmark-v1.json `
-  --modes naive,mix `
+  --modes hybrid,mix `
   --output artifacts/evaluations/rag-papers-retrieval-only-naive-mix-v1.json
 ```
 
@@ -111,7 +111,7 @@ uv run scripts/evaluate_no_rerank.py `
   --db storage/app.db `
   --profile idx_5e96c37b0d9f624d2d09 `
   --testset artifacts/ragas/rag-papers-benchmark-v1.json `
-  --modes naive,mix `
+  --modes hybrid,mix `
   --output artifacts/evaluations/rag-papers-benchmark-naive-mix-no-rerank-v1.json
 ```
 

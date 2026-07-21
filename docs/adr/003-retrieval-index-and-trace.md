@@ -1,4 +1,4 @@
-# ADR 003: Three-way retrieval indexes and replayable evidence traces
+# ADR 003: Named retrieval strategies and replayable evidence traces
 
 ## Status
 
@@ -24,17 +24,19 @@ offline-testable adapter for CI.
 - Use a project-owned `EmbeddingProvider` protocol. The default is the local
   FlagEmbedding `BAAI/bge-m3` adapter. `hash-token-v1` remains an explicit
   deterministic adapter for CI and historical profile compatibility.
-- Implement chunk dense + local BM25 lexical ranking for `naive`, local/global
-  graph expansion, per-route min-max normalization, weighted route scores,
+- Implement independently selectable `dense` and `bm25` chunk retrieval;
+  industry-standard `hybrid` combines those two scores. `graph_local` and
+  `graph_global` own entity/relation graph expansion, while `graph_hybrid`
+  combines the graph routes. Per-route min-max normalization, weighted route scores,
   NetworkX path expansion, an optional post-fusion local FlagEmbedding
   cross-encoder rerank, and token-budget context clipping in project code.
-  `hybrid` combines only `local + global`; default `mix` adds `naive`.
+  Default `mix` combines `hybrid + graph_local + graph_global`.
   Composite modes normalize route scores independently, sum their explicit
   weighted contributions, de-duplicate by chunk ID, and rank by the resulting
   fused score. Positive multi-hop paths may inject a bounded set of source
   chunks. Explicit comparison queries add deterministic subquery recall and
   cross-document coverage anchors that survive optional reranking and receive
-  priority during context selection. The naive trace retains raw, normalized,
+  priority during context selection. The hybrid trace retains raw, normalized,
   and weighted dense/BM25 contributions; the rerank trace retains its candidate
   pool, component scores, and final rank. Setting the reranker provider to
   `none` leaves the fused first-stage order unchanged.

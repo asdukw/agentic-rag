@@ -10,16 +10,30 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from hybrid_rag.deepseek_costs import DeepSeekCostSummary
 from hybrid_rag.ids import canonical_json_hash
 
-RETRIEVAL_SCHEMA_VERSION = "3"
-RETRIEVAL_MODE_SEMANTICS_VERSION = "lightrag-v2"
+RETRIEVAL_SCHEMA_VERSION = "4"
+RETRIEVAL_MODE_SEMANTICS_VERSION = "hybrid-search-v3"
 INDEX_TEXT_SCHEMA_VERSION = "1"
 
 
 class RetrievalMode(StrEnum):
+    """Deprecated Streamlit-only names retained until that UI is removed."""
+
     NAIVE = "naive"
     LOCAL = "local"
     GLOBAL = "global"
     HYBRID = "hybrid"
+    MIX = "mix"
+
+
+class RetrievalStrategy(StrEnum):
+    """Public retrieval names aligned with common hybrid-search terminology."""
+
+    DENSE = "dense"
+    BM25 = "bm25"
+    HYBRID = "hybrid"
+    GRAPH_LOCAL = "graph_local"
+    GRAPH_GLOBAL = "graph_global"
+    GRAPH_HYBRID = "graph_hybrid"
     MIX = "mix"
 
 
@@ -81,7 +95,7 @@ class CandidateHit(_StrictRetrievalModel):
 class RouteTrace(_StrictRetrievalModel):
     """Raw candidates for one deterministic recall route."""
 
-    route: RetrievalMode
+    route: RetrievalStrategy
     candidate_count: int = Field(ge=0)
     hits: tuple[CandidateHit, ...] = ()
 
@@ -181,7 +195,7 @@ class RetrievalTrace(_StrictRetrievalModel):
     index_config_hash: str = Field(min_length=1)
     query: str = Field(min_length=1)
     expanded_query: str = Field(min_length=1)
-    mode: RetrievalMode
+    mode: RetrievalStrategy
     keywords: tuple[str, ...] = ()
     routes: dict[str, RouteTrace] = Field(default_factory=dict)
     rerank: RerankTrace | None = None
@@ -201,11 +215,11 @@ class RetrievalTrace(_StrictRetrievalModel):
 
 
 class RetrievalResult(_StrictRetrievalModel):
-    """The shared result schema returned by all five retriever modes."""
+    """The shared result schema returned by every retrieval strategy."""
 
     trace_id: str | None = None
     profile_id: str = Field(min_length=1)
-    mode: RetrievalMode
+    mode: RetrievalStrategy
     query: str = Field(min_length=1)
     keywords: tuple[str, ...] = ()
     hits: tuple[CandidateHit, ...] = ()

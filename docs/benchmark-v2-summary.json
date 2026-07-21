@@ -1,7 +1,13 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "benchmark_type": "retrieval_only",
   "name": "rag-papers-retrieval-v2",
+  "terminology": {
+    "status": "historical_labels_preserved",
+    "naive": "Current hybrid: dense plus BM25.",
+    "hybrid": "Current graph_hybrid: graph_local plus graph_global.",
+    "next_run": "The benchmark will be regenerated with current strategy names."
+  },
   "implementation_commit_after_run": "089f5485a36182481bc9a31a04968280e6772596",
   "report_git_provenance": {
     "base_commit": "c5e08834160a939e456c5ba68e6e73a8de5f398d",

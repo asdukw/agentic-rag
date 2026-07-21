@@ -59,15 +59,19 @@ flowchart LR
         Vectors --> Routes
         NX --> Routes
         Routes{"Selected route"}
-        Routes --> Naive["naive: chunk dense + BM25"]
-        Routes --> Local["local: entity vectors + graph"]
-        Routes --> Global["global: relation vectors + graph"]
-        Routes --> Hybrid["hybrid: local + global\nweighted score fusion"]
-        Routes --> Mix["mix: naive + local + global\nweighted score fusion (fixed-route default)"]
-        Naive --> Fusion["Score normalization, weighted fusion,\ndeduplication, graph-path injection\nand multi-context coverage"]
-        Local --> Fusion
-        Global --> Fusion
+        Routes --> Dense["dense: chunk vectors"]
+        Routes --> BM25["bm25: lexical scores"]
+        Routes --> Hybrid["hybrid: dense + BM25"]
+        Routes --> GraphLocal["graph_local: entity vectors + graph"]
+        Routes --> GraphGlobal["graph_global: relation vectors + graph"]
+        Routes --> GraphHybrid["graph_hybrid: graph_local + graph_global"]
+        Routes --> Mix["mix: hybrid + graph_local + graph_global\nweighted score fusion (fixed-route default)"]
+        Dense --> Fusion["Score normalization, weighted fusion,\ndeduplication, graph-path injection\nand multi-context coverage"]
+        BM25 --> Fusion
         Hybrid --> Fusion
+        GraphLocal --> Fusion
+        GraphGlobal --> Fusion
+        GraphHybrid --> Fusion
         Mix --> Fusion
         Fusion --> Rerank["Optional post-fusion reranker\nTop-M → final Top-K"]
         Rerank --> Context["Coverage-first token-budget\ncontext selection"]
@@ -114,23 +118,22 @@ the invalid response and concrete validation reasons. Canonical entity identity
 does not include type; merged names/aliases choose the most frequent observed
 type, with stable lexical tie-breaking.
 
-`naive`, `local`, and `global` can be selected independently. `naive` ranks
-chunk candidates with dense vector and deterministic local BM25 lexical scores,
-normalizes each subscore independently, and records its raw/normalized/weighted
-components in the trace. After a selected mode's route fusion, the optional
+`dense` and `bm25` are independent chunk-retrieval baselines. The industry-standard
+`hybrid` strategy combines them, normalizes each subscore independently, and
+records its raw/normalized/weighted components in the trace. `graph_local` starts
+from entity vectors; `graph_global` starts from relation vectors. After a selected
+strategy's route fusion, the optional
 `BAAI/bge-reranker-v2-m3` reranker can run a local FlagEmbedding cross-encoder
 over each `[query, passage]` pair and record its raw logit plus
 sigmoid-normalized score. Its provider defaults to `none`, retaining first-stage
 order unless explicitly enabled.
-`hybrid` is not a fourth opaque vector store: it runs only the `local` and
-`global` graph routes, normalizes each route independently, and ranks chunks by
-their explicit weighted fused score. `mix` is the default fixed-route
-LightRAG-aligned composite mode: it adds the project's `naive` route to the same
-fusion contract. Positive paths of at least two hops may inject a bounded number
-of source chunks. Explicit comparison queries are split into aspect subqueries;
+`graph_hybrid` combines only `graph_local + graph_global`, normalizes each route
+independently, and ranks chunks by their explicit weighted fused score. `mix`
+remains the default fixed-route composite strategy and combines
+`hybrid + graph_local + graph_global`. Positive paths of at least two hops may
+inject a bounded number of source chunks. Explicit comparison queries are split into aspect subqueries;
 distinct-document anchors survive optional reranking and receive priority during
-token-budget context assembly. The project's `naive` route retains local BM25
-as an explicit extension beyond LightRAG's vector-only naive mode.
+token-budget context assembly.
 
 ## Persistent ownership and invalidation
 
@@ -243,7 +246,7 @@ flowchart LR
     T --> V["Validate envelope and selected profile\ncorpus-content hash"]
     P["Active or --profile\nindex profile"] --> V
     V --> Pin["Pin profile ID + graph snapshot\nfor the full execution"]
-    Pin --> Ask["For agentic / mix / naive and each case:\nanswer + final evidence\npersist retrieval / agent traces"]
+    Pin --> Ask["For agentic / mix / hybrid and each case:\nanswer + final evidence\npersist retrieval / agent traces"]
     Ask --> IR["Deterministic retrieval:\nexact-page + document-level\nHit@k, Recall@k, MRR, nDCG"]
     Ask --> Semantic["Semantic evidence:\nreference-context cosine coverage"]
     Ask --> Score["Ragas answer scoring:\nfaithfulness, factual correctness,\ncontext precision, context recall"]
@@ -283,8 +286,8 @@ embedding API cost.
 
 ## Operational checkpoints
 
-- Alembic upgrades run before pipeline commands; schema `0006` persists chunk
-  quality without deleting source rows.
+- Alembic upgrades run before pipeline commands; schema `0007` adds the
+  industry-aligned retrieval strategy names without deleting historical traces.
 - `ingest` owns file-level isolation, PDF structure recovery, deterministic
   quality classification, and transactional document/chunk updates.
 - `build-graph` uses the business database as the fact source and a separate
@@ -301,7 +304,7 @@ embedding API cost.
   with the profile ID, configuration hashes, corpus manifest, and code commit
   in any evaluation report.
 - `evaluate --testset` validates the golden envelope against a pinned profile,
-  defaults to `agentic,mix,naive`, persists retrieval and agent traces, and writes
+  defaults to `agentic,mix,hybrid`, persists retrieval and agent traces, and writes
   deterministic retrieval, Ragas answer, and Agentic trajectory metrics. `--smoke`
   runs the same pipeline over a deterministic six-case stratified subset while
   preserving the original test-set case indexes in the report.

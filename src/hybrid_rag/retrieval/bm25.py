@@ -50,7 +50,7 @@ class BM25Scorer:
 
     ``IndexItem.embedding_text`` is the text contract shared with the dense
     index.  Only ``kind == \"chunk\"`` rows are accepted: entities and relations
-    have their own graph-led routes and must not silently enter naive chunk
+    have their own graph-led routes and must not silently enter hybrid chunk
     recall.
     """
 
