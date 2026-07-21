@@ -24,7 +24,7 @@ from hybrid_rag.extraction.workflow import WorkflowOptions
 from hybrid_rag.ingest.chunker import SectionTokenChunker
 from hybrid_rag.ingest.service import IngestionService
 from hybrid_rag.retrieval.embedding import HashEmbeddingProvider
-from hybrid_rag.retrieval.models import RetrievalMode, RetrievalResult
+from hybrid_rag.retrieval.models import RetrievalResult, RetrievalStrategy
 from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, KeywordExtraction
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
@@ -144,50 +144,56 @@ def test_three_indexes_support_all_retrieval_modes_replay_and_grounded_answer(
                 options=options,
                 keywords=("Atlas", "Beacon", "graph"),
             )
-            for mode in RetrievalMode
+            for mode in RetrievalStrategy
         }
 
         for mode, result in results.items():
             _assert_shared_result_contract(result, mode, options.context_token_budget)
             expected_routes = {
-                RetrievalMode.NAIVE: {"naive"},
-                RetrievalMode.LOCAL: {"local"},
-                RetrievalMode.GLOBAL: {"global"},
-                RetrievalMode.HYBRID: {"local", "global"},
-                RetrievalMode.MIX: {"naive", "local", "global"},
+                RetrievalStrategy.DENSE: {"dense"},
+                RetrievalStrategy.BM25: {"bm25"},
+                RetrievalStrategy.HYBRID: {"hybrid"},
+                RetrievalStrategy.GRAPH_LOCAL: {"graph_local"},
+                RetrievalStrategy.GRAPH_GLOBAL: {"graph_global"},
+                RetrievalStrategy.GRAPH_HYBRID: {"graph_local", "graph_global"},
+                RetrievalStrategy.MIX: {"hybrid", "graph_local", "graph_global"},
             }[mode]
             assert set(result.trace.routes) == expected_routes
 
-        naive = results[RetrievalMode.NAIVE]
-        local = results[RetrievalMode.LOCAL]
-        global_result = results[RetrievalMode.GLOBAL]
-        hybrid = results[RetrievalMode.HYBRID]
-        mix = results[RetrievalMode.MIX]
+        dense = results[RetrievalStrategy.DENSE]
+        bm25 = results[RetrievalStrategy.BM25]
+        hybrid = results[RetrievalStrategy.HYBRID]
+        graph_local = results[RetrievalStrategy.GRAPH_LOCAL]
+        graph_global = results[RetrievalStrategy.GRAPH_GLOBAL]
+        graph_hybrid = results[RetrievalStrategy.GRAPH_HYBRID]
+        mix = results[RetrievalStrategy.MIX]
 
-        assert naive.graph_paths == ()
+        assert dense.graph_paths == ()
+        assert bm25.graph_paths == ()
+        assert hybrid.graph_paths == ()
         assert (
-            local.graph_paths
-            and global_result.graph_paths
-            and hybrid.graph_paths
+            graph_local.graph_paths
+            and graph_global.graph_paths
+            and graph_hybrid.graph_paths
             and mix.graph_paths
         )
-        assert all(path.relation_ids for path in hybrid.graph_paths)
-        assert all(path.source_chunk_ids for path in hybrid.graph_paths)
-        assert set(hybrid.hits[0].route_scores) == {"local", "global"}
-        assert set(mix.hits[0].route_scores) == {"naive", "local", "global"}
-        for composite in (hybrid, mix):
+        assert all(path.relation_ids for path in graph_hybrid.graph_paths)
+        assert all(path.source_chunk_ids for path in graph_hybrid.graph_paths)
+        assert set(graph_hybrid.hits[0].route_scores) == {"graph_local", "graph_global"}
+        assert set(mix.hits[0].route_scores) == {"hybrid", "graph_local", "graph_global"}
+        for composite in (graph_hybrid, mix):
             assert all(item.citation_id == item.chunk_id for item in composite.context_items)
             assert all(item.chunk_id in composite.context for item in composite.context_items)
             assert composite.trace.context_tokens <= composite.trace.context_token_budget
-        assert json.loads(hybrid.trace.model_dump_json())["mode"] == "hybrid"
+        assert json.loads(graph_hybrid.trace.model_dump_json())["mode"] == "graph_hybrid"
         assert json.loads(mix.trace.model_dump_json())["mode"] == "mix"
 
-        for composite in (hybrid, mix):
+        for composite in (graph_hybrid, mix):
             assert composite.trace_id is not None
             assert retrieval.replay(composite.trace_id) == composite
 
         answer_result = asyncio.run(retrieval.ask(question, options=options))
-        assert answer_result.retrieval.mode is RetrievalMode.MIX
+        assert answer_result.retrieval.mode is RetrievalStrategy.MIX
         assert answer_result.retrieval.trace_id is not None
         assert answer_result.answer.citations == (
             answer_result.retrieval.context_items[0].citation_id,
@@ -213,7 +219,7 @@ def test_changed_source_document_invalidates_its_active_retrieval_index(
     try:
         profile = retrieval.build_index()
         original = retrieval.retrieve(question, options=options)
-        assert original.mode is RetrievalMode.MIX
+        assert original.mode is RetrievalStrategy.MIX
         assert original.trace_id is not None
 
         corpus = tmp_path / "corpus"
@@ -264,7 +270,7 @@ def test_online_query_usage_is_priced_and_persisted_in_the_replay_trace(tmp_path
             retrieval.ask(
                 "How does Atlas connect Beacon in the graph?",
                 query_client=UsageReportingQueryClient(),
-                mode=RetrievalMode.HYBRID,
+                mode=RetrievalStrategy.GRAPH_HYBRID,
                 options=RetrievalOptions(context_token_budget=40),
             )
         )
@@ -282,7 +288,7 @@ def test_online_query_usage_is_priced_and_persisted_in_the_replay_trace(tmp_path
 
 def _assert_shared_result_contract(
     result: RetrievalResult,
-    mode: RetrievalMode,
+    mode: RetrievalStrategy,
     context_budget: int,
 ) -> None:
     assert result.mode is mode

@@ -5,20 +5,20 @@ import pytest
 from hybrid_rag.retrieval.service import RetrievalOptions
 
 
-def test_naive_subroute_options_are_hashed_and_must_keep_one_scorer_enabled() -> None:
+def test_hybrid_subroute_options_are_hashed_and_must_keep_one_scorer_enabled() -> None:
     baseline = RetrievalOptions()
     lexical_heavy = RetrievalOptions(
-        naive_dense_weight=0.25,
-        naive_bm25_weight=2.0,
+        hybrid_dense_weight=0.25,
+        hybrid_bm25_weight=2.0,
         bm25_k1=1.6,
         bm25_b=0.4,
     )
 
-    assert lexical_heavy.naive_subroute_weights == {"dense": 0.25, "bm25": 2.0}
+    assert lexical_heavy.hybrid_subroute_weights == {"dense": 0.25, "bm25": 2.0}
     assert lexical_heavy.config_hash != baseline.config_hash
 
-    with pytest.raises(ValueError, match="naive subroute weight"):
-        RetrievalOptions(naive_dense_weight=0.0, naive_bm25_weight=0.0)
+    with pytest.raises(ValueError, match="hybrid-search subroute weight"):
+        RetrievalOptions(hybrid_dense_weight=0.0, hybrid_bm25_weight=0.0)
 
 
 def test_rerank_options_are_hashed_and_can_be_explicitly_enabled() -> None:
@@ -52,7 +52,7 @@ def test_rerank_options_are_hashed_and_can_be_explicitly_enabled() -> None:
         ({"bm25_b": 1.01}, "b"),
     ],
 )
-def test_naive_bm25_tuning_parameters_are_validated(
+def test_bm25_tuning_parameters_are_validated(
     kwargs: dict[str, float],
     message: str,
 ) -> None:

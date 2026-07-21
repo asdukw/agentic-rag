@@ -140,9 +140,13 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
     assert retrieved["mode"] == "mix"
     assert retrieved["trace_id"].startswith("rtr_")
     assert retrieved["context_items"]
-    assert set(retrieved["trace"]["routes"]) == {"naive", "local", "global"}
-    assert retrieved["trace"]["settings"]["naive_dense_weight"] == 0.25
-    assert retrieved["trace"]["settings"]["naive_bm25_weight"] == 1.5
+    assert set(retrieved["trace"]["routes"]) == {
+        "hybrid",
+        "graph_local",
+        "graph_global",
+    }
+    assert retrieved["trace"]["settings"]["hybrid_dense_weight"] == 0.25
+    assert retrieved["trace"]["settings"]["hybrid_bm25_weight"] == 1.5
     assert retrieved["trace"]["settings"]["bm25_k1"] == 1.7
     assert retrieved["trace"]["settings"]["bm25_b"] == 0.3
     assert retrieved["trace"]["settings"]["rerank_enabled"] is False
@@ -166,7 +170,7 @@ def test_retrieval_cli_builds_queries_answers_and_replays_offline(
         ],
     )
     assert hybrid["mode"] == "hybrid"
-    assert set(hybrid["trace"]["routes"]) == {"local", "global"}
+    assert set(hybrid["trace"]["routes"]) == {"hybrid"}
 
     answered = _invoke_json(
         runner,
@@ -287,7 +291,7 @@ def test_evaluate_cli_runs_provenance_bound_ragas_testset(
     assert report == json.loads(output_path.read_text(encoding="utf-8"))
     assert captured["testset"] == testset_path
     assert captured["profile_ref"] == index["profile_id"]
-    assert captured["modes"] == (cli_module.RetrievalMode.MIX,)
+    assert captured["modes"] == (cli_module.RetrievalStrategy.MIX,)
     assert captured["judge_model"] == "deepseek-v4-pro"
     assert captured["judge_api_key"] == "test-deepseek-key"
     assert captured["judge_base_url"] == "https://api.example.test"
@@ -311,11 +315,11 @@ def _patch_offline_retrieval(monkeypatch: pytest.MonkeyPatch) -> None:
         candidate_multiplier=4,
         context_token_budget=128,
         graph_max_hops=2,
-        naive_weight=1.0,
-        local_weight=1.0,
-        global_weight=1.0,
-        naive_dense_weight=0.25,
-        naive_bm25_weight=1.5,
+        hybrid_weight=1.0,
+        graph_local_weight=1.0,
+        graph_global_weight=1.0,
+        hybrid_dense_weight=0.25,
+        hybrid_bm25_weight=1.5,
         bm25_k1=1.7,
         bm25_b=0.3,
         reranker_provider="none",

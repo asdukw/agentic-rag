@@ -104,11 +104,11 @@ def test_score_normalization_fusion_ranking_and_budget_are_deterministic() -> No
     assert min_max_normalize({"only": 0.4}) == {"only": 1.0}
     fused, components = weighted_fusion(
         {
-            "naive": {"chunk_a": 0.1, "chunk_b": 0.9},
-            "local": {"chunk_a": 3.0, "chunk_c": 5.0},
-            "global": {"chunk_b": 1.0, "chunk_c": 1.0},
+            "hybrid": {"chunk_a": 0.1, "chunk_b": 0.9},
+            "graph_local": {"chunk_a": 3.0, "chunk_c": 5.0},
+            "graph_global": {"chunk_b": 1.0, "chunk_c": 1.0},
         },
-        {"naive": 2.0, "local": 1.0, "global": 0.5},
+        {"hybrid": 2.0, "graph_local": 1.0, "graph_global": 0.5},
     )
 
     assert fused == {
@@ -116,7 +116,7 @@ def test_score_normalization_fusion_ranking_and_budget_are_deterministic() -> No
         "chunk_b": 2.5,
         "chunk_c": 1.5,
     }
-    assert components["chunk_b"] == {"global": 0.5, "naive": 2.0}
+    assert components["chunk_b"] == {"graph_global": 0.5, "hybrid": 2.0}
     assert rank_ids(fused, limit=3) == ("chunk_b", "chunk_c", "chunk_a")
     assert select_token_budget(
         ("chunk_b", "chunk_c", "chunk_a"),

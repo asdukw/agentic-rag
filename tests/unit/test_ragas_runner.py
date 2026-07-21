@@ -11,7 +11,7 @@ import pytest
 
 from hybrid_rag.deepseek_costs import DeepSeekCostStatus, DeepSeekCostSummary, DeepSeekUsage
 from hybrid_rag.evaluation import ragas_runner
-from hybrid_rag.retrieval.models import RetrievalMode
+from hybrid_rag.retrieval.models import RetrievalStrategy
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions
 
@@ -75,7 +75,7 @@ def test_ragas_runner_pins_one_profile_and_serializes_provenance_and_trace_ids(
             service, cast(QueryClient, object())
         ).run(
             testset_path,
-            modes=(RetrievalMode.NAIVE, RetrievalMode.MIX),
+            modes=(RetrievalStrategy.HYBRID, RetrievalStrategy.MIX),
             retrieval_options=RetrievalOptions(),
             profile_ref="requested-profile",
             judge_model="judge-fixture",
@@ -108,23 +108,26 @@ def test_ragas_runner_pins_one_profile_and_serializes_provenance_and_trace_ids(
             "corpus_content_hash": "c" * 64,
         },
         "runtime": {
-            "modes": ["naive", "mix"],
+            "modes": ["hybrid", "mix"],
             "retrieval_options": {
                 "top_k": 8,
                 "candidate_multiplier": 4,
                 "context_token_budget": 2400,
                 "graph_max_hops": 2,
-                "naive_weight": 1.0,
-                "local_weight": 1.0,
-                "global_weight": 1.0,
-                "naive_dense_weight": 1.0,
-                "naive_bm25_weight": 1.0,
+                "hybrid_weight": 1.0,
+                "graph_local_weight": 1.0,
+                "graph_global_weight": 1.0,
+                "hybrid_dense_weight": 1.0,
+                "hybrid_bm25_weight": 1.0,
                 "bm25_k1": 1.5,
                 "bm25_b": 0.75,
                 "reranker_provider": "none",
                 "reranker_model": "BAAI/bge-reranker-v2-m3",
                 "reranker_use_fp16": False,
                 "rerank_candidate_multiplier": 4,
+                "graph_path_weight": 0.25,
+                "graph_path_candidate_multiplier": 2,
+                "multi_context_weight": 0.5,
             },
             "query_client": {"answer_model": "answer-fixture"},
             "judge": {
@@ -137,7 +140,7 @@ def test_ragas_runner_pins_one_profile_and_serializes_provenance_and_trace_ids(
             },
         },
     }
-    assert report.modes["naive"]["means"] == {"faithfulness": 1.0}
+    assert report.modes["hybrid"]["means"] == {"faithfulness": 1.0}
     assert report.modes["mix"]["retrieval_trace_ids"] == [
         "rtr_fixture_3",
         "rtr_fixture_4",
@@ -173,7 +176,7 @@ def test_ragas_runner_rejects_an_unprovenanced_bare_array(tmp_path: Path) -> Non
                 service, cast(QueryClient, object())
             ).run(
                 testset_path,
-                modes=(RetrievalMode.MIX,),
+                modes=(RetrievalStrategy.MIX,),
                 retrieval_options=RetrievalOptions(),
                 profile_ref=None,
                 judge_model="judge-fixture",
@@ -219,7 +222,7 @@ def test_ragas_runner_checks_the_testset_hash_before_any_retrieval(tmp_path: Pat
                 service, cast(QueryClient, object())
             ).run(
                 testset_path,
-                modes=(RetrievalMode.MIX,),
+                modes=(RetrievalStrategy.MIX,),
                 retrieval_options=RetrievalOptions(),
                 profile_ref=None,
                 judge_model="judge-fixture",
@@ -251,7 +254,7 @@ def test_ragas_runner_keeps_the_latest_observed_retrieval_cost_snapshot(
             service, cast(QueryClient, object())
         ).run(
             testset_path,
-            modes=(RetrievalMode.MIX,),
+            modes=(RetrievalStrategy.MIX,),
             retrieval_options=RetrievalOptions(),
             profile_ref=None,
             judge_model="judge-fixture",
