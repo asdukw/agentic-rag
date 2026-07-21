@@ -153,13 +153,17 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 - 10 道 multi-context
 - 10 道 unanswerable
 
-评测固定 index profile 和 corpus hash，交替执行待比较模式，避免运行顺序偏差。指标分为三层：
+评测固定 index profile 和 corpus hash，交替执行待比较模式，避免运行顺序偏差。指标分为五层：
 
 1. **Exact-page**：是否命中人工指定的文档页/section evidence ID。
 2. **Document-level**：是否覆盖目标文档，减少 chunk 边界对结果的干扰。
 3. **Semantic-evidence**：检索上下文是否在语义上覆盖参考证据。
+4. **Multi-evidence**：所有必要证据是否同时到齐、目标文档覆盖率和来源数。
+5. **Answer behavior**：claim precision/recall/F1、faithfulness、答案级引用支持与覆盖，以及拒答混淆矩阵。
 
-每层又区分 Raw Top-K 与 token budget 后真正交给回答器的 Delivered Context。60 题适合工程回归和学习项目展示，但不足以支持“全面显著领先”的强结论。
+前四个检索层又区分 Raw Top-K 与 token budget 后真正交给回答器的 Delivered Context。60 题适合工程回归和学习项目展示，但不足以支持“全面显著领先”的强结论。
+
+当且仅当比较两个模式时，retrieval-only 报告会自动给出逐题胜/平/负、按题型拆分的 paired delta，以及固定 seed、20,000 次 paired percentile bootstrap 的 95% 区间。Claim precision/recall 使用相同 judge 配置分别评分，F1 是二者的调和平均。引用评测遵循当前“整份答案共享一组 citation IDs”的协议：correctness 判断回答 claims 是否被引用上下文集合支持，completeness 衡量引用集合对 gold exact-page evidence 的覆盖；不宣称逐句 inline attribution accuracy。
 
 模式名称本身就是可配对的实验条件：`--modes dense,hybrid` 直接测量加入 BM25 的增量，`--modes hybrid,mix` 测量继续加入图谱路由后的增量；两组都可统一选择是否启用 reranker。
 

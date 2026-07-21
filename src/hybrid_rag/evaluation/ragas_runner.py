@@ -26,7 +26,7 @@ from hybrid_rag.evaluation.testset_contract import (
     validate_corpus_content_hash,
     validate_testset_sources,
 )
-from hybrid_rag.retrieval.models import RetrievalStrategy
+from hybrid_rag.retrieval.models import ContextItem, RetrievalStrategy
 from hybrid_rag.retrieval.query import QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import StoredIndexProfile
@@ -147,6 +147,10 @@ class RagasEvaluationRunner:
                         "Ragas evaluation requires every retrieval result to have "
                         "a persisted trace ID"
                     )
+                cited_items = _cited_items(
+                    answer.retrieval.context_items,
+                    answer.answer.citations,
+                )
                 if case.get("answerable", True):
                     samples.append(
                         _sample(
@@ -155,6 +159,7 @@ class RagasEvaluationRunner:
                             retrieved_contexts=[
                                 item.text for item in answer.retrieval.context_items
                             ],
+                            cited_contexts=[item.text for item in cited_items],
                         )
                     )
                     scored_case_indexes.append(case_index)
@@ -177,6 +182,11 @@ class RagasEvaluationRunner:
                     reference_contexts=case["reference_contexts"],
                 )
                 retrieval_scores.append(retrieval_score)
+                citation_score = _citation_reference_score(
+                    cited_items,
+                    case=case,
+                    k=retrieval_options.top_k,
+                )
                 refusal_correct = answer.answer.insufficient_evidence == (
                     not case.get("answerable", True)
                 )
@@ -190,6 +200,12 @@ class RagasEvaluationRunner:
                         "insufficient_evidence": answer.answer.insufficient_evidence,
                         "refusal_correct": refusal_correct,
                         "citations": list(answer.answer.citations),
+                        "citation_metrics": {
+                            "citation_count": len(answer.answer.citations),
+                            "cited_context_count": len(cited_items),
+                            "reference_coverage": citation_score.recall_at_k,
+                            "matching_method": citation_score.matching_method,
+                        },
                     }
                 )
                 cost_observations.append(
@@ -277,7 +293,6 @@ class RagasEvaluationRunner:
     ) -> dict[str, object]:
         from hybrid_rag.agentic.models import AgentEvent
         from hybrid_rag.agentic.runner import AgentRunRequest
-        from hybrid_rag.retrieval.models import ContextItem
         from hybrid_rag.retrieval.query import GroundedAnswer
 
         run_method = getattr(runner, "run", None)
@@ -343,15 +358,22 @@ class RagasEvaluationRunner:
                 reference_contexts=case["reference_contexts"],
             )
             retrieval_scores.append(retrieval_score)
+            cited_items = _cited_items(evidence, answer.citations)
             if case.get("answerable", True):
                 samples.append(
                     _sample(
                         case,
                         response=answer.answer,
                         retrieved_contexts=[item.text for item in evidence],
+                        cited_contexts=[item.text for item in cited_items],
                     )
                 )
                 scored_case_indexes.append(case_index)
+            citation_score = _citation_reference_score(
+                cited_items,
+                case=case,
+                k=retrieval_options.top_k,
+            )
             case_details.append(
                 {
                     "case_index": case_index,
@@ -364,6 +386,12 @@ class RagasEvaluationRunner:
                     "insufficient_evidence": answer.insufficient_evidence,
                     "refusal_correct": metrics.refusal_correct,
                     "citations": list(answer.citations),
+                    "citation_metrics": {
+                        "citation_count": len(answer.citations),
+                        "cited_context_count": len(cited_items),
+                        "reference_coverage": citation_score.recall_at_k,
+                        "matching_method": citation_score.matching_method,
+                    },
                 }
             )
         result = (
@@ -565,6 +593,8 @@ def _mode_report(
         combined_means.update(retrieval_means)
     behavior = _behavior_report(case_details)
     combined_means.update(cast(dict[str, object], behavior["means"]))
+    citation = _citation_report(case_details, scores_by_index)
+    combined_means.update(cast(dict[str, object], citation["means"]))
     trace_ids: list[str] = []
     for detail in case_details:
         value = detail.get(trace_id_field)
@@ -576,6 +606,7 @@ def _mode_report(
         "ragas": result,
         "retrieval": retrieval,
         "behavior": behavior,
+        "citation": citation,
         "means": combined_means,
         "retrieval_trace_ids": trace_ids,
         "cases": cases,
@@ -583,36 +614,150 @@ def _mode_report(
 
 
 def _behavior_report(case_details: Sequence[dict[str, object]]) -> dict[str, object]:
-    answerable = [detail for detail in case_details if detail.get("answerable") is True]
-    unanswerable = [detail for detail in case_details if detail.get("answerable") is False]
-    correctness = [
-        detail["refusal_correct"]
+    eligible = [
+        detail
         for detail in case_details
-        if isinstance(detail.get("refusal_correct"), bool)
+        if isinstance(detail.get("answerable"), bool)
+        and isinstance(detail.get("insufficient_evidence"), bool)
     ]
+    answerable = [detail for detail in eligible if detail["answerable"] is True]
+    unanswerable = [detail for detail in eligible if detail["answerable"] is False]
+    true_positive = sum(
+        detail["answerable"] is True and detail["insufficient_evidence"] is False
+        for detail in eligible
+    )
+    false_positive = sum(
+        detail["answerable"] is False and detail["insufficient_evidence"] is False
+        for detail in eligible
+    )
+    false_negative = sum(
+        detail["answerable"] is True and detail["insufficient_evidence"] is True
+        for detail in eligible
+    )
+    true_negative = sum(
+        detail["answerable"] is False and detail["insufficient_evidence"] is True
+        for detail in eligible
+    )
+    precision = _safe_ratio(true_positive, true_positive + false_positive)
+    recall = _safe_ratio(true_positive, true_positive + false_negative)
+    f1 = _safe_ratio(
+        2 * true_positive,
+        2 * true_positive + false_positive + false_negative,
+    )
     return {
+        "eligible_cases": len(eligible),
+        "excluded_cases": len(case_details) - len(eligible),
         "answerable_cases": len(answerable),
         "unanswerable_cases": len(unanswerable),
+        "positive_class": "answerable",
+        "confusion_matrix": {
+            "true_positive": true_positive,
+            "false_positive": false_positive,
+            "false_negative": false_negative,
+            "true_negative": true_negative,
+        },
         "means": {
             "refusal_accuracy": (
-                sum(value is True for value in correctness) / len(correctness)
-                if correctness
-                else None
+                _safe_ratio(true_positive + true_negative, len(eligible))
             ),
-            "unanswerable_refusal_rate": (
-                sum(detail.get("insufficient_evidence") is True for detail in unanswerable)
-                / len(unanswerable)
-                if unanswerable
-                else None
-            ),
-            "answerable_response_rate": (
-                sum(detail.get("insufficient_evidence") is False for detail in answerable)
-                / len(answerable)
-                if answerable
-                else None
-            ),
+            "answerability_precision": precision,
+            "answerability_recall": recall,
+            "answerability_f1": f1,
+            "false_answer_rate": _safe_ratio(false_positive, len(unanswerable)),
+            "false_refusal_rate": _safe_ratio(false_negative, len(answerable)),
+            "unanswerable_refusal_rate": _safe_ratio(true_negative, len(unanswerable)),
+            "answerable_response_rate": recall,
         },
     }
+
+
+def _citation_report(
+    case_details: Sequence[dict[str, object]],
+    scores_by_index: dict[int, object],
+) -> dict[str, object]:
+    answerable = [detail for detail in case_details if detail.get("answerable") is True]
+    reference_coverages: list[float] = []
+    matching_methods: set[str] = set()
+    for detail in answerable:
+        metrics = detail.get("citation_metrics")
+        if not isinstance(metrics, dict):
+            continue
+        coverage = metrics.get("reference_coverage")
+        method = metrics.get("matching_method")
+        if isinstance(method, str):
+            matching_methods.add(method)
+        if isinstance(coverage, (int, float)) and not isinstance(coverage, bool):
+            reference_coverages.append(float(coverage))
+    judged_scores = [
+        score
+        for detail in answerable
+        if isinstance((index := detail.get("case_index")), int)
+        and isinstance((score := scores_by_index.get(index)), dict)
+    ]
+
+    def judged_mean(field: str) -> float | None:
+        values = [
+            float(score[field])
+            for score in judged_scores
+            if isinstance(score.get(field), (int, float))
+            and not isinstance(score.get(field), bool)
+        ]
+        return sum(values) / len(values) if values else None
+
+    return {
+        "attribution_scope": "answer_level_citation_set",
+        "correctness_contract": "answer claims supported by the union of cited contexts",
+        "completeness_contract": "gold reference evidence covered by cited contexts",
+        "completeness_matching_methods": sorted(matching_methods),
+        "eligible_cases": len(answerable),
+        "judged_cases": len(judged_scores),
+        "means": {
+            "citation_correctness": judged_mean("citation_correctness"),
+            "citation_completeness": (
+                sum(reference_coverages) / len(reference_coverages)
+                if reference_coverages
+                else None
+            ),
+            "unsupported_claim_rate": judged_mean("unsupported_claim_rate"),
+        },
+    }
+
+
+def _safe_ratio(numerator: int, denominator: int) -> float | None:
+    return numerator / denominator if denominator else None
+
+
+def _cited_items(
+    evidence: Sequence[ContextItem],
+    citations: Sequence[str],
+) -> list[ContextItem]:
+    by_id = {item.citation_id: item for item in evidence}
+    return [by_id[citation] for citation in citations if citation in by_id]
+
+
+def _citation_reference_score(
+    cited_items: Sequence[ContextItem],
+    *,
+    case: RagasCase,
+    k: int,
+) -> RetrievalMetricScores:
+    return score_retrieval(
+        [
+            RankedEvidence(
+                evidence_ids=evidence_ids(
+                    item.document_id,
+                    page_start=item.page_start,
+                    page_end=item.page_end,
+                    section_path=item.section_path,
+                ),
+                text=item.text,
+            )
+            for item in cited_items
+        ],
+        k=max(k, len(cited_items)),
+        evidence_ids=case.get("evidence_ids"),
+        reference_contexts=case["reference_contexts"],
+    )
 
 
 def _agent_trace_ids(events: Sequence[object]) -> list[str]:
@@ -730,7 +875,13 @@ def _required_bool(value: dict[str, object], field: str, index: int) -> bool:
     return item
 
 
-def _sample(case: RagasCase, *, response: str, retrieved_contexts: list[str]) -> object:
+def _sample(
+    case: RagasCase,
+    *,
+    response: str,
+    retrieved_contexts: list[str],
+    cited_contexts: list[str],
+) -> object:
     from ragas import SingleTurnSample
 
     return SingleTurnSample(
@@ -739,6 +890,7 @@ def _sample(case: RagasCase, *, response: str, retrieved_contexts: list[str]) ->
         reference_contexts=case["reference_contexts"],
         response=response,
         retrieved_contexts=retrieved_contexts,
+        rubrics={"citation_context": "\n\n".join(cited_contexts)},
     )
 
 
@@ -776,22 +928,59 @@ def _evaluate(
         (
             "faithfulness",
             Faithfulness(llm=judge_llm),
-            ("user_input", "response", "retrieved_contexts"),
+            {
+                "user_input": "user_input",
+                "response": "response",
+                "retrieved_contexts": "retrieved_contexts",
+            },
         ),
         (
-            "factual_correctness",
-            FactualCorrectness(llm=judge_llm),
-            ("response", "reference"),
+            "claim_precision",
+            FactualCorrectness(
+                llm=judge_llm,
+                mode="precision",
+                atomicity="high",
+                coverage="high",
+            ),
+            {"response": "response", "reference": "reference"},
+        ),
+        (
+            "claim_recall",
+            FactualCorrectness(
+                llm=judge_llm,
+                mode="recall",
+                atomicity="high",
+                coverage="high",
+            ),
+            {"response": "response", "reference": "reference"},
+        ),
+        (
+            "citation_claim_support",
+            FactualCorrectness(
+                llm=judge_llm,
+                mode="precision",
+                atomicity="high",
+                coverage="high",
+            ),
+            {"response": "response", "reference": "citation_context"},
         ),
         (
             "context_precision",
             ContextPrecision(llm=judge_llm),
-            ("user_input", "reference", "retrieved_contexts"),
+            {
+                "user_input": "user_input",
+                "reference": "reference",
+                "retrieved_contexts": "retrieved_contexts",
+            },
         ),
         (
             "context_recall",
             ContextRecall(llm=judge_llm),
-            ("user_input", "retrieved_contexts", "reference"),
+            {
+                "user_input": "user_input",
+                "retrieved_contexts": "retrieved_contexts",
+                "reference": "reference",
+            },
         ),
     )
     sample_rows: list[dict[str, Any]] = []
@@ -799,7 +988,12 @@ def _evaluate(
         dump = getattr(sample, "model_dump", None)
         if not callable(dump):
             raise TypeError("Ragas samples must expose model_dump()")
-        sample_rows.append(cast(dict[str, Any], dump()))
+        row = cast(dict[str, Any], dump())
+        rubrics = row.get("rubrics")
+        row["citation_context"] = (
+            rubrics.get("citation_context", "") if isinstance(rubrics, dict) else ""
+        )
+        sample_rows.append(row)
 
     async def score_samples() -> list[dict[str, float]]:
         # Collection metrics are the Ragas 0.4 API paired with llm_factory's
@@ -811,12 +1005,17 @@ def _evaluate(
             index: int,
             name: str,
             metric: object,
-            fields: tuple[str, ...],
+            fields: dict[str, str],
         ) -> tuple[int, str, float]:
-            values = {field: sample_rows[index][field] for field in fields}
+            values = {
+                argument: sample_rows[index][sample_field]
+                for argument, sample_field in fields.items()
+            }
             if "retrieved_contexts" in values and not values["retrieved_contexts"]:
                 # An answerable case with no retrieved evidence is a quality
                 # failure, not a reason to abort the entire benchmark.
+                return index, name, 0.0
+            if name == "citation_claim_support" and not values["reference"]:
                 return index, name, 0.0
             ascore = getattr(metric, "ascore", None)
             if not callable(ascore):
@@ -836,6 +1035,17 @@ def _evaluate(
         scores: list[dict[str, float]] = [{} for _ in sample_rows]
         for index, name, value in await asyncio.gather(*jobs):
             scores[index][name] = value
+        for row in scores:
+            precision = row["claim_precision"]
+            recall = row["claim_recall"]
+            row["claim_f1"] = (
+                2.0 * precision * recall / (precision + recall)
+                if precision + recall > 0.0
+                else 0.0
+            )
+            row["factual_correctness"] = row["claim_f1"]
+            row["citation_correctness"] = row["citation_claim_support"]
+            row["unsupported_claim_rate"] = 1.0 - row["citation_claim_support"]
         return scores
 
     scores = asyncio.run(score_samples())

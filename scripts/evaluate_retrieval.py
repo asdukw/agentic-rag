@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import platform
+import random
 import subprocess
 import sys
 import time
@@ -41,6 +42,10 @@ from hybrid_rag.retrieval.reranker import create_reranker
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.migrations import upgrade_database
+
+_BOOTSTRAP_CONFIDENCE_LEVEL = 0.95
+_BOOTSTRAP_RESAMPLES = 20_000
+_BOOTSTRAP_SEED = 20_260_721
 
 
 def main() -> None:
@@ -386,15 +391,29 @@ def _evaluate_case(
         if case.get("answerable", True)
         else ()
     )
+    raw_document_ids = tuple(
+        str(hit.metadata.get("document_id", "")) for hit in result.hits
+    )
+    context_document_ids = tuple(item.document_id for item in result.context_items)
     raw_document_score = score_document_retrieval(
-        tuple(str(hit.metadata.get("document_id", "")) for hit in result.hits),
+        raw_document_ids,
         k=options.top_k,
         document_ids=gold_document_ids,
     )
     context_document_score = score_document_retrieval(
-        tuple(item.document_id for item in result.context_items),
+        context_document_ids,
         k=options.top_k,
         document_ids=gold_document_ids,
+    )
+    raw_coverage = _evidence_coverage(
+        raw_score,
+        raw_document_score,
+        retrieved_document_ids=raw_document_ids,
+    )
+    context_coverage = _evidence_coverage(
+        context_score,
+        context_document_score,
+        retrieved_document_ids=context_document_ids,
     )
     state.raw_scores.append(raw_score)
     state.context_scores.append(context_score)
@@ -428,6 +447,8 @@ def _evaluate_case(
                 "delivered_context": context_score.as_dict(),
                 "document_raw_top_k": raw_document_score.as_dict(),
                 "document_delivered_context": context_document_score.as_dict(),
+                "multi_evidence_raw_top_k": raw_coverage,
+                "multi_evidence_delivered_context": context_coverage,
             },
             "trace": result.trace.model_dump(mode="json"),
         }
@@ -444,6 +465,14 @@ def _mode_report(state: _ModeState) -> dict[str, Any]:
     context_semantic_aggregate = aggregate_semantic_evidence_scores(state.context_semantic_scores)
     raw_micro_recall = _micro_recall(state.raw_scores)
     context_micro_recall = _micro_recall(state.context_scores)
+    raw_coverage = _aggregate_evidence_coverage(
+        state.details,
+        detail_key="multi_evidence_raw_top_k",
+    )
+    context_coverage = _aggregate_evidence_coverage(
+        state.details,
+        detail_key="multi_evidence_delivered_context",
+    )
     means = {
         **{f"raw_{key}": value for key, value in raw_aggregate["means"].items()},
         **{f"context_{key}": value for key, value in context_aggregate["means"].items()},
@@ -459,6 +488,14 @@ def _mode_report(state: _ModeState) -> dict[str, Any]:
         },
         "raw_micro_recall": raw_micro_recall,
         "context_micro_recall": context_micro_recall,
+        **{
+            f"multi_evidence_raw_{key}": value
+            for key, value in raw_coverage["means"].items()
+        },
+        **{
+            f"multi_evidence_context_{key}": value
+            for key, value in context_coverage["means"].items()
+        },
     }
     means.update(_latency_summary(state.latencies))
     return {
@@ -478,6 +515,10 @@ def _mode_report(state: _ModeState) -> dict[str, Any]:
         "semantic_evidence": {
             "raw_top_k": raw_semantic_aggregate,
             "delivered_context": context_semantic_aggregate,
+        },
+        "multi_evidence": {
+            "raw_top_k": raw_coverage,
+            "delivered_context": context_coverage,
         },
         "by_question_type": _question_type_reports(state),
         "latency": _latency_summary(state.latencies),
@@ -582,6 +623,7 @@ def _question_type_report(
     context_document_scores = [state.context_document_scores[index] for index in indices]
     raw_semantic_scores = [state.raw_semantic_scores[index] for index in indices]
     context_semantic_scores = [state.context_semantic_scores[index] for index in indices]
+    details = [state.details[index] for index in indices]
     return {
         "case_count": len(indices),
         "answerable_case_count": sum(bool(state.details[index]["answerable"]) for index in indices),
@@ -597,6 +639,16 @@ def _question_type_report(
             "raw_top_k": aggregate_semantic_evidence_scores(raw_semantic_scores),
             "delivered_context": aggregate_semantic_evidence_scores(context_semantic_scores),
         },
+        "multi_evidence": {
+            "raw_top_k": _aggregate_evidence_coverage(
+                details,
+                detail_key="multi_evidence_raw_top_k",
+            ),
+            "delivered_context": _aggregate_evidence_coverage(
+                details,
+                detail_key="multi_evidence_delivered_context",
+            ),
+        },
         "latency": _latency_summary([state.latencies[index] for index in indices]),
     }
 
@@ -607,6 +659,62 @@ def _micro_recall(scores: list[RetrievalMetricScores]) -> float | None:
     if relevant_count == 0:
         return None
     return sum(score.matched_count for score in eligible) / relevant_count
+
+
+def _evidence_coverage(
+    evidence_score: RetrievalMetricScores,
+    document_score: RetrievalMetricScores,
+    *,
+    retrieved_document_ids: tuple[str, ...],
+) -> dict[str, object]:
+    """Summarize whether all required evidence and source documents survived ranking."""
+
+    applicable = evidence_score.applicable and document_score.applicable
+    complete_chain = (
+        float(evidence_score.matched_count == evidence_score.relevant_count)
+        if applicable
+        else None
+    )
+    document_coverage = document_score.recall_at_k if applicable else None
+    all_documents_covered = (
+        float(document_score.matched_count == document_score.relevant_count)
+        if applicable
+        else None
+    )
+    return {
+        "applicable": applicable,
+        "complete_chain": complete_chain,
+        "document_coverage": document_coverage,
+        "all_documents_covered": all_documents_covered,
+        "distinct_source_count": len(
+            {document_id for document_id in retrieved_document_ids if document_id}
+        ),
+    }
+
+
+def _aggregate_evidence_coverage(
+    details: list[dict[str, Any]],
+    *,
+    detail_key: str,
+) -> dict[str, object]:
+    values = [detail["retrieval_metrics"][detail_key] for detail in details]
+    applicable = [value for value in values if value["applicable"] is True]
+
+    def mean(field: str) -> float | None:
+        items = [float(value[field]) for value in applicable if value[field] is not None]
+        return sum(items) / len(items) if items else None
+
+    return {
+        "total_cases": len(values),
+        "eligible_cases": len(applicable),
+        "excluded_cases": len(values) - len(applicable),
+        "means": {
+            "complete_chain_rate": mean("complete_chain"),
+            "document_coverage": mean("document_coverage"),
+            "all_documents_covered_rate": mean("all_documents_covered"),
+            "distinct_source_count": mean("distinct_source_count"),
+        },
+    }
 
 
 def _latency_summary(values: list[float]) -> dict[str, float]:
@@ -647,6 +755,49 @@ def _paired_comparison(
     baseline, candidate = (mode.value for mode in modes)
     baseline_cases = reports[baseline]["cases"]
     candidate_cases = reports[candidate]["cases"]
+    _validate_paired_cases(baseline_cases, candidate_cases)
+    question_types = sorted(
+        {
+            str(case["question_type"])
+            for case in (*baseline_cases, *candidate_cases)
+        }
+    )
+    return {
+        "baseline": baseline,
+        "candidate": candidate,
+        "delta_direction": f"{candidate} - {baseline}",
+        "bootstrap": {
+            "method": "paired_percentile_bootstrap",
+            "confidence_level": _BOOTSTRAP_CONFIDENCE_LEVEL,
+            "resamples": _BOOTSTRAP_RESAMPLES,
+            "seed": _BOOTSTRAP_SEED,
+            "seed_derivation": "seed + uint64(sha256(metric_label)[0:8])",
+            "resampling_unit": "case_delta",
+        },
+        "metrics": _paired_metrics(baseline_cases, candidate_cases),
+        "by_question_type": {
+            question_type: _paired_metrics(
+                [
+                    case
+                    for case in baseline_cases
+                    if case["question_type"] == question_type
+                ],
+                [
+                    case
+                    for case in candidate_cases
+                    if case["question_type"] == question_type
+                ],
+            )
+            for question_type in question_types
+        },
+    }
+
+
+def _paired_metrics(
+    baseline_cases: list[dict[str, Any]],
+    candidate_cases: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    _validate_paired_cases(baseline_cases, candidate_cases)
     metrics: dict[str, dict[str, Any]] = {}
     scopes = (
         (
@@ -679,31 +830,120 @@ def _paired_comparison(
             "semantic_delivered_context",
             ("mean_max_similarity", "threshold_recall", "all_references_covered"),
         ),
+        (
+            "multi_evidence.raw_top_k",
+            "multi_evidence_raw_top_k",
+            (
+                "complete_chain",
+                "document_coverage",
+                "all_documents_covered",
+            ),
+        ),
+        (
+            "multi_evidence.delivered_context",
+            "multi_evidence_delivered_context",
+            (
+                "complete_chain",
+                "document_coverage",
+                "all_documents_covered",
+            ),
+        ),
     )
     for scope, detail_key, metric_names in scopes:
         for metric in metric_names:
             deltas: list[float] = []
             for left, right in zip(baseline_cases, candidate_cases, strict=True):
-                if left["case_index"] != right["case_index"]:
-                    raise RuntimeError("paired comparison received misaligned cases")
-                left_value = left["retrieval_metrics"][detail_key][metric]
-                right_value = right["retrieval_metrics"][detail_key][metric]
+                left_metrics = left["retrieval_metrics"][detail_key]
+                right_metrics = right["retrieval_metrics"][detail_key]
+                if left_metrics.get("applicable") is False:
+                    continue
+                if right_metrics.get("applicable") is False:
+                    continue
+                left_value = left_metrics[metric]
+                right_value = right_metrics[metric]
                 if left_value is None or right_value is None:
                     continue
                 deltas.append(float(right_value) - float(left_value))
-            metrics[f"{scope}.{metric}"] = {
-                "eligible_pairs": len(deltas),
-                "candidate_wins": sum(delta > 1e-12 for delta in deltas),
-                "ties": sum(abs(delta) <= 1e-12 for delta in deltas),
-                "baseline_wins": sum(delta < -1e-12 for delta in deltas),
-                "mean_delta": sum(deltas) / len(deltas) if deltas else None,
-            }
+            label = f"{scope}.{metric}"
+            metrics[label] = _paired_metric_summary(deltas, label=label)
+    latency_deltas = [
+        float(right["latency_seconds"]) - float(left["latency_seconds"])
+        for left, right in zip(baseline_cases, candidate_cases, strict=True)
+    ]
+    metrics["latency_seconds"] = _paired_metric_summary(
+        latency_deltas,
+        label="latency_seconds",
+        preference="lower",
+    )
+    return metrics
+
+
+def _paired_metric_summary(
+    deltas: list[float],
+    *,
+    label: str,
+    preference: str = "higher",
+) -> dict[str, Any]:
+    if preference not in {"higher", "lower"}:
+        raise ValueError("paired metric preference must be 'higher' or 'lower'")
+    count = len(deltas)
+    lower, upper = _bootstrap_mean_ci(deltas, label=label)
+    candidate_wins = sum(
+        delta > 1e-12 if preference == "higher" else delta < -1e-12
+        for delta in deltas
+    )
+    baseline_wins = sum(
+        delta < -1e-12 if preference == "higher" else delta > 1e-12
+        for delta in deltas
+    )
+    ties = sum(abs(delta) <= 1e-12 for delta in deltas)
     return {
-        "baseline": baseline,
-        "candidate": candidate,
-        "delta_direction": f"{candidate} - {baseline}",
-        "metrics": metrics,
+        "eligible_pairs": count,
+        "preference": preference,
+        "candidate_wins": candidate_wins,
+        "ties": ties,
+        "baseline_wins": baseline_wins,
+        "candidate_win_rate": candidate_wins / count if count else None,
+        "tie_rate": ties / count if count else None,
+        "baseline_win_rate": baseline_wins / count if count else None,
+        "mean_delta": sum(deltas) / count if count else None,
+        "mean_delta_ci_95": [lower, upper],
     }
+
+
+def _bootstrap_mean_ci(
+    deltas: list[float],
+    *,
+    label: str,
+) -> tuple[float | None, float | None]:
+    if not deltas:
+        return None, None
+    seed_material = hashlib.sha256(label.encode("utf-8")).digest()[:8]
+    seed = _BOOTSTRAP_SEED + int.from_bytes(seed_material, byteorder="big")
+    generator = random.Random(seed)
+    count = len(deltas)
+    bootstrap_means = sorted(
+        sum(deltas[generator.randrange(count)] for _ in range(count)) / count
+        for _ in range(_BOOTSTRAP_RESAMPLES)
+    )
+    tail = (1.0 - _BOOTSTRAP_CONFIDENCE_LEVEL) / 2.0
+    return (
+        _percentile(bootstrap_means, tail),
+        _percentile(bootstrap_means, 1.0 - tail),
+    )
+
+
+def _validate_paired_cases(
+    baseline_cases: list[dict[str, Any]],
+    candidate_cases: list[dict[str, Any]],
+) -> None:
+    if len(baseline_cases) != len(candidate_cases):
+        raise RuntimeError("paired comparison received different case counts")
+    if any(
+        left["case_index"] != right["case_index"]
+        for left, right in zip(baseline_cases, candidate_cases, strict=True)
+    ):
+        raise RuntimeError("paired comparison received misaligned cases")
 
 
 def _git_provenance() -> dict[str, Any]:

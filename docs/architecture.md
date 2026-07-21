@@ -249,12 +249,14 @@ flowchart LR
     Pin --> Ask["For agentic / mix / hybrid and each case:\nanswer + final evidence\npersist retrieval / agent traces"]
     Ask --> IR["Deterministic retrieval:\nexact-page + document-level\nHit@k, Recall@k, MRR, nDCG"]
     Ask --> Semantic["Semantic evidence:\nreference-context cosine coverage"]
-    Ask --> Score["Ragas answer scoring:\nfaithfulness, factual correctness,\ncontext precision, context recall"]
+    Ask --> Multi["Multi-evidence:\ncomplete-chain rate, document coverage,\ndistinct sources"]
+    Ask --> Score["Ragas answer scoring:\nclaim precision / recall / F1, faithfulness,\ncitation support and unsupported claims"]
     Ask --> Agent["Agentic trajectory:\ntool calls, evidence use, citations,\nlatency, refusal accuracy"]
     Key["DEEPSEEK_API_KEY\nanswer and judge models"] --> Ask
     Key --> Score
     IR --> R["JSON report\nper-case scores, paired comparison,\nlatency and environment provenance"]
     Semantic --> R
+    Multi --> R
     Score --> R
     Agent --> R
 ```
@@ -271,8 +273,11 @@ Benchmark v2 also has a model-free answer path through
 `scripts/evaluate_retrieval.py`. It skips answer generation and Ragas, alternates
 the compared retrieval modes per case, and reports exact-page, document-level,
 and semantic-evidence metrics for both raw Top-K candidates and the context that
-survives token-budget assembly. The report also records paired comparisons,
-latency, package versions, and accelerator provenance.
+survives token-budget assembly. It also reports complete-chain rate, document
+coverage, and distinct source count. For exactly two modes, paired comparisons
+include win/tie/loss rates, per-question-type deltas, and deterministic 95%
+paired-bootstrap intervals. The report also records latency, package versions,
+and accelerator provenance.
 
 The test-set envelope is the only accepted evaluation input: its
 `corpus_content_hash` must exactly equal the selected profile's graph-independent
@@ -305,11 +310,13 @@ embedding API cost.
   in any evaluation report.
 - `evaluate --testset` validates the golden envelope against a pinned profile,
   defaults to `agentic,mix,hybrid`, persists retrieval and agent traces, and writes
-  deterministic retrieval, Ragas answer, and Agentic trajectory metrics. `--smoke`
+  deterministic retrieval, claim/citation/refusal answer metrics, and Agentic
+  trajectory metrics. `--smoke`
   runs the same pipeline over a deterministic six-case stratified subset while
   preserving the original test-set case indexes in the report.
 - `scripts/evaluate_retrieval.py` is the retrieval-only benchmark entry point. It
   does not require an answer or judge model and records exact-page, document,
-  semantic-evidence, latency, and environment results for a pinned profile.
+  semantic-evidence, multi-evidence, paired-bootstrap, latency, and environment
+  results for a pinned profile.
 - The web workbench maps every request to one filesystem-isolated workspace;
   workspaces do not share uploads, business databases, or graph checkpoints.
