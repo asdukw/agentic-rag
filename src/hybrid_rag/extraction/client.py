@@ -7,8 +7,10 @@ from typing import Any, Protocol
 from hybrid_rag.extraction.prompts import (
     ChatMessage,
     build_extraction_messages,
+    build_gleaning_messages,
     build_repair_messages,
 )
+from hybrid_rag.extraction.schemas import ValidatedChunkExtraction
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,15 @@ class ExtractionClient(Protocol):
         chunk_text: str,
         invalid_response: str | None,
         issues: Sequence[str],
+        *,
+        document_title: str | None = None,
+        section_path: Sequence[str] = (),
+    ) -> CompletionResult: ...
+
+    async def glean(
+        self,
+        chunk_text: str,
+        baseline: ValidatedChunkExtraction,
         *,
         document_title: str | None = None,
         section_path: Sequence[str] = (),
@@ -131,6 +142,23 @@ class DeepSeekClient:
                 chunk_text,
                 invalid_response,
                 issues,
+                document_title=document_title,
+                section_path=section_path,
+            )
+        )
+
+    async def glean(
+        self,
+        chunk_text: str,
+        baseline: ValidatedChunkExtraction,
+        *,
+        document_title: str | None = None,
+        section_path: Sequence[str] = (),
+    ) -> CompletionResult:
+        return await self.complete_messages(
+            build_gleaning_messages(
+                chunk_text,
+                baseline,
                 document_title=document_title,
                 section_path=section_path,
             )

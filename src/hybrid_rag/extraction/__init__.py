@@ -22,7 +22,11 @@ from hybrid_rag.extraction.normalization import (
     normalize_entity_alias,
     normalize_predicate,
 )
-from hybrid_rag.extraction.prompts import build_extraction_messages, build_repair_messages
+from hybrid_rag.extraction.prompts import (
+    build_extraction_messages,
+    build_gleaning_messages,
+    build_repair_messages,
+)
 from hybrid_rag.extraction.schemas import (
     CanonicalEntity,
     CanonicalRelation,
@@ -71,6 +75,7 @@ __all__ = [
     "ValidationFailureKind",
     "ValidationIssue",
     "build_extraction_messages",
+    "build_gleaning_messages",
     "build_networkx_graph",
     "build_repair_messages",
     "merge_relations",

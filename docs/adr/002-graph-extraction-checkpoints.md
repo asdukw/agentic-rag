@@ -56,9 +56,10 @@ NetworkX 属性 schema 相互隔离。
 
 ### 3. 抽取配置和图配置使用不同哈希
 
-`extraction_config_hash` 描述会改变模型语义输出的配置，至少包含模型名、prompt 版本、
-输出 schema 版本以及 JSON/Thinking 模式。chunk 内容或上述任一配置变化时，生成新的
-chunk extraction；并发数、批次上限等纯执行参数不使成功缓存失效。
+`extraction_config_hash` 描述会改变模型语义输出的配置，至少包含模型名、抽取/修复 prompt
+版本、`glean` prompt 版本与补漏预算、输出 schema 版本以及 JSON/Thinking 模式。chunk
+内容或上述任一配置变化时，生成新的 chunk extraction；并发数、批次上限等纯执行参数
+不使成功缓存失效。
 
 `graph_config_hash` 描述规范化、候选选择、别名合并、关系方向/类型归一和图物化规则的
 版本。仅图配置变化时，从已有的成功抽取重新物化图，不重新调用 DeepSeek。
@@ -72,9 +73,10 @@ SQLite 中保存项目拥有的运行与审计状态：
 - graph build run 记录本次构建的配置、状态、计数和起止时间。
 - chunk extraction 以 chunk 内容和 `extraction_config_hash` 唯一标识，保存当前状态和
   已验证的结构化结果。
-- extraction attempt 是 append-only 记录，保存序号、`extract`/`repair` 阶段、结果类型、
+- extraction attempt 是 append-only 记录，保存序号、`extract`/`repair`/`glean` 阶段、结果类型、
   provider 请求 ID、token usage、错误摘要以及必要的原始响应；每条 attempt 显式归属
-  发起调用的 run，重叠 run 不重复计算同一次调用成本。
+  发起调用的 run，重叠 run 不重复计算同一次调用成本。补漏是独立 attempt，不隐藏在首次
+  抽取的响应或成本中。
 
 成功抽取按 chunk 独立提交；单个 chunk 失败不回滚其他 chunk，也不阻断同批后续任务。
 原始响应可能包含语料文本，默认报告不输出它，仅在显式诊断时读取。任何保存的请求信息
@@ -113,6 +115,8 @@ LangGraph 和 DeepSeek 不负责最终实体消歧或关系合并。项目代码
 - 合并只去除重复事实，不丢弃来源；所有 chunk ID、证据文本和 span 去重后稳定排序。
 - canonical entity/relation ID 由规范字段和图配置确定性生成，与并发完成顺序无关。
 - 无法可靠归一的候选保持分离，优先保留可解释性而不是激进合并。
+- 有证据但暂时没有关系的孤立实体继续保留并计入图统计；它们仍能支持实体向量命中后
+  直接回到来源 chunk，因此不把“没有边”当作自动删除条件。
 
 prompt 可以提供候选描述，但不能覆盖这些规则。
 
@@ -142,6 +146,12 @@ prompt 可以提供候选描述，但不能覆盖这些规则。
 
 项目区分空内容、截断、非法 JSON、schema 错误、证据错误、provider 可重试错误和 provider
 终止错误。语义修复和传输重试各自有界，每一次实际模型请求都生成 attempt。
+
+默认 `max_attempts=2` 时，初始 `extract` 通过校验后，第二次调用用于一次独立 `glean`，要求
+模型返回包含基线并补充遗漏事实的完整结果；若初始 `extract` 无效，第二次调用改用于
+`repair`，所以同一 chunk 的修复与补漏互斥。`glean` 候选必须再次通过领域校验，并完整
+保留基线中的实体、关系及证据；调用失败、结果无效或缺失任一基线事实时，系统采用已经
+验证的初始结果，且保留补漏 attempt 供成本与失败审计。
 
 新 run 会复用相同 extraction 配置下的成功缓存。恢复已有 run 时只处理 `pending`、可回收
 的 `running` 和未完成任务；已达到上限的终止失败保持失败，只有显式 `retry-failed` 或人工

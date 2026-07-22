@@ -48,7 +48,13 @@ class GraphBuildService:
         self.checkpoint_path = checkpoint_path.expanduser().resolve()
         self.repository = repository or GraphRepository()
         self.deepseek_pricing = deepseek_pricing
-        self.workflow = GraphBuildWorkflow(database, client, self.repository)
+        self.workflow = GraphBuildWorkflow(
+            database,
+            client,
+            self.repository,
+            repair_max_attempts=extraction_config.repair_max_attempts,
+            gleaning_max_attempts=extraction_config.gleaning_max_attempts,
+        )
         self.last_run_id: str | None = None
 
     async def build(
@@ -221,10 +227,15 @@ class GraphBuildService:
             )
 
     def _validate_attempt_budget(self, options: WorkflowOptions) -> None:
-        minimum = self.extraction_config.repair_max_attempts + 1
+        second_pass_budget = max(
+            self.extraction_config.repair_max_attempts,
+            self.extraction_config.gleaning_max_attempts,
+        )
+        minimum = second_pass_budget + 1
         if options.max_attempts < minimum:
             raise ValueError(
-                "workflow max_attempts must cover the initial extraction and repair budget "
+                "workflow max_attempts must cover the initial extraction and configured "
+                "repair-or-gleaning budget "
                 f"({options.max_attempts} < {minimum})"
             )
 

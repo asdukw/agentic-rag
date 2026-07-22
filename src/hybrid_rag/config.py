@@ -87,7 +87,7 @@ class DeepSeekSettings(DeepSeekPricingSettings):
 
 
 class GraphSettings(BaseSettings):
-    """Local graph-build execution settings; these do not affect extraction identity."""
+    """Local graph-build execution settings used to derive the extraction contract."""
 
     model_config = SettingsConfigDict(
         env_file=".env",

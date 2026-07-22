@@ -300,7 +300,10 @@ class ExtractionAttemptRecord(Base):
             name="uq_extraction_attempts_extraction_ordinal",
         ),
         CheckConstraint("ordinal > 0", name="ck_extraction_attempts_ordinal"),
-        CheckConstraint("stage IN ('extract', 'repair')", name="ck_extraction_attempts_stage"),
+        CheckConstraint(
+            "stage IN ('extract', 'repair', 'glean')",
+            name="ck_extraction_attempts_stage",
+        ),
         CheckConstraint(
             "prompt_tokens >= 0 AND completion_tokens >= 0 AND total_tokens >= 0",
             name="ck_extraction_attempts_usage",

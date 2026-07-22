@@ -25,8 +25,17 @@ from hybrid_rag.extraction.graph import (
     node_link_json,
     summarize_graph,
 )
-from hybrid_rag.extraction.normalization import merge_relations, normalize_entities
-from hybrid_rag.extraction.prompts import build_extraction_messages, build_repair_messages
+from hybrid_rag.extraction.normalization import (
+    merge_relations,
+    normalize_entities,
+    normalize_entity_alias,
+    normalize_predicate,
+)
+from hybrid_rag.extraction.prompts import (
+    build_extraction_messages,
+    build_gleaning_messages,
+    build_repair_messages,
+)
 from hybrid_rag.extraction.reports import (
     AttemptSummary,
     BuildFailure,
@@ -46,7 +55,7 @@ from hybrid_rag.extraction.validation import ExtractionValidationError, validate
 from hybrid_rag.storage.database import Database
 from hybrid_rag.storage.graph_repository import ExtractionClaim, GraphRepository
 
-WORKFLOW_VERSION = "2"
+WORKFLOW_VERSION = "3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +109,8 @@ class ChunkState(TypedDict, total=False):
     job: Required[dict[str, Any]]
     review_required: Required[bool]
     max_attempts: Required[int]
+    repair_max_attempts: Required[int]
+    gleaning_max_attempts: Required[int]
     retry_backoff_seconds: Required[float]
     lease_seconds: Required[float]
     stage: str
@@ -109,11 +120,14 @@ class ChunkState(TypedDict, total=False):
     completion: CompletionResult | None
     provider_error: ProviderError | None
     validated: ValidatedChunkExtraction | None
+    baseline_validated: ValidatedChunkExtraction | None
     validation_error: ExtractionValidationError | None
     latency_seconds: float
     invalid_response: str | None
     issues: tuple[str, ...]
     outcome: str
+    stage_attempt_counts: dict[str, int]
+    extraction_stage_attempt_counts: dict[str, int]
 
 
 class ReviewStillPendingError(RuntimeError):
@@ -132,10 +146,19 @@ class GraphBuildWorkflow:
         database: Database,
         client: ExtractionClient | None,
         repository: GraphRepository | None = None,
+        *,
+        repair_max_attempts: int = 1,
+        gleaning_max_attempts: int = 0,
     ) -> None:
+        if repair_max_attempts not in {0, 1}:
+            raise ValueError("repair_max_attempts must be zero or one")
+        if gleaning_max_attempts not in {0, 1}:
+            raise ValueError("gleaning_max_attempts must be zero or one")
         self.database = database
         self.client = client
         self.repository = repository or GraphRepository()
+        self.repair_max_attempts = repair_max_attempts
+        self.gleaning_max_attempts = gleaning_max_attempts
         self._normalizations: dict[str, EntityNormalizationResult] = {}
         self._relations: dict[str, RelationMergeResult] = {}
         self._graph_stats: dict[str, GraphStats] = {}
@@ -174,6 +197,7 @@ class GraphBuildWorkflow:
         builder.add_node("claim_and_call", self._claim_and_call)
         builder.add_node("validate", self._validate)
         builder.add_node("record_attempt", self._record_attempt)
+        builder.add_node("prepare_gleaning", self._prepare_gleaning)
         builder.add_node("prepare_retry", self._prepare_retry)
         builder.add_node("human_review", self._complete_or_review)
         builder.add_node("record_failure", self._record_failure)
@@ -189,10 +213,12 @@ class GraphBuildWorkflow:
             self._route_after_attempt,
             {
                 "complete": "human_review",
+                "glean": "prepare_gleaning",
                 "retry": "prepare_retry",
                 "fail": "record_failure",
             },
         )
+        builder.add_edge("prepare_gleaning", "claim_and_call")
         builder.add_edge("prepare_retry", "claim_and_call")
         builder.add_edge("human_review", END)
         builder.add_edge("record_failure", END)
@@ -222,32 +248,66 @@ class GraphBuildWorkflow:
                 raise RuntimeError(f"graph build run disappeared: {state['run_id']}")
             if not jobs:
                 break
-            if self.client is None:
-                raise MissingExtractionCredentialError(
-                    "DEEPSEEK_API_KEY is required for uncached chunk extractions"
-                )
 
             inputs: list[ChunkState] = []
             for job in jobs:
-                if int(job["run_attempt_count"]) >= state["max_attempts"]:
+                stage = str(job.get("stage", "extract"))
+                stage_attempt_counts = {
+                    str(key): int(value)
+                    for key, value in dict(job.get("stage_attempt_counts", {})).items()
+                }
+                extraction_stage_attempt_counts = {
+                    str(key): int(value)
+                    for key, value in dict(
+                        job.get("extraction_stage_attempt_counts", {})
+                    ).items()
+                }
+                gleaning_exhausted = (
+                    stage == "glean"
+                    and extraction_stage_attempt_counts.get("glean", 0)
+                    >= self.gleaning_max_attempts
+                )
+                if (
+                    int(job["run_attempt_count"]) >= state["max_attempts"]
+                    or gleaning_exhausted
+                ):
                     with self.database.session_factory.begin() as session:
-                        self.repository.fail_exhausted_extraction(
-                            session,
-                            str(job["id"]),
-                            run_id=state["run_id"],
-                            max_attempts=state["max_attempts"],
-                        )
+                        if job.get("baseline_result") is not None:
+                            self.repository.complete_provisional_extraction(
+                                session,
+                                str(job["id"]),
+                                run_id=state["run_id"],
+                                needs_review=run.review_required,
+                            )
+                        else:
+                            self.repository.fail_exhausted_extraction(
+                                session,
+                                str(job["id"]),
+                                run_id=state["run_id"],
+                                max_attempts=state["max_attempts"],
+                            )
                     processed_ids.add(str(job["id"]))
                     continue
+                baseline_payload = job.get("baseline_result")
+                baseline = (
+                    self._validated_from_payload(baseline_payload)
+                    if baseline_payload is not None
+                    else None
+                )
                 inputs.append(
                     {
                         "run_id": state["run_id"],
                         "job": job,
                         "review_required": run.review_required,
                         "max_attempts": state["max_attempts"],
+                        "repair_max_attempts": self.repair_max_attempts,
+                        "gleaning_max_attempts": self.gleaning_max_attempts,
                         "retry_backoff_seconds": state["retry_backoff_seconds"],
                         "lease_seconds": state["lease_seconds"],
-                        "stage": "extract",
+                        "stage": stage,
+                        "stage_attempt_counts": stage_attempt_counts,
+                        "extraction_stage_attempt_counts": extraction_stage_attempt_counts,
+                        "baseline_validated": baseline,
                         "local_attempt": 0,
                         "issues": (),
                     }
@@ -255,6 +315,10 @@ class GraphBuildWorkflow:
             if not inputs:
                 await asyncio.sleep(0)
                 continue
+            if self.client is None:
+                raise MissingExtractionCredentialError(
+                    "DEEPSEEK_API_KEY is required for uncached chunk extractions"
+                )
             results = await self._chunk_graph().abatch(
                 inputs,
                 config={"max_concurrency": state["max_concurrency"]},
@@ -393,7 +457,12 @@ class GraphBuildWorkflow:
     async def _prepare_attempt(self, state: ChunkState) -> dict[str, Any]:
         job = state["job"]
         stage = state.get("stage", "extract")
-        if stage == "repair":
+        if stage == "glean":
+            baseline = state.get("baseline_validated")
+            if baseline is None:
+                raise RuntimeError("cannot glean without a durable validated baseline")
+            messages = build_gleaning_messages(str(job["text"]), baseline)
+        elif stage == "repair":
             messages = build_repair_messages(
                 str(job["text"]),
                 state.get("invalid_response"),
@@ -410,10 +479,24 @@ class GraphBuildWorkflow:
                 messages=messages,
                 lease_seconds=state["lease_seconds"],
                 max_attempts=state["max_attempts"],
+                max_stage_attempts=(
+                    state["gleaning_max_attempts"] if stage == "glean" else None
+                ),
+            )
+        stage_attempt_counts = dict(state.get("stage_attempt_counts", {}))
+        extraction_stage_attempt_counts = dict(
+            state.get("extraction_stage_attempt_counts", {})
+        )
+        if claim is not None:
+            stage_attempt_counts[stage] = stage_attempt_counts.get(stage, 0) + 1
+            extraction_stage_attempt_counts[stage] = (
+                extraction_stage_attempt_counts.get(stage, 0) + 1
             )
         return {
             "messages": messages,
             "claim": claim,
+            "stage_attempt_counts": stage_attempt_counts,
+            "extraction_stage_attempt_counts": extraction_stage_attempt_counts,
             "local_attempt": state.get("local_attempt", 0) + (1 if claim else 0),
             "completion": None,
             "provider_error": None,
@@ -442,7 +525,12 @@ class GraphBuildWorkflow:
         job = state["job"]
         started = time.perf_counter()
         try:
-            if state.get("stage") == "repair":
+            if state.get("stage") == "glean":
+                baseline = state.get("baseline_validated")
+                if baseline is None:
+                    raise RuntimeError("cannot glean without a durable validated baseline")
+                completion = await self.client.glean(str(job["text"]), baseline)
+            elif state.get("stage") == "repair":
                 completion = await self.client.repair(
                     str(job["text"]),
                     state.get("invalid_response"),
@@ -488,9 +576,19 @@ class GraphBuildWorkflow:
         completion = state.get("completion")
         provider_error = state.get("provider_error")
         validation_error = state.get("validation_error")
-        if state.get("validated") is not None:
-            outcome = "succeeded"
-            error_text = None
+        validated = state.get("validated")
+        baseline = state.get("baseline_validated")
+        if validated is not None:
+            if (
+                state.get("stage") == "glean"
+                and baseline is not None
+                and not self._covers_baseline(validated, baseline)
+            ):
+                outcome = "glean_regressed"
+                error_text = "gleaning candidate omitted an accepted first-pass fact"
+            else:
+                outcome = "succeeded"
+                error_text = None
         elif provider_error is not None:
             outcome = (
                 "provider_retryable"
@@ -504,6 +602,27 @@ class GraphBuildWorkflow:
         else:
             raise RuntimeError("attempt has no validation outcome")
         metadata = self._completion_metadata(completion)
+        if state.get("stage") == "glean" and baseline is not None:
+            accepted = validated is not None and self._covers_baseline(validated, baseline)
+            baseline_entity_facts, baseline_relation_facts = self._fact_signatures(baseline)
+            candidate_entity_facts, candidate_relation_facts = (
+                self._fact_signatures(validated) if validated is not None else (set(), set())
+            )
+            metadata.update(
+                {
+                    "gleaning_accepted": accepted,
+                    "baseline_entities": len(baseline.entities),
+                    "baseline_relations": len(baseline.relations),
+                    "candidate_entities": len(validated.entities) if validated else 0,
+                    "candidate_relations": len(validated.relations) if validated else 0,
+                    "added_entities": (
+                        len(candidate_entity_facts - baseline_entity_facts) if accepted else 0
+                    ),
+                    "added_relations": (
+                        len(candidate_relation_facts - baseline_relation_facts) if accepted else 0
+                    ),
+                }
+            )
         if provider_error is not None:
             metadata.update(
                 {
@@ -523,14 +642,35 @@ class GraphBuildWorkflow:
                 completion_tokens=completion.completion_tokens if completion else 0,
                 latency_seconds=state.get("latency_seconds"),
             )
+            if state.get("stage") == "glean":
+                self.repository.persist_provisional_result(
+                    session,
+                    claim,
+                    self._accepted_result(state),
+                )
+            elif self._should_glean(state):
+                claim = state.get("claim")
+                validated = state.get("validated")
+                if claim is None or validated is None:
+                    raise RuntimeError("cannot stage gleaning without an accepted extraction")
+                self.repository.stage_gleaning(session, claim, validated)
         return {"outcome": outcome}
 
-    @staticmethod
-    def _route_after_attempt(state: ChunkState) -> str:
-        if state.get("validated") is not None:
+    @classmethod
+    def _route_after_attempt(cls, state: ChunkState) -> str:
+        if state.get("stage") == "glean":
             return "complete"
+        if state.get("validated") is not None:
+            return "glean" if cls._should_glean(state) else "complete"
         claim = state.get("claim")
         if claim is None or claim.run_attempt_number >= state["max_attempts"]:
+            return "fail"
+        stage_attempt_counts = state.get("stage_attempt_counts", {})
+        repair_max_attempts = state.get("repair_max_attempts", 1)
+        if (
+            state.get("stage") == "repair"
+            and stage_attempt_counts.get("repair", 0) >= repair_max_attempts
+        ):
             return "fail"
         provider_error = state.get("provider_error")
         if provider_error is not None:
@@ -538,10 +678,43 @@ class GraphBuildWorkflow:
         validation_error = state.get("validation_error")
         if validation_error is None:
             return "fail"
-        if validation_error.repairable and state.get("stage") == "repair":
+        if (
+            validation_error.repairable
+            and stage_attempt_counts.get("repair", 0) >= repair_max_attempts
+        ):
             return "fail"
         retryable = validation_error.repairable or validation_error.retryable_provider
         return "retry" if retryable else "fail"
+
+    @staticmethod
+    def _should_glean(state: ChunkState) -> bool:
+        claim = state.get("claim")
+        return bool(
+            state.get("stage", "extract") == "extract"
+            and state.get("validated") is not None
+            and state.get("gleaning_max_attempts", 0) > 0
+            and state.get("extraction_stage_attempt_counts", {}).get("glean", 0)
+            < state["gleaning_max_attempts"]
+            and state.get("stage_attempt_counts", {}).get("repair", 0) == 0
+            and claim is not None
+            and claim.run_attempt_number < state["max_attempts"]
+        )
+
+    async def _prepare_gleaning(self, state: ChunkState) -> dict[str, Any]:
+        validated = state.get("validated")
+        if validated is None:
+            raise RuntimeError("cannot prepare gleaning without an accepted extraction")
+        return {
+            "stage": "glean",
+            "baseline_validated": validated,
+            "claim": None,
+            "completion": None,
+            "provider_error": None,
+            "validated": None,
+            "validation_error": None,
+            "invalid_response": None,
+            "issues": (),
+        }
 
     async def _prepare_retry(self, state: ChunkState) -> dict[str, Any]:
         claim = state.get("claim")
@@ -583,9 +756,9 @@ class GraphBuildWorkflow:
 
     async def _complete_or_review(self, state: ChunkState) -> dict[str, Any]:
         claim = state.get("claim")
-        validated = state.get("validated")
-        if claim is None or validated is None:
+        if claim is None:
             raise RuntimeError("cannot complete an extraction without a validated result")
+        validated = self._accepted_result(state)
         with self.database.session_factory.begin() as session:
             result = self.repository.complete_extraction(
                 session,
@@ -594,6 +767,76 @@ class GraphBuildWorkflow:
                 needs_review=state["review_required"],
             )
         return {"outcome": str(result["status"])}
+
+    @classmethod
+    def _accepted_result(cls, state: ChunkState) -> ValidatedChunkExtraction:
+        candidate = state.get("validated")
+        if state.get("stage") != "glean":
+            if candidate is None:
+                raise RuntimeError("cannot complete an extraction without a validated result")
+            return candidate
+
+        baseline = state.get("baseline_validated")
+        if baseline is None:
+            raise RuntimeError("cannot complete gleaning without its validated baseline")
+        if candidate is None:
+            return cls._with_validation_warning(
+                baseline,
+                "Gleaning failed; retained the accepted first-pass extraction.",
+            )
+        if not cls._covers_baseline(candidate, baseline):
+            return cls._with_validation_warning(
+                baseline,
+                "Gleaning omitted an accepted first-pass fact; retained the baseline.",
+            )
+        return candidate
+
+    @staticmethod
+    def _with_validation_warning(
+        extraction: ValidatedChunkExtraction,
+        warning: str,
+    ) -> ValidatedChunkExtraction:
+        warnings = tuple(dict.fromkeys((*extraction.validation_warnings, warning)))
+        return extraction.model_copy(update={"validation_warnings": warnings})
+
+    @classmethod
+    def _covers_baseline(
+        cls,
+        candidate: ValidatedChunkExtraction,
+        baseline: ValidatedChunkExtraction,
+    ) -> bool:
+        baseline_entities, baseline_relations = cls._fact_signatures(baseline)
+        candidate_entities, candidate_relations = cls._fact_signatures(candidate)
+        return baseline_entities <= candidate_entities and baseline_relations <= candidate_relations
+
+    @staticmethod
+    def _fact_signatures(
+        extraction: ValidatedChunkExtraction,
+    ) -> tuple[set[tuple[Any, ...]], set[tuple[Any, ...]]]:
+        mention_keys = {
+            entity.id: (normalize_entity_alias(entity.name), entity.entity_type)
+            for entity in extraction.entities
+        }
+        entities = {
+            (
+                *mention_keys[entity.id],
+                entity.description,
+                tuple(sorted(entity.aliases, key=lambda value: (value.casefold(), value))),
+                tuple(sorted(span.quote for span in entity.evidence)),
+            )
+            for entity in extraction.entities
+        }
+        relations = {
+            (
+                mention_keys[relation.source_mention_id],
+                normalize_predicate(relation.predicate),
+                mention_keys[relation.target_mention_id],
+                relation.description,
+                tuple(sorted(span.quote for span in relation.evidence)),
+            )
+            for relation in extraction.relations
+        }
+        return entities, relations
 
     async def _record_failure(self, state: ChunkState) -> dict[str, Any]:
         claim = state.get("claim")
@@ -618,12 +861,14 @@ class GraphBuildWorkflow:
             payload = row.get("result")
             if payload is None:
                 raise RuntimeError(f"successful extraction has no result: {row['id']}")
-            values.append(
-                ValidatedChunkExtraction.model_validate_json(
-                    json.dumps(payload, ensure_ascii=False)
-                )
-            )
+            values.append(self._validated_from_payload(payload))
         return tuple(sorted(values, key=lambda item: item.source_chunk_id))
+
+    @staticmethod
+    def _validated_from_payload(payload: Any) -> ValidatedChunkExtraction:
+        return ValidatedChunkExtraction.model_validate_json(
+            json.dumps(payload, ensure_ascii=False)
+        )
 
     def _domain_snapshot(
         self, run_id: str
@@ -695,6 +940,12 @@ class GraphBuildWorkflow:
                 total=run.attempt_count,
                 extract=run.extract_attempt_count,
                 repair=run.repair_attempt_count,
+                glean=max(
+                    run.attempt_count
+                    - run.extract_attempt_count
+                    - run.repair_attempt_count,
+                    0,
+                ),
             ),
             usage=UsageSummary(
                 prompt_tokens=usage.prompt_tokens,

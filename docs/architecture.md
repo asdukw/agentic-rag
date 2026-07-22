@@ -34,10 +34,18 @@ flowchart LR
         Pending --> Orchestrator["LangGraph parent + per-chunk subgraphs"]
         Orchestrator --> Extract["DeepSeek adapter\nopen entity types + controlled JSON;\nthinking disabled"]
         Extract --> Validate["Local JSON repair + per-record Pydantic validation\nevidence checks; salvage valid records"]
-        Validate -->|whole-response failure; once| Repair["Reason-aware semantic repair"]
-        Repair --> Validate
-        Validate -->|optional| Review["Human review"]
-        Validate --> Normalize["Project-owned normalization"]
+        Validate -->|invalid; second call| Repair["Reason-aware semantic repair"]
+        Repair --> RepairValidate["Validate repaired response"]
+        Validate -->|valid; second call| Glean["Independent auditable glean\npreserve baseline + add omissions"]
+        Glean --> GleanGate["Validate + baseline-preservation gate"]
+        GleanGate -->|valid superset| Accepted["Accepted extraction"]
+        GleanGate -->|invalid or regressive| Baseline["Fallback to validated baseline"]
+        Baseline --> Accepted
+        Validate -->|no glean budget| Accepted
+        RepairValidate -->|valid| Accepted
+        RepairValidate -->|invalid| Failed["Audited chunk failure"]
+        Accepted -->|optional| Review["Human review"]
+        Accepted --> Normalize["Project-owned normalization"]
         Review --> Normalize
         Normalize --> Merge["Project-owned relation merge"]
         Merge --> GraphStore[("SQLite: extraction attempts,\nentities, relations, evidence")]
@@ -112,11 +120,17 @@ document and all chunks remain available for provenance and reclassification.
 Graph extraction follows LightRAG's open-type, controlled-format approach.
 Entity types are normalized to `UPPER_SNAKE_CASE` strings rather than a closed
 enum. Malformed JSON is repaired locally where possible; invalid individual
-entities and relations are dropped without paying for another model call. Only
-a whole-response failure can trigger one semantic repair, whose prompt includes
-the invalid response and concrete validation reasons. Canonical entity identity
+entities and relations are dropped without paying for another model call. With
+the default two-call budget, a valid initial extraction receives one independent,
+auditable `glean` pass, while a whole-response failure spends the second call on
+reason-aware semantic repair instead; `repair` and `glean` are mutually exclusive.
+The glean response is a complete candidate result and is accepted only if it
+passes validation and preserves every baseline entity, relation, and evidence;
+otherwise the validated baseline remains the result. Canonical entity identity
 does not include type; merged names/aliases choose the most frequent observed
-type, with stable lexical tie-breaking.
+type, with stable lexical tie-breaking. Graph summaries count isolated entities
+but materialization does not delete them solely for having no edge: entity-vector
+retrieval can still map them directly to their source chunks.
 
 `dense` and `bm25` are independent chunk-retrieval baselines. The industry-standard
 `hybrid` strategy combines them, normalizes each subscore independently, and
@@ -297,7 +311,8 @@ embedding API cost.
   quality classification, and transactional document/chunk updates.
 - `build-graph` uses the business database as the fact source and a separate
   LangGraph checkpoint database only for orchestration state. It schedules only
-  `normal` chunks and limits semantic repair to one model call.
+  `normal` chunks; after the initial call, the default budget permits either one
+  semantic repair or one audited glean pass.
 - `build-index` writes a complete profile and all three vector partitions before
   activation; its chunk partition includes only `normal` chunks.
 - `retrieve` returns an explainable retrieval result without requiring answer

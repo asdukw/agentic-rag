@@ -33,7 +33,7 @@ RUN_STATUSES = {
     "failed",
 }
 EXTRACTION_STATUSES = {"pending", "running", "succeeded", "needs_review", "failed"}
-ATTEMPT_STAGES = {"extract", "repair"}
+ATTEMPT_STAGES = {"extract", "repair", "glean"}
 
 
 def _nonnegative_optional_int(value: Any) -> int | None:
@@ -312,6 +312,20 @@ class GraphRepository:
                 .group_by(ExtractionAttemptRecord.extraction_id)
             ).tuples()
         }
+        run_stage_attempt_counts: dict[str, dict[str, int]] = {}
+        for extraction_id, stage, count in session.execute(
+            select(
+                ExtractionAttemptRecord.extraction_id,
+                ExtractionAttemptRecord.stage,
+                func.count(),
+            )
+            .where(ExtractionAttemptRecord.run_id == run_id)
+            .group_by(
+                ExtractionAttemptRecord.extraction_id,
+                ExtractionAttemptRecord.stage,
+            )
+        ).tuples():
+            run_stage_attempt_counts.setdefault(extraction_id, {})[stage] = int(count)
         current = now or datetime.now(UTC)
         eligible = or_(
             (ChunkExtractionRecord.status == "pending")
@@ -336,6 +350,23 @@ class GraphRepository:
             if limit < 0:
                 raise ValueError("limit must be non-negative")
             statement = statement.limit(limit)
+        rows = session.execute(statement).all()
+        extraction_ids = [extraction.id for extraction, _ in rows]
+        extraction_stage_attempt_counts: dict[str, dict[str, int]] = {}
+        if extraction_ids:
+            for extraction_id, stage, count in session.execute(
+                select(
+                    ExtractionAttemptRecord.extraction_id,
+                    ExtractionAttemptRecord.stage,
+                    func.count(),
+                )
+                .where(ExtractionAttemptRecord.extraction_id.in_(extraction_ids))
+                .group_by(
+                    ExtractionAttemptRecord.extraction_id,
+                    ExtractionAttemptRecord.stage,
+                )
+            ).tuples():
+                extraction_stage_attempt_counts.setdefault(extraction_id, {})[stage] = int(count)
         return [
             {
                 "id": extraction.id,
@@ -344,10 +375,16 @@ class GraphRepository:
                 "status": extraction.status,
                 "attempt_count": extraction.attempt_count,
                 "run_attempt_count": run_attempt_counts.get(extraction.id, 0),
+                "stage_attempt_counts": run_stage_attempt_counts.get(extraction.id, {}),
+                "extraction_stage_attempt_counts": extraction_stage_attempt_counts.get(
+                    extraction.id, {}
+                ),
+                "stage": "glean" if extraction.result_json is not None else "extract",
+                "baseline_result": extraction.result_json,
                 "text": chunk.text,
                 "contextualized_text": chunk.contextualized_text,
             }
-            for extraction, chunk in session.execute(statement).all()
+            for extraction, chunk in rows
         ]
 
     def claim_extraction(
@@ -360,6 +397,7 @@ class GraphRepository:
         messages: Sequence[Mapping[str, Any]],
         lease_seconds: float = 300,
         max_attempts: int | None = None,
+        max_stage_attempts: int | None = None,
         now: datetime | None = None,
     ) -> ExtractionClaim | None:
         if stage not in ATTEMPT_STAGES:
@@ -383,6 +421,8 @@ class GraphRepository:
                 raise ValueError("max_attempts must be positive")
             if owned_attempts >= max_attempts:
                 return None
+        if max_stage_attempts is not None and max_stage_attempts < 0:
+            raise ValueError("max_stage_attempts must not be negative")
         current = now or datetime.now(UTC)
         lease_expires_at = current + timedelta(seconds=lease_seconds)
         token = uuid4().hex
@@ -396,6 +436,22 @@ class GraphRepository:
             & (ChunkExtractionRecord.lease_expires_at <= current),
         )
         conditions = [ChunkExtractionRecord.id == extraction_id, eligible]
+        conditions.append(
+            ChunkExtractionRecord.result_json.is_not(None)
+            if stage == "glean"
+            else ChunkExtractionRecord.result_json.is_(None)
+        )
+        if max_stage_attempts is not None:
+            global_stage_attempts = (
+                select(func.count())
+                .select_from(ExtractionAttemptRecord)
+                .where(
+                    ExtractionAttemptRecord.extraction_id == extraction_id,
+                    ExtractionAttemptRecord.stage == stage,
+                )
+                .scalar_subquery()
+            )
+            conditions.append(global_stage_attempts < max_stage_attempts)
         claimed = session.execute(
             update(ChunkExtractionRecord)
             .where(*conditions)
@@ -548,6 +604,127 @@ class GraphRepository:
         )
         self._refresh_linked_runs(session, claim.extraction_id)
         return self._extraction_dict(self._require_extraction(session, claim.extraction_id))
+
+    def stage_gleaning(
+        self,
+        session: Session,
+        claim: ExtractionClaim,
+        baseline: Mapping[str, Any] | Any,
+        *,
+        staged_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Persist an accepted first pass and release its lease for a glean call."""
+
+        staged = staged_at or datetime.now(UTC)
+        payload = self._as_mapping(baseline)
+        changed = session.execute(
+            update(ChunkExtractionRecord)
+            .where(
+                ChunkExtractionRecord.id == claim.extraction_id,
+                ChunkExtractionRecord.status == "running",
+                ChunkExtractionRecord.lease_token == claim.lease_token,
+            )
+            .values(
+                status="pending",
+                result_json=payload,
+                error=None,
+                lease_token=None,
+                lease_expires_at=None,
+                next_attempt_at=None,
+                updated_at=staged,
+                completed_at=None,
+            )
+        ).rowcount
+        if changed != 1:
+            raise StaleExtractionLeaseError(f"lease is no longer current for {claim.extraction_id}")
+        self._refresh_linked_runs(session, claim.extraction_id)
+        return self._extraction_dict(self._require_extraction(session, claim.extraction_id))
+
+    def persist_provisional_result(
+        self,
+        session: Session,
+        claim: ExtractionClaim,
+        result: Mapping[str, Any] | Any,
+        *,
+        updated_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Replace a staged baseline while retaining the current worker lease."""
+
+        updated = updated_at or datetime.now(UTC)
+        payload = self._as_mapping(result)
+        changed = session.execute(
+            update(ChunkExtractionRecord)
+            .where(
+                ChunkExtractionRecord.id == claim.extraction_id,
+                ChunkExtractionRecord.status == "running",
+                ChunkExtractionRecord.lease_token == claim.lease_token,
+            )
+            .values(result_json=payload, updated_at=updated)
+        ).rowcount
+        if changed != 1:
+            raise StaleExtractionLeaseError(f"lease is no longer current for {claim.extraction_id}")
+        return self._extraction_dict(self._require_extraction(session, claim.extraction_id))
+
+    def complete_provisional_extraction(
+        self,
+        session: Session,
+        extraction_id: str,
+        *,
+        run_id: str,
+        needs_review: bool = False,
+        completed_at: datetime | None = None,
+    ) -> bool:
+        """Recover a durable first-pass result when no glean attempt can be claimed."""
+
+        owner_item = session.get(GraphBuildItemRecord, (run_id, extraction_id))
+        if owner_item is None:
+            raise GraphRepositoryError(f"extraction {extraction_id} is not linked to run {run_id}")
+        if needs_review and owner_item.review_status != "pending":
+            raise GraphRepositoryError(
+                "review-required completion is not linked to a pending review item"
+            )
+        extraction = session.get(ChunkExtractionRecord, extraction_id)
+        if extraction is None or extraction.result_json is None:
+            return False
+        completed = completed_at or datetime.now(UTC)
+        eligible = or_(
+            ChunkExtractionRecord.status == "pending",
+            (ChunkExtractionRecord.status == "running")
+            & (ChunkExtractionRecord.lease_expires_at <= completed),
+        )
+        changed = session.execute(
+            update(ChunkExtractionRecord)
+            .where(
+                ChunkExtractionRecord.id == extraction_id,
+                eligible,
+            )
+            .values(
+                status="succeeded",
+                error=None,
+                lease_token=None,
+                lease_expires_at=None,
+                next_attempt_at=None,
+                updated_at=completed,
+                completed_at=completed,
+            )
+        ).rowcount
+        if changed != 1:
+            return False
+        session.execute(
+            update(ExtractionAttemptRecord)
+            .where(
+                ExtractionAttemptRecord.extraction_id == extraction_id,
+                ExtractionAttemptRecord.run_id == run_id,
+                ExtractionAttemptRecord.outcome == "running",
+            )
+            .values(
+                outcome="interrupted",
+                error="gleaning interrupted; accepted first-pass result retained",
+                finished_at=completed,
+            )
+        )
+        self._refresh_linked_runs(session, extraction_id)
+        return True
 
     def requeue_extraction(
         self,
@@ -969,6 +1146,12 @@ class GraphRepository:
                 "total": run.attempt_count,
                 "extract": run.extract_attempt_count,
                 "repair": run.repair_attempt_count,
+                "glean": max(
+                    run.attempt_count
+                    - run.extract_attempt_count
+                    - run.repair_attempt_count,
+                    0,
+                ),
             },
             "usage": {
                 "prompt_tokens": run.prompt_tokens,

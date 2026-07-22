@@ -25,6 +25,7 @@ class AttemptSummary(_ReportModel):
     total: int = Field(ge=0)
     extract: int = Field(ge=0)
     repair: int = Field(ge=0)
+    glean: int = Field(default=0, ge=0)
 
 
 class UsageSummary(_ReportModel):

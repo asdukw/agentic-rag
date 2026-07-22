@@ -17,12 +17,13 @@ from pydantic import (
 from hybrid_rag.ids import canonical_json_hash
 
 EXTRACTION_SCHEMA_VERSION = "4"
-EXTRACTION_CONFIG_VERSION = "1"
+EXTRACTION_CONFIG_VERSION = "2"
 GRAPH_SCHEMA_VERSION = "1"
 ENTITY_NORMALIZER_VERSION = "2"
 RELATION_MERGER_VERSION = "1"
 EXTRACTION_PROMPT_VERSION = "5"
 REPAIR_PROMPT_VERSION = "5"
+GLEANING_PROMPT_VERSION = "1"
 
 MAX_EXTRACTION_ENTITIES = 24
 MAX_EXTRACTION_RECORDS = 64
@@ -269,7 +270,9 @@ class ExtractionConfig(_FrozenDomainModel):
     schema_version: str = EXTRACTION_SCHEMA_VERSION
     prompt_version: str = EXTRACTION_PROMPT_VERSION
     repair_prompt_version: str = REPAIR_PROMPT_VERSION
+    gleaning_prompt_version: str = GLEANING_PROMPT_VERSION
     repair_max_attempts: int = Field(default=1, ge=0, le=1)
+    gleaning_max_attempts: int = Field(default=1, ge=0, le=1)
 
     @property
     def config_hash(self) -> str:

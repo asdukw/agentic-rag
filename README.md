@@ -40,6 +40,7 @@
 - **复杂问题证据覆盖**：多跳路径可在有界范围内补充来源 chunk；显式比较问题会拆分子查询，并用跨文档 anchors 和 coverage-first context 避免第二侧证据被挤出。
 - **本地模型链路**：BGE-M3 建立 chunk / entity / relation 三个索引分区，可选 bge-reranker-v2-m3 将 32 个候选精排为 Top-8；CUDA 可用时自动选择 GPU。
 - **证据是一等数据**：回答只能引用实际读入 token budget 的原始 chunk；稳定 evidence ID、索引 profile、语料 hash 和 retrieval trace 支持审计与 replay。
+- **可审计图谱补漏**：初始抽取有效时，第二次调用执行独立 `glean`；初始抽取无效时，同一预算改用于 `repair`。补漏结果只有完整保留已验证基线才会采用，否则安全回退。
 - **有界 Agent**：Planner 只能选择项目定义的只读检索工具，受到 step、search、read 和并发预算约束；多上下文任务可分派给 2～3 个隔离 worker。
 - **评测不是只看一个 Recall**：同时区分 raw candidates 与 delivered context，并报告 exact-page、document-level、semantic-evidence、延迟、成本和运行环境 provenance。
 
@@ -57,7 +58,7 @@ flowchart LR
     subgraph Offline["离线建库"]
         Docs["PDF / Markdown / TXT"] --> Ingest["解析 · 清洗 · 章节感知分块"]
         Ingest --> Corpus[("Documents + Chunks<br/>Stable IDs · Content Hash")]
-        Corpus --> Extract["可恢复图谱抽取<br/>校验 · 修复 · 审核"]
+        Corpus --> Extract["可恢复图谱抽取<br/>校验 · 补漏/修复 · 审核"]
         Extract --> Graph[("Entities · Relations · Evidence")]
         Corpus --> Index["BGE-M3 三路索引"]
         Graph --> Index
@@ -126,7 +127,7 @@ uv run hrag build-index --db storage/portfolio-demo.db
 uv run hrag ask "How do graph routes complement chunk retrieval?" --db storage/portfolio-demo.db --mode agentic
 ```
 
-图谱构建可中断恢复；命令会输出 run ID，之后可用 `hrag build-graph --resume <run-id>` 继续。
+图谱构建可中断恢复；命令会输出 run ID，之后可用 `hrag build-graph --resume <run-id>` 继续。默认每个 chunk 最多调用模型两次：有效初始抽取进入一次独立、可审计的补漏，无效初始抽取则把第二次调用用于修复，两者互斥。构图会报告孤立实体但不自动删除，因为它们仍可作为 `graph_local` 的 entity → chunk 召回入口。
 
 ### 启动 Web 工作台
 

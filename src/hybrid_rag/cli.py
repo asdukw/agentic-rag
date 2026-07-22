@@ -36,8 +36,10 @@ from hybrid_rag.evaluation.ragas_runner import RagasEvaluationRunner
 from hybrid_rag.extraction.client import DeepSeekClient
 from hybrid_rag.extraction.reports import GraphBuildReport, GraphStorageStats
 from hybrid_rag.extraction.schemas import (
+    EXTRACTION_CONFIG_VERSION,
     EXTRACTION_PROMPT_VERSION,
     EXTRACTION_SCHEMA_VERSION,
+    GLEANING_PROMPT_VERSION,
     REPAIR_PROMPT_VERSION,
     ExtractionConfig,
     GraphConfig,
@@ -340,9 +342,11 @@ def _build_extraction_config(
         persisted = run.report.get("extraction_config")
         if isinstance(persisted, dict):
             expected_versions = {
+                "version": EXTRACTION_CONFIG_VERSION,
                 "schema_version": EXTRACTION_SCHEMA_VERSION,
                 "prompt_version": EXTRACTION_PROMPT_VERSION,
                 "repair_prompt_version": REPAIR_PROMPT_VERSION,
+                "gleaning_prompt_version": GLEANING_PROMPT_VERSION,
             }
             mismatches = [
                 f"{field}={persisted.get(field)!r} (current={expected!r})"
@@ -361,6 +365,7 @@ def _build_extraction_config(
         model=model,
         max_output_tokens=max_output_tokens,
         repair_max_attempts=min(max_attempts - 1, 1),
+        gleaning_max_attempts=min(max_attempts - 1, 1),
     )
 
 
@@ -402,7 +407,8 @@ async def _monitor_graph_build(
         TextColumn(
             "remaining={task.fields[remaining]} cached={task.fields[cached]} "
             "attempts={task.fields[attempts]} "
-            "repair={task.fields[repair]} failed={task.fields[failed]} "
+            "repair={task.fields[repair]} glean={task.fields[glean]} "
+            "failed={task.fields[failed]} "
             "tokens={task.fields[tokens]}"
         ),
     )
@@ -414,6 +420,7 @@ async def _monitor_graph_build(
             cached=0,
             attempts=0,
             repair=0,
+            glean=0,
             failed=0,
             tokens=0,
         )
@@ -444,6 +451,7 @@ async def _monitor_graph_build(
                         cached=chunks.get("cached", 0),
                         attempts=attempts.get("total", 0),
                         repair=attempts.get("repair", 0),
+                        glean=attempts.get("glean", 0),
                         failed=chunks.get("failed", 0),
                         tokens=usage.get("total_tokens", 0),
                     )
@@ -460,6 +468,7 @@ async def _monitor_graph_build(
                 cached=report.chunks.cached,
                 attempts=report.attempts.total,
                 repair=report.attempts.repair,
+                glean=report.attempts.glean,
                 failed=report.chunks.failed,
                 tokens=report.usage.total_tokens,
             )
@@ -502,6 +511,7 @@ async def _monitor_graph_build_lines(
                     chunks.get("cached", 0),
                     attempts.get("total", 0),
                     attempts.get("repair", 0),
+                    attempts.get("glean", 0),
                     failed,
                     usage.get("total_tokens", 0),
                 )
@@ -511,7 +521,7 @@ async def _monitor_graph_build_lines(
                         f"Graph {run_id}: {completed}/{total} ({percentage:.1f}%) "
                         f"remaining={max(total - completed, 0)} cached={snapshot[2]} "
                         f"attempts={snapshot[3]} repair={snapshot[4]} "
-                        f"failed={failed} tokens={snapshot[6]}",
+                        f"glean={snapshot[5]} failed={failed} tokens={snapshot[7]}",
                         markup=False,
                     )
                     last_snapshot = snapshot
@@ -539,6 +549,9 @@ def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -
     chunks.add_column("Review", justify="right", style="yellow")
     chunks.add_column("Failed", justify="right", style="red")
     chunks.add_column("Attempts", justify="right")
+    chunks.add_column("Extract", justify="right")
+    chunks.add_column("Repair", justify="right")
+    chunks.add_column("Glean", justify="right", style="cyan")
     chunks.add_row(
         str(report.chunks.total),
         str(report.chunks.cached),
@@ -547,6 +560,9 @@ def _render_graph_build_report(report: GraphBuildReport, *, json_output: bool) -
         str(report.chunks.needs_review),
         str(report.chunks.failed),
         str(report.attempts.total),
+        str(report.attempts.extract),
+        str(report.attempts.repair),
+        str(report.attempts.glean),
     )
     console.print(chunks)
     quality = report.extraction_quality

@@ -198,6 +198,7 @@ async def build_workspace_graph(workspace_id: str) -> dict[str, Any]:
             model=deepseek.extraction_model,
             max_output_tokens=deepseek.max_output_tokens,
             repair_max_attempts=min(graph.max_attempts - 1, 1),
+            gleaning_max_attempts=min(graph.max_attempts - 1, 1),
         )
         client = DeepSeekClient(
             api_key=api_key,
