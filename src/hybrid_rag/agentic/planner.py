@@ -44,7 +44,7 @@ class DeterministicAgentPlanner:
         if not state:
             return AgentAction(
                 action=AgentActionName.SEARCH_CHUNKS,
-                args={"query": question, "strategy": "dense_bm25"},
+                args={"query": question},
                 rationale="Start with combined lexical and semantic chunk evidence.",
             )
         if available_chunk_ids and not read_chunk_ids:

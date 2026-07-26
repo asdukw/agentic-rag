@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AGENT_ACTION_RATIONALE_MAX_LENGTH = 500
 
@@ -40,21 +40,7 @@ class SearchWorkerTask(BaseModel):
     objective: str = Field(min_length=1, max_length=300)
     tool: Literal["search_chunks", "search_entities", "search_relations"]
     query: str = Field(min_length=1, max_length=1_000)
-    strategy: Literal["dense", "bm25", "dense_bm25"] | None = None
     top_k: int | None = Field(default=None, ge=1, le=20)
-
-    @field_validator("strategy", mode="before")
-    @classmethod
-    def normalize_legacy_strategy(cls, value: object) -> object:
-        return "dense_bm25" if value == "hybrid" else value
-
-    @model_validator(mode="after")
-    def validate_strategy(self) -> SearchWorkerTask:
-        if self.tool == "search_chunks":
-            return self
-        if self.strategy is not None:
-            raise ValueError("strategy is only valid for search_chunks workers")
-        return self
 
 
 class ForkSearchArgs(BaseModel):

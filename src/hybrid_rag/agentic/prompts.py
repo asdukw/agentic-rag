@@ -45,7 +45,7 @@ def build_planner_messages(
             "returns": "One retrieval outcome per worker, including discovered authorized IDs.",
         },
         "search_chunks": {
-            "args": {"query": "text", "strategy": "dense|bm25|dense_bm25", "top_k": "1-20?"},
+            "args": {"query": "text", "top_k": "1-20?"},
             "use_when": (
                 "The answer depends on exact source passages, numbers, formulas, tables, quotes, "
                 "or details unlikely to be represented as graph edges."
@@ -54,7 +54,10 @@ def build_planner_messages(
                 "The primary need is discovering named components, predicates, topology, or a "
                 "multi-hop connection and the relevant graph count is non-zero."
             ),
-            "returns": "Ranked chunk candidates that may later be read as citable evidence.",
+            "returns": (
+                "Ranked chunk candidates from fixed dense + BM25 retrieval that may later be "
+                "read as citable evidence."
+            ),
         },
         "search_entities": {
             "args": {"query": "entity-centric text", "top_k": "1-20?"},

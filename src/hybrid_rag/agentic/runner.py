@@ -335,8 +335,6 @@ class AgentRunner:
         args: dict[str, Any] = {"query": task.query}
         if task.top_k is not None:
             args["top_k"] = task.top_k
-        if task.tool == AgentActionName.SEARCH_CHUNKS.value:
-            args["strategy"] = task.strategy or "dense_bm25"
         worker_action = AgentAction(
             action=AgentActionName(task.tool),
             args=args,
@@ -394,27 +392,14 @@ class AgentRunner:
         if session.searches >= session.budget.max_searches:
             return _budget_outcome(action.action, "search")
         query = _required_string(action.args, "query")
-        strategy = _enum_string(
-            action.args,
-            "strategy",
-            {"dense", "bm25", "dense_bm25", "hybrid"},
-            "dense_bm25",
-        )
-        if strategy == "hybrid":
-            strategy = "dense_bm25"
         options = _tool_options(session, action.args)
-        retrieval_strategy = {
-            "dense": RetrievalStrategy.DENSE,
-            "bm25": RetrievalStrategy.BM25,
-            "dense_bm25": RetrievalStrategy.HYBRID,
-        }[strategy]
         result = session.service.retrieve(
             query,
-            mode=retrieval_strategy,
+            mode=RetrievalStrategy.HYBRID,
             options=options,
             profile_ref=session.profile_id,
             persist=False,
-            model_info={"agentic_tool": action.action.value, "strategy": strategy},
+            model_info={"agentic_tool": action.action.value, "strategy": "dense_bm25"},
         )
         session.searches += 1
         self._register_context(session, result.context_items)
@@ -422,11 +407,11 @@ class AgentRunner:
             tool=action.action,
             ok=True,
             summary=(
-                f"Found {len(result.context_items)} chunk candidates with {strategy} retrieval."
+                f"Found {len(result.context_items)} chunk candidates with dense + BM25 retrieval."
             ),
             data={
                 "trace_id": result.trace_id,
-                "strategy": strategy,
+                "strategy": "dense_bm25",
                 "rerank": _rerank_summary(result),
                 "chunks": [_context_summary(item) for item in result.context_items],
             },
