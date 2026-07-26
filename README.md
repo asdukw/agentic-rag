@@ -6,30 +6,30 @@
 
 > 定位：方法论与工程实践作品，不是生产级通用知识库。
 
-[Benchmark v2](docs/benchmark-v2.md) · [Benchmark v3 预注册方案](docs/benchmark-v3-plan.md) · [完整架构](docs/architecture.md) · [设计边界](docs/adr/001-build-vs-reuse.md)
+[Benchmark v3](docs/benchmark-v3.md) · [机器可读摘要](docs/benchmark-v3-summary.json) · [完整架构](docs/architecture.md) · [设计边界](docs/adr/001-build-vs-reuse.md)
 
 ## 结果先看
 
-在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA reranker 配置下，`mix` 与旧版 `naive` 的配对结果如下。旧版 `naive` 等价于现在的行业标准 `hybrid`（Dense + BM25）；相关性指标只聚合其中 50 道可回答题。该 benchmark 将按新命名重新运行，表中保留原始报告标签以避免篡改历史产物。
+Benchmark v3 已在 clean commit 上完成预注册的 E1–E5 retrieval-only 矩阵。在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA FP16 reranker 配置下，主实验 E5 的结果如下；相关性指标只聚合其中 50 道可回答题。
 
-| 指标 | hybrid（旧报告：naive） | mix | mix - hybrid |
+| 指标 | hybrid | mix | mix - hybrid |
 |---|---:|---:|---:|
 | Exact-page Raw Recall@8 | 0.730 | 0.720 | -0.010 |
 | Exact-page Context Recall@8 | 0.700 | 0.710 | +0.010 |
 | Document Context Recall@8 | 0.880 | 0.950 | **+0.070** |
 | Semantic Context Recall | 0.760 | 0.820 | **+0.060** |
 | Context NDCG@8 | 0.635 | 0.655 | +0.020 |
-| 平均延迟 | 2.951s | 3.344s | +0.393s |
+| 平均延迟 | 2.600s | 2.984s | +0.384s |
 
 在 10 道 multi-context 题上，`mix` 的优势更集中：
 
-| 指标 | hybrid（旧报告：naive） | mix |
+| 指标 | hybrid | mix |
 |---|---:|---:|
 | Exact-page Raw Recall@8 | 0.050 | **0.150** |
 | Document Context Recall@8 | 0.600 | **0.750** |
 | Semantic Context Recall | 0.300 | **0.400** |
 
-这个结果没有被包装成“mix 全面胜出”：强 reranker 会让高度重叠的候选池趋同，因此 `mix` 的价值主要体现在跨文档覆盖和最终交付上下文，而不是每道单跳题都提高精确页命中。完整配置、逐题胜负、离线 paired bootstrap 区间和局限见 [Benchmark v2](docs/benchmark-v2.md)。
+这个结果没有被包装成“mix 全面胜出”：强 reranker 会让高度重叠的候选池趋同，因此 `mix` 的价值主要体现在跨文档覆盖和最终交付上下文，而不是每道单跳题都提高精确页命中。E1–E3 还表明，纯 Dense 明显优于纯 BM25；无 reranker 时，当前等权 Hybrid 弱于 Dense，而启用 cross-encoder 后两者的 Exact-page Context Recall@8 同为 0.700。完整配置、逐题胜负、paired bootstrap 区间和局限见 [Benchmark v3](docs/benchmark-v3.md)。
 
 运行环境：RTX 5070 Laptop GPU，`torch 2.13.0+cu130`，BGE-M3 embedding 使用 FP32，bge reranker 使用 FP16。本表对应的 retrieval-only 评测不调用外部 LLM，API 成本为 ¥0。
 
@@ -170,9 +170,10 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 
 评测入口和复现配置见：
 
+- [Benchmark v3：E1–E5 结果、配对区间与局限](docs/benchmark-v3.md)
 - [Benchmark v3 预注册方案：实验矩阵、指标口径与判定规则](docs/benchmark-v3-plan.md)
-- [Benchmark v2：GPU、rerank、指标、结果与局限](docs/benchmark-v2.md)
-- [机器可读结果摘要](docs/benchmark-v2-summary.json)
+- [Benchmark v3 机器可读结果摘要](docs/benchmark-v3-summary.json)
+- [Benchmark v2：历史结果与改造过程](docs/benchmark-v2.md)
 - [`scripts/evaluate_retrieval.py`](scripts/evaluate_retrieval.py)：无需外部 LLM 的 retrieval-only 配对评测
 - [`scripts/curate_rag_benchmark.py`](scripts/curate_rag_benchmark.py)：v1 → v2 的确定性人工审计决策
 
@@ -184,7 +185,7 @@ v2 题集由 v1 的 60 道自动生成题逐题审计得到：21 道接受、39 
 - DeepSeek 只用于可选的图谱抽取、Planner、证据约束回答和 Ragas judge；embedding 与 reranking 均可本地运行。
 - 默认关闭 cross-encoder reranker，方便 CPU 环境学习和调试；可在 `.env` 中启用 `flagembedding` provider。
 - Web workspace 面向本地单用户演示，不以多租户生产部署为目标。
-- Benchmark v2 是 retrieval-only；完整端到端答案质量仍需在明确模型、预算和语料版本下单独评测。
+- Benchmark v3 是 retrieval-only；完整端到端答案质量仍需在明确模型、预算和语料版本下单独评测。
 
 ## 项目结构
 
@@ -208,7 +209,8 @@ docs/              # 架构、ADR 与实验报告
 
 - [完整架构与持久化边界](docs/architecture.md)
 - [Benchmark v1：问题是怎样暴露出来的](docs/benchmark-v1.md)
-- [Benchmark v2：改造后的真实收益与代价](docs/benchmark-v2.md)
+- [Benchmark v3：完整检索消融、收益与代价](docs/benchmark-v3.md)
+- [Benchmark v2：改造过程与历史结果](docs/benchmark-v2.md)
 - [ADR 001：自研与复用边界](docs/adr/001-build-vs-reuse.md)
 - [ADR 002：图谱抽取与恢复语义](docs/adr/002-graph-extraction-checkpoints.md)
 - [ADR 003：索引、失效与 trace](docs/adr/003-retrieval-index-and-trace.md)

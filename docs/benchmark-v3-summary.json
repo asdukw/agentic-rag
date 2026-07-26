@@ -1,0 +1,249 @@
+{
+  "schema_version": "3",
+  "benchmark_type": "retrieval_only",
+  "name": "rag-papers-retrieval-v3",
+  "status": "completed",
+  "implementation_commit": "716e6a11845012ec4676ec7cec24be3608febdf5",
+  "git_dirty": false,
+  "testset": {
+    "case_count": 60,
+    "eligible_answerable_cases": 50,
+    "question_types": {
+      "single_hop": 30,
+      "summary_reasoning": 10,
+      "multi_context": 10,
+      "unanswerable": 10
+    },
+    "reviewed_cases": 60,
+    "corpus_content_hash": "a809ebc5c4ad960466663cee899ece9c4e016703f94fa5c5d4838ea9998077f4",
+    "file_sha256": "27c53590105d002d1e6fdb2b529242954b5c8423ee1791e005a6ba1efd4663b2"
+  },
+  "runtime": {
+    "profile_id": "idx_5e96c37b0d9f624d2d09",
+    "embedding_model": "BAAI/bge-m3",
+    "embedding_dimensions": 1024,
+    "embedding_precision": "fp32",
+    "reranker_model": "BAAI/bge-reranker-v2-m3",
+    "reranker_precision": "fp16",
+    "top_k": 8,
+    "route_candidate_limit": 32,
+    "rerank_candidate_limit": 32,
+    "context_token_budget": 2400,
+    "graph_max_hops": 2,
+    "semantic_cosine_threshold": 0.75,
+    "external_llm_calls": 0
+  },
+  "environment": {
+    "gpu": "NVIDIA GeForce RTX 5070 Laptop GPU",
+    "torch": "2.13.0+cu130",
+    "torch_cuda_build": "13.0"
+  },
+  "bootstrap": {
+    "method": "paired_percentile_bootstrap",
+    "resamples": 20000,
+    "seed": 20260721,
+    "confidence_level": 0.95
+  },
+  "experiments": {
+    "E1": {
+      "baseline": "bm25",
+      "candidate": "dense",
+      "reranker": false,
+      "artifact_sha256": "73adbc262f467f2884cbe5744f273ed3dfaf4a1e15587fb7ef98a5647faee447",
+      "modes": {
+        "bm25": {
+          "exact_context_recall_at_8": 0.0,
+          "document_context_recall_at_8": 0.41,
+          "document_context_ndcg_at_8": 0.288793,
+          "semantic_context_recall": 0.11,
+          "all_documents_covered_rate": 0.38,
+          "latency_mean_seconds": 1.661704,
+          "latency_p50_seconds": 1.626450,
+          "latency_p95_seconds": 1.918434
+        },
+        "dense": {
+          "exact_context_recall_at_8": 0.56,
+          "document_context_recall_at_8": 0.92,
+          "document_context_ndcg_at_8": 0.842597,
+          "semantic_context_recall": 0.74,
+          "all_documents_covered_rate": 0.86,
+          "latency_mean_seconds": 1.802249,
+          "latency_p50_seconds": 1.596342,
+          "latency_p95_seconds": 1.842716
+        }
+      }
+    },
+    "E2": {
+      "baseline": "dense",
+      "candidate": "hybrid",
+      "reranker": false,
+      "artifact_sha256": "3fc8f531a682f708c2bbbc94ddc22f92ff56e92132817820e89d3d9600a131b1",
+      "paired_deltas": {
+        "exact_context_recall_at_8": {
+          "mean": -0.07,
+          "ci_95": [-0.14, -0.02]
+        },
+        "document_context_recall_at_8": {
+          "mean": -0.04,
+          "ci_95": [-0.08, -0.01]
+        },
+        "semantic_context_recall": {
+          "mean": -0.09,
+          "ci_95": [-0.17, -0.03]
+        },
+        "latency_seconds": {
+          "mean": 0.094356,
+          "ci_95": [0.065250, 0.123260]
+        }
+      }
+    },
+    "E3": {
+      "baseline": "dense",
+      "candidate": "hybrid",
+      "reranker": true,
+      "artifact_sha256": "68f4dad6061a9a548159ddc257ddb7059ac8f8345c69d6a31115c358d8620184",
+      "paired_deltas": {
+        "exact_context_recall_at_8": {
+          "mean": 0.0,
+          "ci_95": [-0.06, 0.06]
+        },
+        "document_context_recall_at_8": {
+          "mean": 0.01,
+          "ci_95": [0.0, 0.03]
+        },
+        "semantic_context_recall": {
+          "mean": 0.02,
+          "ci_95": [0.0, 0.06]
+        },
+        "latency_seconds": {
+          "mean": 0.110757,
+          "ci_95": [0.051865, 0.167453]
+        }
+      }
+    },
+    "E4": {
+      "baseline": "hybrid",
+      "candidate": "mix",
+      "reranker": false,
+      "artifact_sha256": "56b6a482290765aa34218d238e32caf9358c2eb725469be2f92f03fbfcd148de",
+      "paired_deltas": {
+        "exact_context_recall_at_8": {
+          "mean": 0.03,
+          "ci_95": [-0.06, 0.12]
+        },
+        "document_context_recall_at_8": {
+          "mean": 0.08,
+          "ci_95": [0.03, 0.14]
+        },
+        "document_context_ndcg_at_8": {
+          "mean": 0.111833,
+          "ci_95": [0.042845, 0.182143]
+        },
+        "semantic_context_recall": {
+          "mean": 0.05,
+          "ci_95": [-0.04, 0.14]
+        },
+        "all_documents_covered_rate": {
+          "mean": 0.12,
+          "ci_95": [0.04, 0.22]
+        },
+        "latency_seconds": {
+          "mean": 0.229100,
+          "ci_95": [0.192749, 0.268312]
+        }
+      }
+    },
+    "E5": {
+      "baseline": "hybrid",
+      "candidate": "mix",
+      "reranker": true,
+      "artifact_sha256": "00907dd06419a0566b9a0fa210fabafc9a8547c12550084c2eb3b101c2c6c141",
+      "modes": {
+        "hybrid": {
+          "exact_context_recall_at_8": 0.70,
+          "document_context_recall_at_8": 0.88,
+          "document_context_ndcg_at_8": 0.845727,
+          "semantic_context_recall": 0.76,
+          "complete_chain_rate": 0.68,
+          "all_documents_covered_rate": 0.82,
+          "latency_mean_seconds": 2.600054,
+          "latency_p50_seconds": 2.558190,
+          "latency_p95_seconds": 3.052138
+        },
+        "mix": {
+          "exact_context_recall_at_8": 0.71,
+          "document_context_recall_at_8": 0.95,
+          "document_context_ndcg_at_8": 0.921588,
+          "semantic_context_recall": 0.82,
+          "complete_chain_rate": 0.70,
+          "all_documents_covered_rate": 0.92,
+          "latency_mean_seconds": 2.984425,
+          "latency_p50_seconds": 2.943518,
+          "latency_p95_seconds": 3.518830
+        }
+      },
+      "paired_deltas": {
+        "exact_context_recall_at_8": {
+          "mean": 0.01,
+          "ci_95": [-0.09, 0.11],
+          "wins_ties_losses": [5, 41, 4]
+        },
+        "document_context_recall_at_8": {
+          "mean": 0.07,
+          "ci_95": [0.0, 0.15],
+          "wins_ties_losses": [7, 41, 2]
+        },
+        "document_context_ndcg_at_8": {
+          "mean": 0.075861,
+          "ci_95": [0.022336, 0.138317],
+          "wins_ties_losses": [10, 38, 2]
+        },
+        "semantic_context_recall": {
+          "mean": 0.06,
+          "ci_95": [-0.02, 0.15],
+          "wins_ties_losses": [6, 42, 2]
+        },
+        "complete_chain_rate": {
+          "mean": 0.02,
+          "ci_95": [-0.08, 0.12],
+          "wins_ties_losses": [4, 43, 3]
+        },
+        "all_documents_covered_rate": {
+          "mean": 0.10,
+          "ci_95": [0.0, 0.20],
+          "wins_ties_losses": [6, 43, 1]
+        },
+        "latency_seconds": {
+          "mean": 0.384371,
+          "ci_95": [0.309024, 0.464685],
+          "wins_ties_losses": [6, 0, 54]
+        }
+      },
+      "multi_context": {
+        "case_count": 10,
+        "hybrid": {
+          "exact_context_recall_at_8": 0.05,
+          "document_context_recall_at_8": 0.60,
+          "document_context_ndcg_at_8": 0.552450,
+          "semantic_context_recall": 0.30,
+          "complete_chain_rate": 0.0,
+          "all_documents_covered_rate": 0.30
+        },
+        "mix": {
+          "exact_context_recall_at_8": 0.15,
+          "document_context_recall_at_8": 0.75,
+          "document_context_ndcg_at_8": 0.738685,
+          "semantic_context_recall": 0.40,
+          "complete_chain_rate": 0.10,
+          "all_documents_covered_rate": 0.60
+        }
+      }
+    }
+  },
+  "scope_limits": [
+    "Retrieval-only results do not measure final answer quality.",
+    "The 60-case set is a development and regression benchmark, not a broad statistical claim.",
+    "The multi-context subset contains only 10 cases.",
+    "Hugging Face model revisions are not explicitly pinned by project configuration."
+  ]
+}
