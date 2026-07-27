@@ -17,6 +17,10 @@ def build_planner_messages(
     available_chunk_ids: Sequence[str],
     read_chunk_ids: Sequence[str],
     remaining_searches: int,
+    graph_frontier: Mapping[str, int],
+    fully_expanded_entity_ids: Sequence[str],
+    remaining_graph_expansions: int,
+    max_graph_depth: int,
     index_capabilities: Mapping[str, int],
 ) -> tuple[ChatMessage, ChatMessage]:
     """Request exactly one bounded action without trusting corpus text as instructions."""
@@ -29,6 +33,15 @@ def build_planner_messages(
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+    )
+    graph_state = json.dumps(
+        {
+            "frontier_entity_depths": dict(graph_frontier),
+            "fully_expanded_entity_ids": list(fully_expanded_entity_ids),
+            "remaining_graph_expansions": remaining_graph_expansions,
+            "max_graph_depth": max_graph_depth,
+        },
+        sort_keys=True,
     )
     tools = {
         "fork_search": {
@@ -87,15 +100,23 @@ def build_planner_messages(
             "args": {
                 "entity_ids": "[discovered ID]?",
                 "relation_ids": "[discovered ID]?",
-                "max_hops": "1-2?",
+                "max_hops": "1?",
+                "limit": "1-20?",
             },
             "requires": "At least one authorized ID returned earlier in this same run.",
             "use_when": (
-                "The question needs neighbors, component topology, dependency chains, or a "
-                "multi-hop path after an entity/relation search."
+                "The question needs neighbors, component topology, or a dependency chain after "
+                "an entity/relation search. Each call reveals only one hop of previously unseen "
+                "edges. Choose a frontier entity and call again only when another hop is useful."
             ),
-            "avoid_when": "As the first action, or when a direct source passage is sufficient.",
-            "returns": "Bounded graph paths and their supporting source chunk IDs.",
+            "avoid_when": (
+                "As the first action, when a direct source passage is sufficient, when no graph "
+                "expansion budget remains, or for an entity listed as fully expanded."
+            ),
+            "returns": (
+                "New neighboring entities and relations, updated frontier state, and supporting "
+                "source chunk IDs. Newly returned entity IDs are authorized for later expansion."
+            ),
         },
         "read_evidence": {
             "args": {"chunk_ids": "[discovered chunk ID]"},
@@ -134,7 +155,10 @@ def build_planner_messages(
                 "question, previous results, and each tool's description. Search before reading; "
                 "read before answering. Graph entities and "
                 "relations are retrieval clues, not citable facts. Prefer finish over an answer "
-                "when the available evidence cannot support the question. Keep rationale concise "
+                "when the available evidence cannot support the question. Graph expansion is "
+                "incremental: expand one frontier entity at a time, inspect the returned "
+                "neighbors, and stop expanding as soon as discovered source chunks are sufficient. "
+                "Keep rationale concise "
                 "and no longer than 300 characters; rationale is only an audit summary.\n\n"
                 f"TOOLS:\n{json.dumps(tools, ensure_ascii=False, sort_keys=True)}\n\n"
                 f"ACTION_SCHEMA:\n{schema}\n\nFORK_SEARCH_ARGS_SCHEMA:\n{fork_schema}"
@@ -151,6 +175,8 @@ def build_planner_messages(
                 f"{json.dumps(list(read_chunk_ids), ensure_ascii=False)}\n\n"
                 "REMAINING_SEARCH_BUDGET_JSON:\n"
                 f"{json.dumps({'remaining_searches': remaining_searches})}\n\n"
+                "GRAPH_STATE_JSON:\n"
+                f"{graph_state}\n\n"
                 "INDEX_CAPABILITIES_JSON:\n"
                 f"{json.dumps(dict(index_capabilities), sort_keys=True)}\n\n"
                 "PREVIOUS_TOOL_RESULTS_JSON:\n"

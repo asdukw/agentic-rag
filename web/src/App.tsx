@@ -21,9 +21,9 @@ import type {
 } from "./types";
 
 const DEFAULT_BUDGET: AgentBudget = {
-  max_steps: 6,
+  max_steps: 8,
   max_searches: 3,
-  max_graph_expansions: 2,
+  max_graph_expansions: 4,
   max_reads: 2,
   max_evidence_chunks: 8,
   max_graph_hops: 2,
@@ -37,7 +37,10 @@ const TOOL_LABELS: Record<string, { title: string; copy: string }> = {
     title: "Relation search",
     copy: "Search relation semantics and source passages.",
   },
-  expand_graph: { title: "Graph expansion", copy: "Bounded to discovered IDs and two hops." },
+  expand_graph: {
+    title: "Graph expansion",
+    copy: "Incrementally reveals one-hop neighbors from the current graph frontier.",
+  },
   read_evidence: { title: "Read evidence", copy: "Only discovered chunks enter the evidence set." },
   answer_from_evidence: {
     title: "Grounded answer",

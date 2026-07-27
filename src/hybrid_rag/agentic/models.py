@@ -63,9 +63,9 @@ class AgentBudget(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    max_steps: int = Field(default=6, ge=1, le=12)
+    max_steps: int = Field(default=8, ge=1, le=12)
     max_searches: int = Field(default=3, ge=1, le=8)
-    max_graph_expansions: int = Field(default=2, ge=0, le=4)
+    max_graph_expansions: int = Field(default=4, ge=0, le=4)
     max_reads: int = Field(default=2, ge=1, le=4)
     max_evidence_chunks: int = Field(default=8, ge=1, le=16)
     max_graph_hops: int = Field(default=2, ge=1, le=2)
