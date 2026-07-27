@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import defaultdict, deque
+from collections import defaultdict
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
-import networkx as nx
 from pydantic import BaseModel, ConfigDict, Field
 
 from hybrid_rag.agentic.models import (
@@ -27,7 +26,7 @@ from hybrid_rag.agentic.models import (
 )
 from hybrid_rag.agentic.planner import AgentPlanner
 from hybrid_rag.evaluation.agentic_metrics import score_agentic_events
-from hybrid_rag.retrieval.models import ContextItem, GraphPath, RetrievalResult, RetrievalStrategy
+from hybrid_rag.retrieval.models import ContextItem, RetrievalResult, RetrievalStrategy
 from hybrid_rag.retrieval.query import EvidenceItem, GroundedAnswer, QueryClient
 from hybrid_rag.retrieval.service import RetrievalOptions, RetrievalService
 from hybrid_rag.storage.retrieval_repository import IndexItem, LoadedIndex
@@ -60,6 +59,10 @@ class _AgentSession:
         self.read_chunk_ids: dict[str, ContextItem] = {}
         self.discovered_entity_ids: set[str] = set()
         self.discovered_relation_ids: set[str] = set()
+        self.traversed_relation_ids: set[str] = set()
+        self.fully_expanded_entity_ids: set[str] = set()
+        self.graph_frontier_entity_ids: set[str] = set()
+        self.entity_depths: dict[str, int] = {}
         self.searches = 0
         self.graph_expansions = 0
         self.reads = 0
@@ -144,6 +147,16 @@ class AgentRunner:
                     available_chunk_ids=tuple(session.discovered_chunk_ids),
                     read_chunk_ids=tuple(session.read_chunk_ids),
                     remaining_searches=max(request.budget.max_searches - session.searches, 0),
+                    graph_frontier={
+                        entity_id: session.entity_depths[entity_id]
+                        for entity_id in sorted(session.graph_frontier_entity_ids)
+                    },
+                    fully_expanded_entity_ids=tuple(sorted(session.fully_expanded_entity_ids)),
+                    remaining_graph_expansions=max(
+                        request.budget.max_graph_expansions - session.graph_expansions,
+                        0,
+                    ),
+                    max_graph_depth=request.budget.max_graph_hops,
                     index_capabilities=index_capabilities,
                 )
                 action_event = AgentEvent(
@@ -255,7 +268,9 @@ class AgentRunner:
         question: str,
         action: AgentAction,
     ) -> tuple[ToolOutcome, ...]:
-        duplicate_reason = session.claim_action(action)
+        duplicate_reason = (
+            None if action.action is AgentActionName.EXPAND_GRAPH else session.claim_action(action)
+        )
         if duplicate_reason:
             return (
                 ToolOutcome(
@@ -317,6 +332,12 @@ class AgentRunner:
             session.discovered_chunk_ids.update(worker.discovered_chunk_ids)
             session.discovered_entity_ids.update(worker.discovered_entity_ids)
             session.discovered_relation_ids.update(worker.discovered_relation_ids)
+            session.graph_frontier_entity_ids.update(worker.graph_frontier_entity_ids)
+            for entity_id, depth in worker.entity_depths.items():
+                session.entity_depths[entity_id] = min(
+                    session.entity_depths.get(entity_id, depth),
+                    depth,
+                )
         return tuple(results)
 
     def _worker_session(self, parent: _AgentSession) -> _AgentSession:
@@ -459,9 +480,22 @@ class AgentRunner:
             if hit.kind == expected_kind
         ]
         if expected_kind == "entity":
-            session.discovered_entity_ids.update(item["id"] for item in candidates)
+            for item in candidates:
+                entity_id = str(item["id"])
+                session.discovered_entity_ids.add(entity_id)
+                if entity_id not in session.fully_expanded_entity_ids:
+                    session.graph_frontier_entity_ids.add(entity_id)
+                session.entity_depths[entity_id] = 0
         else:
-            session.discovered_relation_ids.update(item["id"] for item in candidates)
+            for item in candidates:
+                session.discovered_relation_ids.add(str(item["id"]))
+                for key in ("source_entity_id", "target_entity_id"):
+                    entity_id = item.get(key)
+                    if isinstance(entity_id, str) and entity_id:
+                        session.discovered_entity_ids.add(entity_id)
+                        if entity_id not in session.fully_expanded_entity_ids:
+                            session.graph_frontier_entity_ids.add(entity_id)
+                        session.entity_depths[entity_id] = 0
         return ToolOutcome(
             tool=action.action,
             ok=True,
@@ -499,20 +533,83 @@ class AgentRunner:
                 ok=False,
                 summary="Provide discovered entity_ids or relation_ids.",
             )
-        max_hops = min(
-            _bounded_int(action.args.get("max_hops"), default=1, minimum=1, maximum=2),
-            session.budget.max_graph_hops,
-        )
+        requested_hops = action.args.get("max_hops", 1)
+        if isinstance(requested_hops, bool) or requested_hops != 1:
+            return ToolOutcome(
+                tool=action.action,
+                ok=False,
+                summary="Incremental graph expansion supports exactly one hop per call.",
+            )
+        limit = _bounded_int(action.args.get("limit"), default=8, minimum=1, maximum=20)
         index = self._load_index(session)
-        paths = _bounded_paths(index, entity_ids, relation_ids, max_hops=max_hops)
-        for path in paths:
-            self._register_chunk_ids(session, path.source_chunk_ids, index)
+        relations = {item.object_id: item for item in index.relations}
+        seeds = set(entity_ids)
+        for relation_id in relation_ids:
+            relation = relations.get(relation_id)
+            if relation is None:
+                continue
+            source = str(relation.metadata["source_entity_id"])
+            target = str(relation.metadata["target_entity_id"])
+            seeds.update((source, target))
+            for entity_id in (source, target):
+                session.discovered_entity_ids.add(entity_id)
+                session.graph_frontier_entity_ids.add(entity_id)
+                session.entity_depths.setdefault(entity_id, 0)
+
+        expandable_seeds = tuple(
+            seed
+            for seed in sorted(seeds)
+            if session.entity_depths.get(seed, 0) < session.budget.max_graph_hops
+        )
+        neighbors, exhausted_seeds = _incremental_graph_neighbors(
+            index,
+            expandable_seeds,
+            traversed_relation_ids=session.traversed_relation_ids,
+            limit=limit,
+        )
+        entities = {item.object_id: item for item in index.entities}
+        for neighbor in neighbors:
+            relation = neighbor.relation
+            session.traversed_relation_ids.add(relation.object_id)
+            session.discovered_relation_ids.add(relation.object_id)
+            session.discovered_entity_ids.add(neighbor.neighbor_entity_id)
+            seed_depth = session.entity_depths.get(neighbor.seed_entity_id, 0)
+            neighbor_depth = seed_depth + 1
+            session.entity_depths[neighbor.neighbor_entity_id] = min(
+                session.entity_depths.get(neighbor.neighbor_entity_id, neighbor_depth),
+                neighbor_depth,
+            )
+            if neighbor_depth < session.budget.max_graph_hops:
+                session.graph_frontier_entity_ids.add(neighbor.neighbor_entity_id)
+            self._register_chunk_ids(session, relation.source_chunk_ids, index)
+
+        for seed in exhausted_seeds:
+            session.fully_expanded_entity_ids.add(seed)
+            session.graph_frontier_entity_ids.discard(seed)
+        for seed in expandable_seeds:
+            if seed not in exhausted_seeds:
+                session.graph_frontier_entity_ids.add(seed)
+        _refresh_graph_frontier(session, index)
         session.graph_expansions += 1
+        remaining = session.budget.max_graph_expansions - session.graph_expansions
         return ToolOutcome(
             tool=action.action,
             ok=True,
-            summary=f"Expanded {len(paths)} provenance-bound graph paths up to {max_hops} hops.",
-            data={"paths": [path.model_dump(mode="json") for path in paths]},
+            summary=(
+                f"Discovered {len(neighbors)} new one-hop graph edges; "
+                f"{remaining} expansion calls remain."
+            ),
+            data={
+                "neighbors": [
+                    _graph_neighbor_payload(neighbor, entities) for neighbor in neighbors
+                ],
+                "frontier_entity_ids": sorted(session.graph_frontier_entity_ids),
+                "fully_expanded_entity_ids": sorted(session.fully_expanded_entity_ids),
+                "has_more": any(
+                    seed in session.graph_frontier_entity_ids for seed in expandable_seeds
+                ),
+                "remaining_graph_expansions": remaining,
+            },
         )
 
     def _read_evidence(self, session: _AgentSession, action: AgentAction) -> ToolOutcome:
@@ -697,66 +794,120 @@ def _rerank_summary(result: RetrievalResult) -> dict[str, Any] | None:
     }
 
 
-def _bounded_paths(
+@dataclass(frozen=True, slots=True)
+class _GraphNeighbor:
+    seed_entity_id: str
+    neighbor_entity_id: str
+    relation: IndexItem
+    direction: Literal["incoming", "outgoing"]
+
+
+def _incremental_graph_neighbors(
     index: LoadedIndex,
-    entity_ids: Sequence[str],
-    relation_ids: Sequence[str],
+    seed_entity_ids: Sequence[str],
     *,
-    max_hops: int,
-) -> tuple[GraphPath, ...]:
-    relations = {item.object_id: item for item in index.relations}
-    graph = nx.Graph()
-    by_entity: dict[str, list[IndexItem]] = defaultdict(list)
-    for relation in relations.values():
+    traversed_relation_ids: set[str],
+    limit: int,
+) -> tuple[tuple[_GraphNeighbor, ...], frozenset[str]]:
+    adjacency: dict[str, list[_GraphNeighbor]] = defaultdict(list)
+    for relation in index.relations:
         source = str(relation.metadata["source_entity_id"])
         target = str(relation.metadata["target_entity_id"])
-        graph.add_edge(source, target, relation_id=relation.object_id)
-        by_entity[source].append(relation)
-        by_entity[target].append(relation)
-    seeds = set(entity_ids)
-    for relation_id in relation_ids:
-        relation = relations.get(relation_id)
-        if relation is not None:
-            seeds.add(str(relation.metadata["source_entity_id"]))
-            seeds.add(str(relation.metadata["target_entity_id"]))
-    paths: list[GraphPath] = []
-    for seed in sorted(seeds):
-        if seed not in graph:
-            continue
-        queue: deque[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = deque(
-            [(seed, (seed,), (), ())]
+        adjacency[source].append(
+            _GraphNeighbor(
+                seed_entity_id=source,
+                neighbor_entity_id=target,
+                relation=relation,
+                direction="outgoing",
+            )
         )
-        while queue and len(paths) < 12:
-            current, nodes, traversed, chunk_ids = queue.popleft()
-            if traversed:
-                paths.append(
-                    GraphPath(
-                        node_ids=nodes,
-                        relation_ids=traversed,
-                        source_chunk_ids=tuple(sorted(set(chunk_ids))),
-                        score=1.0 / len(traversed),
-                    )
-                )
-            if len(traversed) == max_hops:
-                continue
-            for relation in sorted(by_entity.get(current, []), key=lambda item: item.object_id):
-                left = str(relation.metadata["source_entity_id"])
-                right = str(relation.metadata["target_entity_id"])
-                neighbor = right if current == left else left
-                if neighbor in nodes:
-                    continue
-                queue.append(
-                    (
-                        neighbor,
-                        (*nodes, neighbor),
-                        (*traversed, relation.object_id),
-                        (*chunk_ids, *relation.source_chunk_ids),
-                    )
-                )
-    unique: dict[tuple[str, ...], GraphPath] = {}
-    for path in paths:
-        unique.setdefault(path.relation_ids, path)
-    return tuple(unique.values())[:12]
+        adjacency[target].append(
+            _GraphNeighbor(
+                seed_entity_id=target,
+                neighbor_entity_id=source,
+                relation=relation,
+                direction="incoming",
+            )
+        )
+
+    candidates = sorted(
+        (
+            neighbor
+            for seed in seed_entity_ids
+            for neighbor in adjacency.get(seed, ())
+            if neighbor.relation.object_id not in traversed_relation_ids
+        ),
+        key=lambda neighbor: (
+            neighbor.seed_entity_id,
+            neighbor.relation.object_id,
+            neighbor.neighbor_entity_id,
+        ),
+    )
+    selected: list[_GraphNeighbor] = []
+    selected_relation_ids: set[str] = set()
+    for neighbor in candidates:
+        relation_id = neighbor.relation.object_id
+        if relation_id in selected_relation_ids:
+            continue
+        selected.append(neighbor)
+        selected_relation_ids.add(relation_id)
+        if len(selected) >= limit:
+            break
+
+    visible_relation_ids = traversed_relation_ids | selected_relation_ids
+    exhausted = frozenset(
+        seed
+        for seed in seed_entity_ids
+        if all(
+            neighbor.relation.object_id in visible_relation_ids
+            for neighbor in adjacency.get(seed, ())
+        )
+    )
+    return tuple(selected), exhausted
+
+
+def _graph_neighbor_payload(
+    neighbor: _GraphNeighbor,
+    entities: Mapping[str, IndexItem],
+) -> dict[str, Any]:
+    entity = entities.get(neighbor.neighbor_entity_id)
+    metadata = entity.metadata if entity is not None else {}
+    relation_metadata = neighbor.relation.metadata
+    return {
+        "seed_entity_id": neighbor.seed_entity_id,
+        "entity": {
+            "id": neighbor.neighbor_entity_id,
+            "label": str(metadata.get("canonical_name") or neighbor.neighbor_entity_id),
+            "entity_type": str(metadata.get("entity_type") or ""),
+        },
+        "relation": {
+            "id": neighbor.relation.object_id,
+            "predicate": str(relation_metadata.get("predicate") or ""),
+            "direction": neighbor.direction,
+        },
+        "source_chunk_ids": list(neighbor.relation.source_chunk_ids),
+    }
+
+
+def _refresh_graph_frontier(session: _AgentSession, index: LoadedIndex) -> None:
+    incident_relation_ids: dict[str, set[str]] = defaultdict(set)
+    for relation in index.relations:
+        source = str(relation.metadata["source_entity_id"])
+        target = str(relation.metadata["target_entity_id"])
+        incident_relation_ids[source].add(relation.object_id)
+        incident_relation_ids[target].add(relation.object_id)
+
+    for entity_id in session.discovered_entity_ids:
+        depth = session.entity_depths.get(entity_id, 0)
+        if depth >= session.budget.max_graph_hops:
+            session.graph_frontier_entity_ids.discard(entity_id)
+            continue
+        remaining = incident_relation_ids.get(entity_id, set()) - session.traversed_relation_ids
+        if remaining:
+            session.graph_frontier_entity_ids.add(entity_id)
+            continue
+        session.graph_frontier_entity_ids.discard(entity_id)
+        session.fully_expanded_entity_ids.add(entity_id)
 
 
 def _context_from_index(item: IndexItem, service: RetrievalService) -> ContextItem:
@@ -792,12 +943,17 @@ def _graph_candidate(
     source_chunk_ids: Sequence[str],
     score: float,
 ) -> dict[str, Any]:
-    return {
+    value: dict[str, Any] = {
         "id": object_id,
         "score": score,
         "label": str(metadata.get("canonical_name") or metadata.get("predicate") or object_id),
         "source_chunk_ids": list(source_chunk_ids),
     }
+    for key in ("entity_type", "source_entity_id", "target_entity_id"):
+        candidate = metadata.get(key)
+        if isinstance(candidate, str) and candidate:
+            value[key] = candidate
+    return value
 
 
 def _insufficient_answer() -> GroundedAnswer:

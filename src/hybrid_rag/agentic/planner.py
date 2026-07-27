@@ -24,6 +24,10 @@ class AgentPlanner(Protocol):
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
         remaining_searches: int,
+        graph_frontier: Mapping[str, int],
+        fully_expanded_entity_ids: Sequence[str],
+        remaining_graph_expansions: int,
+        max_graph_depth: int,
         index_capabilities: Mapping[str, int],
     ) -> AgentAction: ...
 
@@ -39,6 +43,10 @@ class DeterministicAgentPlanner:
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
         remaining_searches: int,
+        graph_frontier: Mapping[str, int],
+        fully_expanded_entity_ids: Sequence[str],
+        remaining_graph_expansions: int,
+        max_graph_depth: int,
         index_capabilities: Mapping[str, int],
     ) -> AgentAction:
         if not state:
@@ -79,6 +87,10 @@ class DeepSeekAgentPlanner:
         available_chunk_ids: Sequence[str],
         read_chunk_ids: Sequence[str],
         remaining_searches: int,
+        graph_frontier: Mapping[str, int],
+        fully_expanded_entity_ids: Sequence[str],
+        remaining_graph_expansions: int,
+        max_graph_depth: int,
         index_capabilities: Mapping[str, int],
     ) -> AgentAction:
         completion = await self.client.complete_messages(
@@ -88,6 +100,10 @@ class DeepSeekAgentPlanner:
                 available_chunk_ids=available_chunk_ids,
                 read_chunk_ids=read_chunk_ids,
                 remaining_searches=remaining_searches,
+                graph_frontier=graph_frontier,
+                fully_expanded_entity_ids=fully_expanded_entity_ids,
+                remaining_graph_expansions=remaining_graph_expansions,
+                max_graph_depth=max_graph_depth,
                 index_capabilities=index_capabilities,
             )
         )
