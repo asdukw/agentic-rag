@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "hybrid-rag-lab-web",
+      "name": "agentic-rag-lab-web",
       "dependencies": {
         "react": "^19.1.0",
         "react-dom": "^19.1.0",

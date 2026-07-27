@@ -975,7 +975,7 @@ def _environment_provenance() -> dict[str, Any]:
         "platform": platform.platform(),
         "processor": platform.processor(),
         "packages": {
-            name: _package_version(name) for name in ("hybrid-rag-lab", "FlagEmbedding", "torch")
+            name: _package_version(name) for name in ("agentic-rag-lab", "FlagEmbedding", "torch")
         },
         "accelerator": _accelerator_provenance(),
     }

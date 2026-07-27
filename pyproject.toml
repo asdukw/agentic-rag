@@ -1,7 +1,7 @@
 [project]
-name = "hybrid-rag-lab"
+name = "agentic-rag-lab"
 version = "0.1.0"
-description = "A lightweight, explainable lab for comparing hybrid and agentic RAG modes"
+description = "A bounded, evidence-grounded, and auditable Agentic RAG lab"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [

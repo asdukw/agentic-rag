@@ -64,7 +64,7 @@ from hybrid_rag.storage.migrations import upgrade_database
 from hybrid_rag.storage.repository import IngestRepository
 from hybrid_rag.storage.retrieval_repository import RetrievalRepository
 
-app = typer.Typer(no_args_is_help=True, help="Hybrid RAG Lab CLI")
+app = typer.Typer(no_args_is_help=True, help="Agentic RAG Lab CLI")
 db_app = typer.Typer(no_args_is_help=True, help="Database schema commands")
 graph_app = typer.Typer(no_args_is_help=True, help="Graph extraction and inspection commands")
 retrieval_app = typer.Typer(

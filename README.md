@@ -1,16 +1,18 @@
-# Hybrid RAG Lab
+# Agentic RAG Lab
 
-一个以“可解释、可评测、可复现”为目标的 Hybrid / Graph / Agentic RAG 学习项目。
+一个以“有界规划、证据约束、过程可审计”为核心的 Agentic RAG 学习项目。
 
-项目从文档导入开始，完整实现知识图谱抽取、三路检索、加权融合、cross-encoder 精排、引用约束、运行轨迹和人工审校 benchmark。重点不是堆叠框架或追求单一最高分，而是展示如何定义证据契约、设计公平评测，并解释系统收益与代价。
+项目借鉴 GraphRAG 的图谱建模与多跳取证思想，以及 LightRAG 的实体/关系双层索引和轻量化检索设计，从文档导入、知识图谱抽取和多路检索出发，将 Chunk 检索、实体检索、关系检索、图扩展、证据读取和回答封装为 Agent 工具，最终实现一个可分解问题、动态规划检索路径、受预算约束并输出可验证引用的 RAG Agent。
 
-> 定位：方法论与工程实践作品，不是生产级通用知识库。
+Hybrid 与 Graph 检索不是项目终点，而是 Agentic RAG 的工具底座。项目重点不是复刻某个框架或追求单一最高分，而是展示如何设计 Planner/Tool 边界、证据契约、预算控制、运行轨迹和可复现评测。
+
+> 定位：Agentic RAG 方法论与工程实践作品，不是生产级通用知识库。
 
 [Benchmark v3](docs/benchmark-v3.md) · [机器可读摘要](docs/benchmark-v3-summary.json) · [完整架构](docs/architecture.md) · [设计边界](docs/adr/001-build-vs-reuse.md)
 
-## 结果先看
+## 检索底座结果
 
-Benchmark v3 已在 clean commit 上完成预注册的 E1–E5 retrieval-only 矩阵。在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA FP16 reranker 配置下，主实验 E5 的结果如下；相关性指标只聚合其中 50 道可回答题。
+Benchmark v3 验证的是 Agent 可调用的检索工具底座，而不是 Agentic 模式的端到端收益。实验已在 clean commit 上完成预注册的 E1–E5 retrieval-only 矩阵；在 10 篇 RAG 论文、60 道人工审校题、Top-8 和同一 CUDA FP16 reranker 配置下，主实验 E5 的结果如下，相关性指标只聚合其中 50 道可回答题。
 
 | 指标 | hybrid | mix | mix - hybrid |
 |---|---:|---:|---:|
@@ -33,16 +35,16 @@ Benchmark v3 已在 clean commit 上完成预注册的 E1–E5 retrieval-only �
 
 运行环境：RTX 5070 Laptop GPU，`torch 2.13.0+cu130`，BGE-M3 embedding 使用 FP32，bge reranker 使用 FP16。本表对应的 retrieval-only 评测不调用外部 LLM，API 成本为 ¥0。
 
-## 我在这个项目中解决了什么
+## Agentic RAG 核心能力
 
-- **七种清晰检索策略**：`dense`、`bm25` 与行业标准 `hybrid = dense + bm25` 可以直接消融；`graph_local`、`graph_global`、`graph_hybrid` 明确限定为图谱检索。
-- **真正的融合排序**：组合模式按归一化后的显式权重合并候选，不再使用 round-robin；`mix = hybrid + graph_local + graph_global`。
-- **复杂问题证据覆盖**：多跳路径可在有界范围内补充来源 chunk；显式比较问题会拆分子查询，并用跨文档 anchors 和 coverage-first context 避免第二侧证据被挤出。
-- **本地模型链路**：BGE-M3 建立 chunk / entity / relation 三个索引分区，可选 bge-reranker-v2-m3 将 32 个候选精排为 Top-8；CUDA 可用时自动选择 GPU。
-- **证据是一等数据**：回答只能引用实际读入 token budget 的原始 chunk；稳定 evidence ID、索引 profile、语料 hash 和 retrieval trace 支持审计与 replay。
-- **可审计图谱补漏**：初始抽取有效时，第二次调用执行独立 `glean`；初始抽取无效时，同一预算改用于 `repair`。补漏结果只有完整保留已验证基线才会采用，否则安全回退。
-- **有界 Agent**：Planner 只能选择项目定义的只读检索工具，受到 step、search、read 和并发预算约束；多上下文任务可分派给 2～3 个隔离 worker。
-- **评测不是只看一个 Recall**：同时区分 raw candidates 与 delivered context，并报告 exact-page、document-level、semantic-evidence、延迟、成本和运行环境 provenance。
+- **受限 Planner/Tool 循环**：Planner 只能选择项目定义的只读工具，包括 Chunk、Entity、Relation 检索、图扩展、证据读取和证据回答，不能绕过工具边界直接访问数据。
+- **动态取证而非固定流水线**：Agent 根据问题、已发现证据和图前沿决定下一步；复杂问题可拆分为多个子任务，并交给 2～3 个隔离 worker 并行检索。
+- **显式预算与停止条件**：step、search、read、graph expansion、graph hop、并发数和 evidence token 均有上限，重复工具调用会被拦截，预算耗尽时安全停止。
+- **证据是一等状态**：检索到的 Chunk 必须先被 Agent 显式读取才能进入回答上下文，最终 citation 只能来自本次运行实际读取的证据白名单。
+- **轻量图谱工具底座**：借鉴 GraphRAG 与 LightRAG，为 Chunk、Entity、Relation 建立三类索引；实体用于局部定位，关系用于高层语义入口，图扩展用于有界多跳补证，不依赖社区报告。
+- **可恢复、可审计运行**：构图使用 LangGraph checkpoint 支持中断恢复；Agent 通过 SSE 输出 planner action、tool result、answer 和 termination reason，并将完整报告落盘。
+- **检索与回答可回放**：稳定 evidence ID、索引 profile、语料 hash、候选与重排分数、模型用量和 retrieval trace 支持审计与 replay。
+- **以评测约束设计**：区分 raw candidates 与 delivered context，并报告 exact-page、document-level、semantic-evidence、延迟、成本和运行环境 provenance。
 
 项目没有训练或微调 embedding、reranker、LLM，也没有执行网格搜索等系统化超参数优化；检索配置是固定的工程默认值。
 
@@ -65,15 +67,16 @@ flowchart LR
         Index --> Profile[("Pinned Index Profile")]
     end
 
-    subgraph Online["在线检索"]
-        Question["Question"] --> Recall["Dense / BM25 / Hybrid / Graph<br/>Chunk · Entity · Relation"]
-        Profile --> Recall
-        Recall --> Fusion["归一化加权融合<br/>多跳补证 · 多上下文覆盖"]
-        Fusion --> Rerank["Optional BGE Reranker<br/>Top-32 → Top-8"]
-        Rerank --> Context["Coverage-first<br/>Token Budget"]
-        Context --> Answer["Evidence-only Answer<br/>Citation Allowlist"]
-        Fusion --> Trace[("Replayable Trace")]
-        Rerank --> Trace
+    subgraph Online["Agentic 在线取证"]
+        Question["Question"] --> Planner["Bounded Planner"]
+        Planner --> Tools["Read-only Tools<br/>Chunk · Entity · Relation · Expand · Read"]
+        Profile --> Tools
+        Tools --> State["Evidence + Graph Frontier<br/>Budget State"]
+        State --> Planner
+        State --> Answer["Evidence-only Answer<br/>Citation Allowlist"]
+        Planner --> Trace[("Agent Events + Replayable Trace")]
+        Tools --> Trace
+        Answer --> Trace
     end
 
     CLI --> Docs
