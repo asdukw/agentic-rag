@@ -7,12 +7,6 @@
       "skillPath": "fastapi/.agents/skills/fastapi/SKILL.md",
       "computedHash": "e85d9e223fbc3183b1a599bbe8b02d2edf275d046ff5bcfd14352c92cdff52b3"
     },
-    "supabase-postgres-best-practices": {
-      "source": "supabase/agent-skills",
-      "sourceType": "github",
-      "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
-      "computedHash": "ec56a54fba0e97bee52c7f244ba603bb284bf8d1b739c66a5cc84ec3df709d9d"
-    },
     "vercel-react-best-practices": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",
