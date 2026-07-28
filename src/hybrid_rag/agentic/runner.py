@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import defaultdict
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -14,6 +13,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from hybrid_rag.agentic.graph_snapshot import (
+    DEFAULT_PROFILE_GRAPH_CACHE,
+    ProfileGraphSnapshot,
+    ProfileGraphSnapshotCache,
+)
 from hybrid_rag.agentic.models import (
     AgentAction,
     AgentActionName,
@@ -92,12 +96,14 @@ class AgentRunner:
         answer_client: QueryClient,
         retrieval_options: RetrievalOptions | None = None,
         audit_dir: Path = Path("artifacts/agent-runs"),
+        graph_snapshot_cache: ProfileGraphSnapshotCache | None = None,
     ) -> None:
         self.service = service
         self.planner = planner
         self.answer_client = answer_client
         self.retrieval_options = retrieval_options or RetrievalOptions()
         self.audit_dir = audit_dir
+        self.graph_snapshot_cache = graph_snapshot_cache or DEFAULT_PROFILE_GRAPH_CACHE
 
     async def run(self, request: AgentRunRequest) -> AsyncIterator[AgentEvent]:
         started_clock = perf_counter()
@@ -526,8 +532,8 @@ class AgentRunner:
                 summary="Incremental graph expansion supports exactly one hop per call.",
             )
         limit = _bounded_int(action.args.get("limit"), default=8, minimum=1, maximum=20)
-        index = self._load_index(session)
-        relations = {item.object_id: item for item in index.relations}
+        snapshot = self._load_graph_snapshot(session)
+        relations = snapshot.relations_by_id
         seeds = set(entity_ids)
         for relation_id in relation_ids:
             relation = relations.get(relation_id)
@@ -547,12 +553,12 @@ class AgentRunner:
             if session.entity_depths.get(seed, 0) < session.budget.max_graph_hops
         )
         neighbors, exhausted_seeds = _incremental_graph_neighbors(
-            index,
+            snapshot,
             expandable_seeds,
             traversed_relation_ids=session.traversed_relation_ids,
             limit=limit,
         )
-        entities = {item.object_id: item for item in index.entities}
+        entities = snapshot.entities_by_id
         for neighbor in neighbors:
             relation = neighbor.relation
             session.traversed_relation_ids.add(relation.object_id)
@@ -566,7 +572,7 @@ class AgentRunner:
             )
             if neighbor_depth < session.budget.max_graph_hops:
                 session.graph_frontier_entity_ids.add(neighbor.neighbor_entity_id)
-            self._register_chunk_ids(session, relation.source_chunk_ids, index)
+            self._register_chunk_ids(session, relation.source_chunk_ids, snapshot)
 
         for seed in exhausted_seeds:
             session.fully_expanded_entity_ids.add(seed)
@@ -574,7 +580,7 @@ class AgentRunner:
         for seed in expandable_seeds:
             if seed not in exhausted_seeds:
                 session.graph_frontier_entity_ids.add(seed)
-        _refresh_graph_frontier(session, index)
+        _refresh_graph_frontier(session, snapshot)
         session.graph_expansions += 1
         remaining = session.budget.max_graph_expansions - session.graph_expansions
         return ToolOutcome(
@@ -690,11 +696,10 @@ class AgentRunner:
         self,
         session: _AgentSession,
         chunk_ids: Sequence[str],
-        index: LoadedIndex,
+        snapshot: ProfileGraphSnapshot,
     ) -> None:
-        chunks = {item.object_id: item for item in index.chunks}
         for chunk_id in chunk_ids:
-            item = chunks.get(chunk_id)
+            item = snapshot.chunks_by_id.get(chunk_id)
             if (
                 item is None
                 or len(session.discovered_chunk_ids) >= session.budget.max_evidence_chunks * 3
@@ -705,9 +710,16 @@ class AgentRunner:
                 _context_from_index(item, self.service),
             )
 
-    def _load_index(self, session: _AgentSession) -> LoadedIndex:
-        with self.service.database.session_factory() as database_session:
-            return self.service.repository.load_index(database_session, session.profile_id)
+    def _load_graph_snapshot(self, session: _AgentSession) -> ProfileGraphSnapshot:
+        def load_index() -> LoadedIndex:
+            with self.service.database.session_factory() as database_session:
+                return self.service.repository.load_index(database_session, session.profile_id)
+
+        return self.graph_snapshot_cache.get_or_load(
+            database_identity=self.service.database.url,
+            profile_id=session.profile_id,
+            loader=load_index,
+        )
 
     def _index_capabilities(self, profile_id: str) -> dict[str, int]:
         with self.service.database.session_factory() as database_session:
@@ -788,38 +800,22 @@ class _GraphNeighbor:
 
 
 def _incremental_graph_neighbors(
-    index: LoadedIndex,
+    snapshot: ProfileGraphSnapshot,
     seed_entity_ids: Sequence[str],
     *,
     traversed_relation_ids: set[str],
     limit: int,
 ) -> tuple[tuple[_GraphNeighbor, ...], frozenset[str]]:
-    adjacency: dict[str, list[_GraphNeighbor]] = defaultdict(list)
-    for relation in index.relations:
-        source = str(relation.metadata["source_entity_id"])
-        target = str(relation.metadata["target_entity_id"])
-        adjacency[source].append(
-            _GraphNeighbor(
-                seed_entity_id=source,
-                neighbor_entity_id=target,
-                relation=relation,
-                direction="outgoing",
-            )
-        )
-        adjacency[target].append(
-            _GraphNeighbor(
-                seed_entity_id=target,
-                neighbor_entity_id=source,
-                relation=relation,
-                direction="incoming",
-            )
-        )
-
     candidates = sorted(
         (
-            neighbor
+            _GraphNeighbor(
+                seed_entity_id=seed,
+                neighbor_entity_id=neighbor.neighbor_entity_id,
+                relation=neighbor.relation,
+                direction=neighbor.direction,
+            )
             for seed in seed_entity_ids
-            for neighbor in adjacency.get(seed, ())
+            for neighbor in snapshot.adjacency.get(seed, ())
             if neighbor.relation.object_id not in traversed_relation_ids
         ),
         key=lambda neighbor: (
@@ -845,7 +841,7 @@ def _incremental_graph_neighbors(
         for seed in seed_entity_ids
         if all(
             neighbor.relation.object_id in visible_relation_ids
-            for neighbor in adjacency.get(seed, ())
+            for neighbor in snapshot.adjacency.get(seed, ())
         )
     )
     return tuple(selected), exhausted
@@ -874,20 +870,19 @@ def _graph_neighbor_payload(
     }
 
 
-def _refresh_graph_frontier(session: _AgentSession, index: LoadedIndex) -> None:
-    incident_relation_ids: dict[str, set[str]] = defaultdict(set)
-    for relation in index.relations:
-        source = str(relation.metadata["source_entity_id"])
-        target = str(relation.metadata["target_entity_id"])
-        incident_relation_ids[source].add(relation.object_id)
-        incident_relation_ids[target].add(relation.object_id)
-
+def _refresh_graph_frontier(
+    session: _AgentSession,
+    snapshot: ProfileGraphSnapshot,
+) -> None:
     for entity_id in session.discovered_entity_ids:
         depth = session.entity_depths.get(entity_id, 0)
         if depth >= session.budget.max_graph_hops:
             session.graph_frontier_entity_ids.discard(entity_id)
             continue
-        remaining = incident_relation_ids.get(entity_id, set()) - session.traversed_relation_ids
+        remaining = (
+            snapshot.incident_relation_ids.get(entity_id, frozenset())
+            - session.traversed_relation_ids
+        )
         if remaining:
             session.graph_frontier_entity_ids.add(entity_id)
             continue
