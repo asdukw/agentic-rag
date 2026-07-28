@@ -9,6 +9,9 @@
         "**/.air": true,
         "**/.codegraph": true,
         "**/.venv": true,
-        "**/.tmp": true
+        "**/.tmp": true,
+        ".pytest_cache/":true,
+        ".ruff_cache/":true,
+        "**/__pycache__": true,
     }
 }

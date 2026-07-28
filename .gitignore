@@ -32,3 +32,6 @@ artifacts/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# editors
+.idea/
