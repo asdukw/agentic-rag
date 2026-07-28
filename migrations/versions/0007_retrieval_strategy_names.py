@@ -23,8 +23,7 @@ depends_on: str | Sequence[str] | None = None
 _CONSTRAINT = "ck_retrieval_traces_mode"
 _OLD_MODES = "mode IN ('naive', 'local', 'global', 'hybrid', 'mix')"
 _NEW_MODES = (
-    "mode IN ('dense', 'bm25', 'hybrid', 'graph_local', 'graph_global', "
-    "'graph_hybrid', 'mix')"
+    "mode IN ('dense', 'bm25', 'hybrid', 'graph_local', 'graph_global', 'graph_hybrid', 'mix')"
 )
 _TRANSITION_MODES = (
     "mode IN ('naive', 'local', 'global', 'dense', 'bm25', 'hybrid', "
@@ -132,14 +131,18 @@ def _migrate_traces(
         sa.column("trace_json", sa.JSON()),
         sa.column("output_json", sa.JSON()),
     )
-    rows = connection.execute(
-        sa.select(
-            traces.c.id,
-            traces.c.mode,
-            traces.c.trace_json,
-            traces.c.output_json,
+    rows = (
+        connection.execute(
+            sa.select(
+                traces.c.id,
+                traces.c.mode,
+                traces.c.trace_json,
+                traces.c.output_json,
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     for row in rows:
         trace = _rename_payload(
             row["trace_json"],

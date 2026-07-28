@@ -258,19 +258,14 @@ class GraphBuildWorkflow:
                 }
                 extraction_stage_attempt_counts = {
                     str(key): int(value)
-                    for key, value in dict(
-                        job.get("extraction_stage_attempt_counts", {})
-                    ).items()
+                    for key, value in dict(job.get("extraction_stage_attempt_counts", {})).items()
                 }
                 gleaning_exhausted = (
                     stage == "glean"
                     and extraction_stage_attempt_counts.get("glean", 0)
                     >= self.gleaning_max_attempts
                 )
-                if (
-                    int(job["run_attempt_count"]) >= state["max_attempts"]
-                    or gleaning_exhausted
-                ):
+                if int(job["run_attempt_count"]) >= state["max_attempts"] or gleaning_exhausted:
                     with self.database.session_factory.begin() as session:
                         if job.get("baseline_result") is not None:
                             self.repository.complete_provisional_extraction(
@@ -479,14 +474,10 @@ class GraphBuildWorkflow:
                 messages=messages,
                 lease_seconds=state["lease_seconds"],
                 max_attempts=state["max_attempts"],
-                max_stage_attempts=(
-                    state["gleaning_max_attempts"] if stage == "glean" else None
-                ),
+                max_stage_attempts=(state["gleaning_max_attempts"] if stage == "glean" else None),
             )
         stage_attempt_counts = dict(state.get("stage_attempt_counts", {}))
-        extraction_stage_attempt_counts = dict(
-            state.get("extraction_stage_attempt_counts", {})
-        )
+        extraction_stage_attempt_counts = dict(state.get("extraction_stage_attempt_counts", {}))
         if claim is not None:
             stage_attempt_counts[stage] = stage_attempt_counts.get(stage, 0) + 1
             extraction_stage_attempt_counts[stage] = (
@@ -866,9 +857,7 @@ class GraphBuildWorkflow:
 
     @staticmethod
     def _validated_from_payload(payload: Any) -> ValidatedChunkExtraction:
-        return ValidatedChunkExtraction.model_validate_json(
-            json.dumps(payload, ensure_ascii=False)
-        )
+        return ValidatedChunkExtraction.model_validate_json(json.dumps(payload, ensure_ascii=False))
 
     def _domain_snapshot(
         self, run_id: str
@@ -941,9 +930,7 @@ class GraphBuildWorkflow:
                 extract=run.extract_attempt_count,
                 repair=run.repair_attempt_count,
                 glean=max(
-                    run.attempt_count
-                    - run.extract_attempt_count
-                    - run.repair_attempt_count,
+                    run.attempt_count - run.extract_attempt_count - run.repair_attempt_count,
                     0,
                 ),
             ),

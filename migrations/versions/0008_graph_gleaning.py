@@ -34,9 +34,7 @@ def downgrade() -> None:
         sa.text("SELECT 1 FROM extraction_attempts WHERE stage = 'glean' LIMIT 1")
     ).first()
     if contains_glean is not None:
-        raise RuntimeError(
-            "cannot downgrade while extraction_attempts contains glean stage rows"
-        )
+        raise RuntimeError("cannot downgrade while extraction_attempts contains glean stage rows")
     with op.batch_alter_table("extraction_attempts", recreate="always") as batch:
         batch.drop_constraint(_CONSTRAINT, type_="check")
         batch.create_check_constraint(_CONSTRAINT, _OLD_STAGES)

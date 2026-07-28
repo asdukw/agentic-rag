@@ -977,8 +977,7 @@ def retrieve(
         selected_mode = RetrievalStrategy(mode)
     except ValueError as error:
         raise typer.BadParameter(
-            "--mode must be dense, bm25, hybrid, graph_local, graph_global, "
-            "graph_hybrid, or mix"
+            "--mode must be dense, bm25, hybrid, graph_local, graph_global, graph_hybrid, or mix"
         ) from error
     settings = Settings()
     retrieval_settings = RetrievalSettings()
@@ -1032,10 +1031,7 @@ def ask(
         str,
         typer.Option(
             "--mode",
-            help=(
-                "agentic, dense, bm25, hybrid, graph_local, graph_global, "
-                "graph_hybrid, or mix"
-            ),
+            help=("agentic, dense, bm25, hybrid, graph_local, graph_global, graph_hybrid, or mix"),
         ),
     ] = "agentic",
     profile: Annotated[
@@ -1228,9 +1224,7 @@ def evaluate(
             "--modes must use agentic, dense, bm25, hybrid, graph_local, "
             "graph_global, graph_hybrid, and/or mix"
         )
-    selected_modes = tuple(
-        RetrievalStrategy(value) for value in mode_names if value != "agentic"
-    )
+    selected_modes = tuple(RetrievalStrategy(value) for value in mode_names if value != "agentic")
     include_agentic = "agentic" in mode_names
 
     settings = Settings()

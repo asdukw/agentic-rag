@@ -1147,9 +1147,7 @@ class GraphRepository:
                 "extract": run.extract_attempt_count,
                 "repair": run.repair_attempt_count,
                 "glean": max(
-                    run.attempt_count
-                    - run.extract_attempt_count
-                    - run.repair_attempt_count,
+                    run.attempt_count - run.extract_attempt_count - run.repair_attempt_count,
                     0,
                 ),
             },

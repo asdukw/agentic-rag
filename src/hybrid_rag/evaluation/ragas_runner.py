@@ -657,9 +657,7 @@ def _behavior_report(case_details: Sequence[dict[str, object]]) -> dict[str, obj
             "true_negative": true_negative,
         },
         "means": {
-            "refusal_accuracy": (
-                _safe_ratio(true_positive + true_negative, len(eligible))
-            ),
+            "refusal_accuracy": (_safe_ratio(true_positive + true_negative, len(eligible))),
             "answerability_precision": precision,
             "answerability_recall": recall,
             "answerability_f1": f1,
@@ -699,8 +697,7 @@ def _citation_report(
         values = [
             float(score[field])
             for score in judged_scores
-            if isinstance(score.get(field), (int, float))
-            and not isinstance(score.get(field), bool)
+            if isinstance(score.get(field), (int, float)) and not isinstance(score.get(field), bool)
         ]
         return sum(values) / len(values) if values else None
 
@@ -714,9 +711,7 @@ def _citation_report(
         "means": {
             "citation_correctness": judged_mean("citation_correctness"),
             "citation_completeness": (
-                sum(reference_coverages) / len(reference_coverages)
-                if reference_coverages
-                else None
+                sum(reference_coverages) / len(reference_coverages) if reference_coverages else None
             ),
             "unsupported_claim_rate": judged_mean("unsupported_claim_rate"),
         },
@@ -1039,9 +1034,7 @@ def _evaluate(
             precision = row["claim_precision"]
             recall = row["claim_recall"]
             row["claim_f1"] = (
-                2.0 * precision * recall / (precision + recall)
-                if precision + recall > 0.0
-                else 0.0
+                2.0 * precision * recall / (precision + recall) if precision + recall > 0.0 else 0.0
             )
             row["factual_correctness"] = row["claim_f1"]
             row["citation_correctness"] = row["citation_claim_support"]

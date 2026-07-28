@@ -391,9 +391,7 @@ def _evaluate_case(
         if case.get("answerable", True)
         else ()
     )
-    raw_document_ids = tuple(
-        str(hit.metadata.get("document_id", "")) for hit in result.hits
-    )
+    raw_document_ids = tuple(str(hit.metadata.get("document_id", "")) for hit in result.hits)
     context_document_ids = tuple(item.document_id for item in result.context_items)
     raw_document_score = score_document_retrieval(
         raw_document_ids,
@@ -488,10 +486,7 @@ def _mode_report(state: _ModeState) -> dict[str, Any]:
         },
         "raw_micro_recall": raw_micro_recall,
         "context_micro_recall": context_micro_recall,
-        **{
-            f"multi_evidence_raw_{key}": value
-            for key, value in raw_coverage["means"].items()
-        },
+        **{f"multi_evidence_raw_{key}": value for key, value in raw_coverage["means"].items()},
         **{
             f"multi_evidence_context_{key}": value
             for key, value in context_coverage["means"].items()
@@ -671,15 +666,11 @@ def _evidence_coverage(
 
     applicable = evidence_score.applicable and document_score.applicable
     complete_chain = (
-        float(evidence_score.matched_count == evidence_score.relevant_count)
-        if applicable
-        else None
+        float(evidence_score.matched_count == evidence_score.relevant_count) if applicable else None
     )
     document_coverage = document_score.recall_at_k if applicable else None
     all_documents_covered = (
-        float(document_score.matched_count == document_score.relevant_count)
-        if applicable
-        else None
+        float(document_score.matched_count == document_score.relevant_count) if applicable else None
     )
     return {
         "applicable": applicable,
@@ -757,10 +748,7 @@ def _paired_comparison(
     candidate_cases = reports[candidate]["cases"]
     _validate_paired_cases(baseline_cases, candidate_cases)
     question_types = sorted(
-        {
-            str(case["question_type"])
-            for case in (*baseline_cases, *candidate_cases)
-        }
+        {str(case["question_type"]) for case in (*baseline_cases, *candidate_cases)}
     )
     return {
         "baseline": baseline,
@@ -777,16 +765,8 @@ def _paired_comparison(
         "metrics": _paired_metrics(baseline_cases, candidate_cases),
         "by_question_type": {
             question_type: _paired_metrics(
-                [
-                    case
-                    for case in baseline_cases
-                    if case["question_type"] == question_type
-                ],
-                [
-                    case
-                    for case in candidate_cases
-                    if case["question_type"] == question_type
-                ],
+                [case for case in baseline_cases if case["question_type"] == question_type],
+                [case for case in candidate_cases if case["question_type"] == question_type],
             )
             for question_type in question_types
         },
@@ -889,12 +869,10 @@ def _paired_metric_summary(
     count = len(deltas)
     lower, upper = _bootstrap_mean_ci(deltas, label=label)
     candidate_wins = sum(
-        delta > 1e-12 if preference == "higher" else delta < -1e-12
-        for delta in deltas
+        delta > 1e-12 if preference == "higher" else delta < -1e-12 for delta in deltas
     )
     baseline_wins = sum(
-        delta < -1e-12 if preference == "higher" else delta > 1e-12
-        for delta in deltas
+        delta < -1e-12 if preference == "higher" else delta > 1e-12 for delta in deltas
     )
     ties = sum(abs(delta) <= 1e-12 for delta in deltas)
     return {

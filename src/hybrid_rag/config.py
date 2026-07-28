@@ -140,6 +140,7 @@ class RetrievalSettings(BaseSettings):
             raise ValueError("at least one hybrid-search subroute weight must be positive")
         return self
 
+
 class EvaluationSettings(BaseSettings):
     """Output defaults for provenance-bound Ragas evaluations."""
 
